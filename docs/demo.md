@@ -46,10 +46,12 @@ curl -X POST http://localhost:8081/api/v1/agent/run -H "Content-Type: applicatio
 ### ④ 查看运行日志
 
 ```bash
-curl "http://localhost:8081/api/v1/logs?trace_id=trace_xxx&level=INFO"
+# 日志按租户隔离，查询需带 X-Tenant-Id（与运行时 metadata.tenant_id 一致）
+curl "http://localhost:8081/api/v1/logs?level=INFO" -H "X-Tenant-Id: t1"
 ```
 
-**预期**：结构化日志列表（含 trace_id/run_id/category/fingerprint）。
+**预期**：结构化日志列表（含 trace_id/run_id/category/fingerprint）。日志已落 MySQL
+（`log_index` 表，重启不丢）；Agent 每次运行会写入 `run.start/llm.call/llm.done/run.completed`。
 
 ### ⑤ 触发诊断
 

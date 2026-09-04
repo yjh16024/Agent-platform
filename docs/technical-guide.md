@@ -22,8 +22,13 @@ model_list:
       api_key: os.environ/QWEN_API_KEY
 ```
 
-Java 侧无需改动——`ModelProviderFactory` 归一化 provider 后经 `OpenAiCompatibleAdapter`
-以 OpenAI 兼容协议对接网关。
+Java 侧无需改动——`ModelProviderFactory` 对绝大多数云厂商归一化后经 `OpenAiCompatibleAdapter`
+以 OpenAI 兼容协议对接网关。**两个例外**：
+- `anthropic` 保持独立，走 `AnthropicAdapter`（Messages API：`/v1/messages` + `x-api-key`
+  + `anthropic-version`），用于 Claude / Bailian 应用端点直连；
+- `local`/`mock` 走 `MockModelAdapter`（确定性本地兜底）。
+
+> 平台默认「对话/嵌入」模型可在仪表盘「模型设置」页配置，运行时无需改代码。
 
 ### 方式 B：新增自定义适配器（深度定制）
 
@@ -78,6 +83,12 @@ LLM 即可经 function calling 触发。**零其他改动**。
 ```json
 {"name":"get_weather","endpoint":"https://api.weather.com","method":"GET"}
 ```
+
+**MCP 工具**（接入外部 MCP Server，Streamable HTTP / JSON-RPC）：
+`POST /api/v1/tools/mcp`，body 含 `server_url`（必填）、`api_key`（可选，转 Bearer）、`headers`（可选）。
+服务端 `tools/list` 暴露的工具会被逐一注册进 `ToolRegistry`；重复连接同名工具覆盖（热更新）。
+卸载单个工具：`DELETE /api/v1/tools/{toolName}`。
+> 说明：仅支持单请求-响应的 MCP over HTTP；需要会话保持/服务端推送的完整 SSE 会话不在当前范围。
 
 ---
 
