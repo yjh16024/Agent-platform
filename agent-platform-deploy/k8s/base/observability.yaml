@@ -1,0 +1,42 @@
+# ============================================================
+# 可观测性：Prometheus ServiceMonitor + 指标暴露
+# 依赖：Prometheus Operator（kube-prometheus-stack）
+# ============================================================
+
+# Prometheus 抓取核心服务指标（Micrometer 暴露于 /actuator/prometheus）
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: agent-core-monitor
+  namespace: agent-platform
+  labels:
+    release: prometheus
+    app.kubernetes.io/part-of: agent-platform
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-core
+  endpoints:
+    - port: http
+      path: /actuator/prometheus
+      interval: 15s
+      scrapeTimeout: 10s
+  namespaceSelector:
+    matchNames:
+      - agent-platform
+
+# OpenTelemetry Collector 注入（自行安装 OpenTelemetry Operator 后生效）
+apiVersion: opentelemetry.io/v1alpha1
+kind: Instrumentation
+metadata:
+  name: agent-core-otel
+  namespace: agent-platform
+spec:
+  exporter:
+    endpoint: http://otel-collector.agent-platform.svc.cluster.local:4317
+  propagators:
+    - tracecontext
+    - baggage
+    - b3
+  java:
+    image: ghcr.io/open-telemetry/opentelemetry-operator/autoinstrumentation-java:latest

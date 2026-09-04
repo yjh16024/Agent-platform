@@ -1,0 +1,16 @@
+apiVersion: v2
+name: agent-platform
+description: 智能体交互平台 · Helm Chart
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - agent
+  - llm
+  - rag
+  - java21
+maintainers:
+  - name: agent-platform
+home: https://example.com/agent-platform
+sources:
+  - https://example.com/agent-platform

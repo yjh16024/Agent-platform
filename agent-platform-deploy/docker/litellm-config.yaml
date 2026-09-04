@@ -1,0 +1,69 @@
+# LiteLLM Proxy 配置（模型网关）
+# 统一 OpenAI 兼容协议入口，管理多模型服务商、路由与降级
+# 参考：https://docs.litellm.ai/docs/proxy/configs
+model_list:
+  # DeepSeek（OpenAI 兼容协议）
+  # base_url 必须为 API 端点（https://api.deepseek.com/v1），而非 web 站点 https://platform.deepseek.com/
+  - model_name: deepseek-v4-flash
+    litellm_params:
+      model: deepseek/deepseek-v4-flash
+      api_base: https://api.deepseek.com/v1
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: deepseek-v4-pro
+    litellm_params:
+      model: deepseek/deepseek-v4-pro
+      api_base: https://api.deepseek.com/v1
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  # 兼容旧模型名（deepseek-chat / deepseek-reasoner），确保旧智能体仍能解析
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_base: https://api.deepseek.com/v1
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: deepseek-reasoner
+    litellm_params:
+      model: deepseek/deepseek-reasoner
+      api_base: https://api.deepseek.com/v1
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  # 文本嵌入（RAG 向量化）：DeepSeek 不提供 embedding 接口。
+  # 首选：仪表盘「模型设置」页 / PUT /api/v1/model-config/embedding 直连云端嵌入
+  # （填 provider/model/baseUrl/API Key，直连 {baseUrl}/embeddings，不经过本网关）。
+  # 仅当嵌入绑定只填 provider/model 而未填 baseUrl 时才走下方 LiteLLM 网关兜底：
+  # - model_name: text-embedding-3-small
+  #   litellm_params:
+  #     model: openai/text-embedding-3-small
+  #     api_key: os.environ/OPENAI_API_KEY
+
+  # 本地 Ollama 模型（按需开启）
+  # - model_name: llama3
+  #   litellm_params:
+  #     model: ollama/llama3
+  #     api_base: http://host.docker.internal:11434
+
+# 全局路由策略
+router_settings:
+  routing_strategy: simple-shuffle     # 或 least-busy / usage-based-routing
+  num_retries: 1
+  timeout: 120
+
+litellm_settings:
+  drop_params: true
+  set_verbose: true
+  # 缓存可选；本机不接 Redis 缓存，避免 LiteLLM 启动卡在 cache 初始化
+  cache: false
+
+general_settings:
+  master_key: sk-local
+  # 不再配置 database_url：LiteLLM 无库时用内存配置存储（脚手架里的 postgresql://_unused 占位会导致启动失败）
+  # 计费/预算管理（可选）
+  # budget_duration: 30d
+
+# 团队/用户密钥管理（示例）
+# keys:
+#   - key: sk-demo-tenant
+#     metadata:
+#       tenant_id: t1

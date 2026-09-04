@@ -1,0 +1,24 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: agent-platform-gateway
+  cloud:
+    gateway:
+      routes:
+        - id: agent-core
+          uri: ${CORE_SERVICE_URL:http://localhost:8081}
+          predicates:
+            - Path=/api/v1/**
+      default-filters:
+        - DedupeResponseHeader=Access-Control-Allow-Origin Access-Control-Allow-Credentials, RETAIN_UNIQUE
+
+agent-platform:
+  jwt:
+    secret: ${JWT_SECRET:change-me-to-a-256-bit-secret-key-for-production-use-please}
+
+logging:
+  level:
+    com.agentplatform: DEBUG
+    org.springframework.cloud.gateway: INFO

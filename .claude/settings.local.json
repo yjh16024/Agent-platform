@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(java -version)",
+      "Bash(mvn -version)",
+      "Bash(docker version *)",
+      "Bash(docker compose *)",
+      "Bash(mv -v \"1.env\" \".env\")",
+      "Bash(sed -E 's/\\(sk-[A-Za-z0-9]{6}\\)[A-Za-z0-9]+/\\\\1***/' .env)",
+      "Bash(docker exec *)",
+      "Bash(netstat -ano)",
+      "Bash(curl -s http://localhost:8081/actuator/health)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\\\\n\" http://localhost:8081/)",
+      "Bash(cd *)",
+      "Bash(sleep *)",
+      "Bash(tasklist)"
+    ]
+  }
+}

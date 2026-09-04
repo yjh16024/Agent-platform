@@ -1,0 +1,70 @@
+# ============================================================
+# 安全加固：NetworkPolicy（东西向流量隔离 + 最小权限）
+# 配合 Istio mTLS 实现服务网格双向 TLS
+# ============================================================
+
+# 核心服务：仅允许网关进入 + 出站到基础设施
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-core-netpol
+  namespace: agent-platform
+spec:
+  podSelector:
+    matchLabels:
+      app: agent-core
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app: agent-gateway
+      ports:
+        - protocol: TCP
+          port: 8081
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: agent-platform
+      ports:
+        - protocol: TCP
+          port: 3306   # MySQL
+        - protocol: TCP
+          port: 6379   # Redis
+        - protocol: TCP
+          port: 9092   # Kafka
+        - protocol: TCP
+          port: 19530  # Milvus
+
+# 网关：仅允许 Ingress 控制器进入
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-gateway-netpol
+  namespace: agent-platform
+spec:
+  podSelector:
+    matchLabels:
+      app: agent-gateway
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: agent-core
+      ports:
+        - protocol: TCP
+          port: 8081

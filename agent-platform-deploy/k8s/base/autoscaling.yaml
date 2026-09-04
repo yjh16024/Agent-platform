@@ -1,0 +1,74 @@
+# ============================================================
+# 弹性伸缩：HPA（CPU/内存）+ KEDA（自定义指标：消息堆积/日志速率）
+# ============================================================
+
+# ---- HPA：核心服务按 CPU 伸缩 ----
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: agent-core-hpa
+  namespace: agent-platform
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: agent-core
+  minReplicas: 3
+  maxReplicas: 30
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: 80
+
+# ---- KEDA：按 Kafka 消息堆积伸缩（日志消费/诊断队列）----
+# 需要安装 KEDA：kubectl apply -f https://github.com/kedacore/keda/releases/...
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: agent-core-kafka-scaler
+  namespace: agent-platform
+spec:
+  scaleTargetRef:
+    name: agent-core
+  minReplicaCount: 3
+  maxReplicaCount: 30
+  pollingInterval: 15
+  cooldownPeriod: 300
+  triggers:
+    - type: kafka
+      metadata:
+        bootstrapServers: kafka.agent-platform.svc.cluster.local:9092
+        consumerGroup: agent-platform-core
+        topic: log-events
+        lagThreshold: "1000"          # 堆积超 1000 即扩容
+        activationLagThreshold: "5000"
+---
+# ---- PodDisruptionBudget：滚动维护保可用 ----
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agent-core-pdb
+  namespace: agent-platform
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: agent-core

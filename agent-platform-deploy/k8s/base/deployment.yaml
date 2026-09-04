@@ -1,0 +1,139 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-core
+  namespace: agent-platform
+  labels:
+    app.kubernetes.io/name: agent-core
+    app.kubernetes.io/part-of: agent-platform
+spec:
+  replicas: 3
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: agent-core
+  template:
+    metadata:
+      labels:
+        app: agent-core
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8081"
+        prometheus.io/path: "/actuator/prometheus"
+    spec:
+      serviceAccountName: agent-core-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+      terminationGracePeriodSeconds: 30
+      containers:
+        - name: agent-core
+          image: agent-platform/agent-platform-core:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8081
+              name: http
+          envFrom:
+            - configMapRef:
+                name: agent-core-config
+            - secretRef:
+                name: agent-core-secret
+          env:
+            - name: JAVA_OPTS
+              value: >-
+                -XX:+UseZGC -XX:+ZGenerational
+                -XX:+UseContainerSupport -XX:MaxRAMPercentage=75
+                --enable-preview
+                --add-opens java.base/java.lang=ALL-UNNAMED
+          resources:
+            requests:
+              cpu: "0.5"
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: plugin-data
+              mountPath: /data/plugins
+            - name: logback-config
+              mountPath: /app/config
+      volumes:
+        - name: plugin-data
+          emptyDir: {}
+        - name: logback-config
+          configMap:
+            name: agent-core-logback
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-gateway
+  namespace: agent-platform
+  labels:
+    app.kubernetes.io/name: agent-gateway
+    app.kubernetes.io/part-of: agent-platform
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: agent-gateway
+  template:
+    metadata:
+      labels:
+        app: agent-gateway
+    spec:
+      containers:
+        - name: agent-gateway
+          image: agent-platform/agent-platform-gateway:1.0.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: CORE_SERVICE_URL
+              value: "http://agent-core.agent-platform.svc.cluster.local:8081"
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: agent-core-secret
+                  key: JWT_SECRET
+          resources:
+            requests:
+              cpu: "0.25"
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-core-sa
+  namespace: agent-platform

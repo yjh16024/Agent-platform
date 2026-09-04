@@ -1,0 +1,44 @@
+# Ingress 路由（生产建议用 Istio Gateway / Ingress Nginx）
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: agent-platform-ingress
+  namespace: agent-platform
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"   # SSE 流式透传
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - api.agent-platform.example.com
+      secretName: agent-platform-tls
+  rules:
+    - host: api.agent-platform.example.com
+      http:
+        paths:
+          # SSE / WebSocket 长连接路径
+          - path: /api/v1/agent/run
+            pathType: Prefix
+            backend:
+              service:
+                name: agent-gateway
+                port:
+                  name: http
+          - path: /api/v1/logs/stream
+            pathType: Prefix
+            backend:
+              service:
+                name: agent-gateway
+                port:
+                  name: http
+          # 常规 REST
+          - path: /api/v1
+            pathType: Prefix
+            backend:
+              service:
+                name: agent-gateway
+                port:
+                  name: http

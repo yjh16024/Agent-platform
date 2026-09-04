@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-core-config
+  namespace: agent-platform
+data:
+  # 应用配置（覆盖 application.yml 默认值）
+  MYSQL_URL: "jdbc:mysql://mysql.agent-platform.svc.cluster.local:3306/agent_platform?useSSL=false&serverTimezone=Asia/Shanghai"
+  MYSQL_USER: "agent"
+  REDIS_HOST: "redis.agent-platform.svc.cluster.local"
+  REDIS_PORT: "6379"
+  KAFKA_BOOTSTRAP: "kafka.agent-platform.svc.cluster.local:9092"
+  MILVUS_HOST: "milvus.agent-platform.svc.cluster.local"
+  MILVUS_PORT: "19530"
+  LLM_BASE_URL: "http://litellm.agent-platform.svc.cluster.local:4000"
+  DEFAULT_MODEL: "gpt-4o-mini"
+  PLUGIN_ARTIFACT_DIR: "/data/plugins"
+  # 日志配置
+  logstash-appender: |
+    logstash-appender-placeholder
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-core-logback
+  namespace: agent-platform
+data:
+  # 结构化 JSON 日志（Logstash Encoder 配置）
+  logback-spring.xml: |
+    <?xml version="1.0" encoding="UTF-8"?>
+    <configuration>
+      <include resource="org/springframework/boot/logging/logback/base.xml"/>
+      <appender name="JSON" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LogstashEncoder">
+          <customFields>{"service":"agent-platform-core"}</customFields>
+        </encoder>
+      </appender>
+      <root level="INFO">
+        <appender-ref ref="JSON"/>
+      </root>
+    </configuration>

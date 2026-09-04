@@ -1,0 +1,95 @@
+import { http, getTenantId, getToken } from './http';
+
+export interface RunMessage {
+  role: string;
+  content: string;
+}
+
+export interface RunResponse {
+  runId?: string;
+  sessionId?: string;
+  mode?: string;
+  output?: { role?: string; content?: string; audioUrl?: string };
+  traceId?: string;
+  usage?: { promptTokens?: number; completionTokens?: number; totalCostUsd?: number };
+  references?: unknown[];
+  plugins?: unknown[];
+}
+
+// 非流式：/agent/run 返回裸 JSON（不套 ApiResponse），raw=true
+export function runAgent(agentId: string, messages: RunMessage[]) {
+  return http.post<RunResponse>(
+    '/api/v1/agent/run',
+    { agentId, mode: 'agent', messages, metadata: { tenant_id: getTenantId(), user_id: 'demo-user' } },
+    true,
+  );
+}
+
+// 流式 SSE：EventSource 只支持 GET，这里用 fetch + ReadableStream 手写解析。
+// 事件帧格式：event:run.delta / data:{...}，运行结束 run.completed，出错 run.error。
+export async function runAgentStream(
+  agentId: string,
+  messages: RunMessage[],
+  onDelta: (text: string) => void,
+): Promise<void> {
+  const h: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-Tenant-Id': getTenantId(),
+  };
+  const token = getToken();
+  if (token) h['Authorization'] = `Bearer ${token}`;
+
+  const res = await fetch('/api/v1/agent/run', {
+    method: 'POST',
+    headers: h,
+    body: JSON.stringify({
+      agentId,
+      mode: 'agent',
+      messages,
+      stream: true,
+      metadata: { tenant_id: getTenantId(), user_id: 'demo-user' },
+    }),
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  if (!res.body) throw new Error('无响应流');
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder('utf-8');
+  let buffer = '';
+
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+
+    let idx: number;
+    while ((idx = buffer.indexOf('\n\n')) >= 0) {
+      const frame = buffer.slice(0, idx);
+      buffer = buffer.slice(idx + 2);
+      let event = '';
+      let data = '';
+      for (const line of frame.split('\n')) {
+        if (line.startsWith('event:')) event = line.slice(6).trim();
+        else if (line.startsWith('data:')) data += line.slice(5).trim();
+      }
+      if (event === 'run.error') {
+        let msg = data;
+        try {
+          msg = JSON.parse(data)?.message ?? data;
+        } catch {
+          /* 非 JSON 时保持原样 */
+        }
+        throw new Error(msg || '流式运行出错');
+      }
+      if (!data) continue;
+      try {
+        const obj = JSON.parse(data);
+        const content =
+          obj?.output?.content ?? obj?.content ?? obj?.delta ?? (typeof obj === 'string' ? obj : '');
+        if (content) onDelta(String(content));
+      } catch {
+        /* 非 JSON 帧忽略 */
+      }
+    }
+  }
+}

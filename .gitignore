@@ -1,0 +1,36 @@
+# Maven
+target/
+*.jar
+*.war
+!.mvn/wrapper/maven-wrapper.jar
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local data
+data/
+
+# Env
+.env
+.env.local
+
+# Node (前端依赖与构建产物)
+node_modules/
+agent-platform-ui/dist/
+agent-platform-ui/node_modules/
+
+# IDE/工具运行时数据
+.codebuddy/

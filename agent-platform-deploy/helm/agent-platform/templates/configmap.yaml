@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  labels:
+    app.kubernetes.io/name: agent-core
+data:
+  MYSQL_URL: "jdbc:mysql://{{ .Values.services.mysql.host }}:{{ .Values.services.mysql.port }}/{{ .Values.services.mysql.database }}?useSSL=false&serverTimezone=Asia/Shanghai"
+  MYSQL_USER: "{{ .Values.services.mysql.user }}"
+  REDIS_HOST: "{{ .Values.services.redis.host }}"
+  REDIS_PORT: "{{ .Values.services.redis.port }}"
+  KAFKA_BOOTSTRAP: "{{ .Values.services.kafka.bootstrap }}"
+  MILVUS_HOST: "{{ .Values.services.milvus.host }}"
+  MILVUS_PORT: "{{ .Values.services.milvus.port }}"
+  LLM_BASE_URL: "{{ .Values.services.litellm.url }}"
+  DEFAULT_MODEL: "gpt-4o-mini"

@@ -1,0 +1,96 @@
+# ============================================================
+# 智能体交互平台 · Helm values
+# 覆盖优先级：命令行 --set > 环境覆盖 values > 默认 values
+# ============================================================
+
+# 镜像
+core:
+  image:
+    repository: agent-platform/agent-platform-core
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 3
+  resources:
+    requests:
+      cpu: "0.5"
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  # JDK 21 JVM 参数（分代 ZGC + 容器感知 + 插件反射）
+  javaOpts: >-
+    -XX:+UseZGC -XX:+ZGenerational
+    -XX:+UseContainerSupport -XX:MaxRAMPercentage=75
+    --enable-preview
+    --add-opens java.base/java.lang=ALL-UNNAMED
+
+gateway:
+  image:
+    repository: agent-platform/agent-platform-gateway
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+  replicaCount: 2
+  resources:
+    requests:
+      cpu: "0.25"
+      memory: 256Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+# 弹性伸缩
+autoscaling:
+  enabled: true
+  minReplicas: 3
+  maxReplicas: 30
+  targetCPUUtilizationPercentage: 70
+  keda:
+    enabled: false            # 需安装 KEDA
+    kafkaLagThreshold: "1000"
+
+# 外部服务连接（生产填真实地址）
+services:
+  mysql:
+    host: mysql.agent-platform.svc.cluster.local
+    port: 3306
+    database: agent_platform
+    user: agent
+  redis:
+    host: redis.agent-platform.svc.cluster.local
+    port: 6379
+  kafka:
+    bootstrap: kafka.agent-platform.svc.cluster.local:9092
+  milvus:
+    host: milvus.agent-platform.svc.cluster.local
+    port: 19530
+  litellm:
+    url: http://litellm.agent-platform.svc.cluster.local:4000
+
+# 敏感配置（生产用 Vault / SealedSecrets）
+secrets:
+  mysqlPassword: "change-me"
+  redisPassword: ""
+  jwtSecret: "change-me-to-a-256-bit-secret-key-for-production-use-please"
+  llmApiKey: "sk-local"
+
+# 入口
+ingress:
+  enabled: true
+  className: nginx
+  host: api.agent-platform.example.com
+  tlsSecret: agent-platform-tls
+
+# ServiceAccount
+serviceAccount:
+  create: true
+  name: agent-core-sa
+
+# 可观测性
+serviceMonitor:
+  enabled: true
+
+# 安全上下文
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
