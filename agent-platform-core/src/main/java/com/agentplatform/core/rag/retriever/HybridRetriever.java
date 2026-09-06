@@ -42,21 +42,24 @@ public class HybridRetriever {
      */
     public List<RetrievalResult> search(List<String> kbIds, String query, int topK,
                                         double scoreThreshold, Map<String, Object> filter, boolean rerank) {
-        // ① 稠密检索（向量）
-        float[] queryVec = embeddingService.embedQuery(query);
-        List<VectorStore.VectorMatch> denseMatches = vectorStore.similaritySearch(queryVec, topK * 2, 0.0);
-
-        // 按 kb_id 过滤 + 元数据过滤
+        // ① 稠密检索（向量）——嵌入服务不可用时降级为空，仅保留关键词检索
         Map<String, Double> denseScores = new LinkedHashMap<>();
-        for (VectorStore.VectorMatch m : denseMatches) {
-            String kbId = (String) m.metadata().get("kb_id");
-            if (kbIds != null && !kbIds.isEmpty() && !kbIds.contains(kbId)) {
-                continue;
+        try {
+            float[] queryVec = embeddingService.embedQuery(query);
+            List<VectorStore.VectorMatch> denseMatches = vectorStore.similaritySearch(queryVec, topK * 2, 0.0);
+            // 按 kb_id 过滤 + 元数据过滤
+            for (VectorStore.VectorMatch m : denseMatches) {
+                String kbId = (String) m.metadata().get("kb_id");
+                if (kbIds != null && !kbIds.isEmpty() && !kbIds.contains(kbId)) {
+                    continue;
+                }
+                if (!matchesFilter(m.metadata(), filter)) {
+                    continue;
+                }
+                denseScores.put(m.id(), m.score());
             }
-            if (!matchesFilter(m.metadata(), filter)) {
-                continue;
-            }
-            denseScores.put(m.id(), m.score());
+        } catch (Exception e) {
+            log.warn("Dense retrieval skipped (embedding unavailable), keyword search only: {}", e.getMessage());
         }
 
         // ② 稀疏检索（关键词）

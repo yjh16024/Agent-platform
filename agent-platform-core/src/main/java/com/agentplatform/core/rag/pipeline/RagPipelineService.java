@@ -76,20 +76,28 @@ public class RagPipelineService {
                     Chunker.ChunkConfig.defaults().separators());
             List<ChunkSegment> segments = chunker.chunk(text, config);
 
-            // ④ 向量化 + 索引
+            // ④ 切块入库 + 向量化（解耦：chunk 内容始终入库；向量化失败仅告警，
+            //    不丢弃内容，保证 UI 可浏览且关键词检索始终可用）
             int count = 0;
+            int embedded = 0;
             for (ChunkSegment seg : segments) {
-                Chunk chunk = indexSegment(kb, docId, fileType, content.length, seg);
+                Chunk chunk = buildChunk(kb, docId, fileType, seg);
+                chunkRepository.save(chunk);
                 count++;
-                if (chunk != null) {
-                    chunkRepository.save(chunk);
+                if (embedChunk(kb, chunk)) {
+                    embedded++;
                 }
             }
 
             doc.setStatus("indexed");
             doc.setChunkCount(count);
             documentRepository.save(doc);
-            log.info("Ingested document {} ({}) → {} chunks", fileName, kb.getKbId(), count);
+            if (embedded == 0 && count > 0) {
+                log.warn("Ingested document {} ({}) → {} chunks, but 0 embedded (embedding unavailable); "
+                        + "keyword search only", fileName, kb.getKbId(), count);
+            } else {
+                log.info("Ingested document {} ({}) → {} chunks, {} embedded", fileName, kb.getKbId(), count, embedded);
+            }
             return count;
         } catch (Exception e) {
             doc.setStatus("failed");
@@ -101,24 +109,14 @@ public class RagPipelineService {
     }
 
     /**
-     * 单个段：构建 Chunk 元数据 + 向量入库。
+     * 构建 Chunk（仅元数据 + 内容，不依赖向量化，保证内容始终入库）。
      */
-    private Chunk indexSegment(KnowledgeBase kb, String docId, String fileType,
-                               long fileSize, ChunkSegment seg) {
+    private Chunk buildChunk(KnowledgeBase kb, String docId, String fileType, ChunkSegment seg) {
         String chunkId = IdGenerator.generate("chunk");
         Map<String, Object> meta = new LinkedHashMap<>(seg.metadata());
         meta.put("doc_id", docId);
         meta.put("kb_id", kb.getKbId());
         meta.put("file_type", fileType);
-
-        // 向量入库（external_id = chunkId）
-        try {
-            float[] vec = embeddingService.embed(seg.content());
-            vectorStore.upsert(chunkId, vec, meta);
-        } catch (Exception e) {
-            log.warn("Embedding failed for chunk {} (skip): {}", chunkId, e.getMessage());
-            return null;
-        }
 
         return Chunk.builder()
                 .chunkId(chunkId)
@@ -130,5 +128,22 @@ public class RagPipelineService {
                 .meta(meta)
                 .externalId(chunkId)
                 .build();
+    }
+
+    /**
+     * 向量化并写入向量库（尽力而为）。
+     *
+     * @return 是否嵌入成功
+     */
+    private boolean embedChunk(KnowledgeBase kb, Chunk chunk) {
+        try {
+            float[] vec = embeddingService.embed(chunk.getContent());
+            vectorStore.upsert(chunk.getChunkId(), vec, chunk.getMeta());
+            return true;
+        } catch (Exception e) {
+            log.warn("Embedding failed for chunk {} (content kept, vector skipped): {}",
+                    chunk.getChunkId(), e.getMessage());
+            return false;
+        }
     }
 }
