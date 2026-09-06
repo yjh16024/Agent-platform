@@ -190,17 +190,19 @@ export default function ChatPage() {
           </Popconfirm>
         </Space>
       }
-      styles={{ body: { paddingBottom: 8 } }}
+      styles={{ body: { display: 'flex', flexDirection: 'column', height: 'calc(100vh - 200px)', minHeight: 420, paddingBottom: 8 } }}
     >
       {messages.length > 0 && (
         <Alert
           type="info"
           showIcon
-          style={{ marginBottom: 8 }}
+          style={{ marginBottom: 8, flex: '0 0 auto' }}
           message={`本轮对话共 ${messages.length} 条。切换页面不会丢失；点击「新对话」将自动保存到会话历史。`}
         />
       )}
-      <div ref={listRef} style={{ height: 'calc(100vh - 340px)', minHeight: 260, overflowY: 'auto', paddingRight: 4 }}>
+
+      {/* 消息列表：占据中间全部剩余高度 */}
+      <div ref={listRef} style={{ flex: 1, minHeight: 180, overflowY: 'auto', paddingRight: 4 }}>
         <List
           dataSource={messages}
           locale={{ emptyText: <Empty description="发送一条消息开始对话" /> }}
@@ -226,71 +228,75 @@ export default function ChatPage() {
         />
       </div>
 
-      <Upload.Dragger
-        multiple
-        showUploadList={false}
-        style={{ padding: 8, marginTop: 10 }}
-        beforeUpload={(file) => {
-          addAttachment(file as unknown as File);
-          return false;
-        }}
-      >
-        <Space direction="vertical" size={2} style={{ pointerEvents: 'none' }}>
-          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-            <PaperClipOutlined /> 拖入或点击添加文件（txt/md/pdf/docx/pptx/xlsx/csv 可读；
-            最多 {MAX_ATTACH} 个，图片/音视频暂不可直接读取）
-          </Typography.Text>
-        </Space>
-      </Upload.Dragger>
-
-      {attachments.length > 0 && (
-        <Space wrap size={[4, 4]} style={{ marginTop: 8 }}>
-          {attachments.map((a, idx) => (
-            <Tag
-              key={`${a.fileName}-${idx}`}
-              closable={!a.uploading}
-              onClose={() => removeAttachment(idx)}
-              color={a.uploading ? 'processing' : 'blue'}
-            >
-              {a.uploading ? `上传中… ${a.fileName}` : a.fileName}
-            </Tag>
-          ))}
-        </Space>
-      )}
-
-      <Space.Compact style={{ width: '100%', marginTop: 8 }}>
-        <Input.TextArea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          autoSize={{ minRows: 1, maxRows: 4 }}
-          placeholder="输入消息，回车发送，Shift+回车换行"
-          onPressEnter={(e) => {
-            if (!e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
-        />
-        <Button
-          type="primary"
-          icon={<ClearOutlined />}
-          onClick={() => {
-            if (messages.length === 0 && attachments.length === 0) {
-              message.info('当前没有消息');
-              return;
-            }
-            if (window.confirm('丢弃当前对话与附件（不保存到会话历史）？')) {
-              reset(agentId);
-              setAttachments([]);
-            }
+      {/* 附件区 + 拖拽上传（方案 A） */}
+      <div style={{ flex: '0 0 auto', marginTop: 8 }}>
+        <Upload.Dragger
+          multiple
+          showUploadList={false}
+          style={{ padding: '10px 12px' }}
+          beforeUpload={(file) => {
+            addAttachment(file as unknown as File);
+            return false;
           }}
         >
-          清空
-        </Button>
-        <Button type="primary" icon={<SendOutlined />} loading={busy} onClick={send}>
-          发送
-        </Button>
-      </Space.Compact>
+          <Space size={8} align="center" wrap>
+            <PaperClipOutlined style={{ fontSize: 18, color: '#1677ff' }} />
+            <Typography.Text strong>拖入文件，或点击此处选择（txt / md / pdf / docx / pptx / xlsx / csv 可被智能体读取）</Typography.Text>
+            <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+              最多 {MAX_ATTACH} 个；图片/音视频暂不可直接读取（将走方案 B / C）
+            </Typography.Text>
+          </Space>
+        </Upload.Dragger>
+
+        {attachments.length > 0 && (
+          <Space wrap size={[4, 4]} style={{ marginTop: 6 }}>
+            {attachments.map((a, idx) => (
+              <Tag
+                key={`${a.fileName}-${idx}`}
+                closable={!a.uploading}
+                onClose={() => removeAttachment(idx)}
+                color={a.uploading ? 'processing' : 'blue'}
+              >
+                {a.uploading ? `上传中… ${a.fileName}` : a.fileName}
+              </Tag>
+            ))}
+          </Space>
+        )}
+
+        <Space.Compact style={{ width: '100%', marginTop: 8 }}>
+          <Input.TextArea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            autoSize={{ minRows: 1, maxRows: 4 }}
+            placeholder="输入消息，回车发送，Shift+回车换行"
+            onPressEnter={(e) => {
+              if (!e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+          />
+          <Button
+            type="primary"
+            icon={<ClearOutlined />}
+            onClick={() => {
+              if (messages.length === 0 && attachments.length === 0) {
+                message.info('当前没有消息');
+                return;
+              }
+              if (window.confirm('丢弃当前对话与附件（不保存到会话历史）？')) {
+                reset(agentId);
+                setAttachments([]);
+              }
+            }}
+          >
+            清空
+          </Button>
+          <Button type="primary" icon={<SendOutlined />} loading={busy} onClick={send}>
+            发送
+          </Button>
+        </Space.Compact>
+      </div>
     </Card>
   );
 }

@@ -85,6 +85,8 @@ agent-platform:
   model:
     default-provider: ${DEFAULT_PROVIDER:deepseek}    # 智能体未配置 provider 时的默认模型厂商
     default-name: ${DEFAULT_MODEL:deepseek-chat}      # 智能体未配置 model 时的默认模型名
+    # 发往模型厂商的 User-Agent（可用 MODEL_UA 覆盖；应对网关按 UA 拦截的瞬时风控）
+    user-agent: ${MODEL_UA:Mozilla/5.0 (compatible; agent-platform/1.0)}
   # 嵌入模型（RAG 向量化）：运行时可经 /api/v1/model-config 直连云端嵌入
   # （默认走 LiteLLM 网关时的嵌入模型名；直连时模型名由绑定指定）
   embedding:

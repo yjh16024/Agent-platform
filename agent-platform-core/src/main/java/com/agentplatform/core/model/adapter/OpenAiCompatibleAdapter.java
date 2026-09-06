@@ -34,12 +34,15 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
     private final String providerName;
     private final String baseUrl;
     private final String apiKey;
+    private final String userAgent;
     private final OkHttpClient httpClient;
 
-    public OpenAiCompatibleAdapter(String providerName, String baseUrl, String apiKey, OkHttpClient httpClient) {
+    public OpenAiCompatibleAdapter(String providerName, String baseUrl, String apiKey,
+                                   String userAgent, OkHttpClient httpClient) {
         this.providerName = providerName;
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
+        this.userAgent = userAgent == null || userAgent.isBlank() ? "agent-platform/1.0" : userAgent;
         this.httpClient = httpClient;
     }
 
@@ -62,7 +65,7 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
         Map<String, Object> body = buildChatBody(req, false);
         log.info("[model:{}] chat 请求 baseUrl={} url={} bearer={}",
                 providerName, base, url, key != null && !key.isBlank());
-        try (Response response = post(url, body, key)) {
+        try (Response response = postWithRetry(url, body, key)) {
             if (!response.isSuccessful()) {
                 String err = readBody(response);
                 log.warn("[model:{}] 上游返回 HTTP {}: {}", providerName, response.code(), err);
@@ -88,7 +91,7 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
         return Flux.create(sink -> {
             Map<String, Object> body = buildChatBody(req, true);
             String url = buildUrl(effectiveBaseUrl(req), "/v1/chat/completions");
-            try (Response response = post(url, body, effectiveApiKey(req))) {
+            try (Response response = postWithRetry(url, body, effectiveApiKey(req))) {
                 if (!response.isSuccessful()) {
                     String err = readBody(response);
                     log.warn("[model:{}] 上游流式返回 HTTP {}: {}", providerName, response.code(), err);
@@ -148,7 +151,7 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
         String url = buildUrl(base, "/v1/embeddings");
         log.info("[model:{}] embed 请求 model={} baseUrl={} bearer={}",
                 providerName, req.model(), base, key != null && !key.isBlank());
-        try (Response response = post(url, body, key)) {
+        try (Response response = postWithRetry(url, body, key)) {
             if (!response.isSuccessful()) {
                 String err = readBody(response);
                 throw new BizException("MODEL_UPSTREAM_ERROR",
@@ -201,8 +204,40 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
         Request.Builder builder = new Request.Builder()
                 .url(url)
                 .post(RequestBody.create(JsonUtils.toJson(body), JSON))
-                .header("Authorization", "Bearer " + apiKey.trim());
+                .header("Authorization", "Bearer " + apiKey.trim())
+                .header("User-Agent", userAgent);
         return httpClient.newCall(builder.build()).execute();
+    }
+
+    /**
+     * 对瞬时错误（429 限流 / 5xx）做短退避重试（1s、2s，最多 2 次），
+     * 其他状态码（400/401/402/403/404…）原样返回，不吞错误。
+     */
+    private Response postWithRetry(String url, Map<String, Object> body, String apiKey) throws IOException {
+        int attempt = 0;
+        while (true) {
+            Response response = post(url, body, apiKey);
+            if (response.isSuccessful() || attempt >= 2 || !isTransient(response.code())) {
+                return response;
+            }
+            String err = readBody(response);
+            response.close();
+            long waitMs = 1000L << attempt; // 1s → 2s
+            log.warn("[model:{}] 上游瞬时错误 HTTP {}，{}ms 后重试（第 {} 次）: {}",
+                    providerName, response.code(), waitMs, attempt + 1,
+                    err == null ? "" : (err.length() > 300 ? err.substring(0, 300) : err));
+            try {
+                Thread.sleep(waitMs);
+            } catch (InterruptedException ie) {
+                Thread.currentThread().interrupt();
+                throw new IOException("retry interrupted", ie);
+            }
+            attempt++;
+        }
+    }
+
+    private static boolean isTransient(int code) {
+        return code == 429 || code >= 500;
     }
 
     /**
