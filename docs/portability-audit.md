@@ -106,7 +106,7 @@ curl http://localhost:8081/actuator/health          # 应为 UP（redis 可 DOWN
 |------|------|------|
 | P0-1 `mvn spring-boot:run` 预览特性 | ✅ | `agent-platform-core/pom.xml` 的 spring-boot-maven-plugin 增加 `jvmArguments=--enable-preview`；demo/phase1 文档命令已改为 `java --enable-preview -jar` |
 | P0-2 静态资源旧版 | ⚠️ 待推送前执行 | 需在推送前运行 `npm run build:prod` 重新同步 `static/`（README 已显著提示） |
-| P0-3 JDK 版本校验 | ✅ | `start-core.bat` 增加 JDK ≥21 检测并明确报错退出；新增 `start-core.sh`（Linux/macOS）同样校验 |
+| P0-3 JDK 版本校验 | ✅ | `start-core.sh`（Linux/macOS）含 JDK ≥21 强校验；`start-core.bat` 保留原版结构并给出缺失 JDK 的 WARN（Windows 用 JDK 21 即可），README「环境要求」标注 JDK 21+ |
 | P1-1 Skills 打开目录 | ✅ | `SKILLS_OPEN_FOLDER` 默认改为 `false`；前端在未开启时弹窗给出可复制路径与开启方式 |
 | P1-2 示例 Skill 分发 | ✅ | 示例迁入 `agent-platform-core/src/main/resources/skills-sample/`，`SkillSampleSeeder` 启动时自动铺设（目录为空才复制） |
 | P1-3 跨平台脚本 | ✅ | 新增 `start-core.sh`、`build-ui.sh` |
