@@ -1,145 +1,235 @@
 # 智能体交互平台（Agent Platform）
 
-基于 **Java 21 (LTS) · Spring Boot 3.4 · MySQL 8.4 · Milvus · Kafka** 的
-智能体交互平台：可视化创建/配置/发布智能体，并以统一入口运行对话；围绕运行时可插拔挂载
-多模型、会话记忆、RAG 知识库、工具（含 MCP）、工作流、插件、多模态、日志诊断与提示词优化等能力。
+基于 **Java 21 · Spring Boot 3.4 · MySQL · React** 的 AI 智能体平台：可视化创建/配置/发布
+智能体，以统一入口运行对话；围绕运行时可插拔挂载多模型、会话记忆、RAG 知识库、工具（含 MCP）、
+工作流、Skills、插件、多模态、日志诊断与提示词优化。
 
-> 依据《智能体交互平台设计文档 v3.4》从零实现，Phase 1~7 已交付。
+---
 
-## 核心能力
+## 功能概览
 
 | 能力 | 说明 |
 |------|------|
-| 多模型对接 | OpenAI / DeepSeek / Anthropic(Claude) / 通义 / 文心 / 混元等：**直连厂商**或经 LiteLLM 统一协议；新增 Anthropic Messages API 适配器；本地 Mock 兜底保证无外部依赖可跑 |
-| 模型配置分层 | 平台级「默认对话模型」+「嵌入模型」绑定（模型设置页，AES-GCM 加密落库、只回掩码）；智能体未单独配置时自动回退，避免每个智能体重复填 Key |
-| 会话与上下文 | Session 管理、对话历史持久化与回放、会话归档/删除；前端对话历史切页不丢，点「新对话」才保存进会话历史 |
-| RAG | 知识库生命周期、文档摄取管线（解析→切分→向量化→索引）、稠密向量 + MySQL FULLTEXT 稀疏双路 RRF 融合、rerank、chunk 级引用溯源、内容浏览 |
-| Skills（标准目录） | 遵循 **Agent Skills 开放标准**：`skills/<name>/SKILL.md`（YAML frontmatter + 提示词正文）+ `scripts/ references/ assets/`；下载的技能丢进目录后「扫描同步」即被识别，运行时注入系统提示词 |
-| 工作流编排 | 自研 DAG 引擎（条件分支 + 虚拟线程并行）、节点 Schema 校验 |
-| 多模态 | parts[] 统一消息模型、文件上传/下载、TTS/ASR 插件化 |
-| 工具调用 | 工具注册中心、HTTP 工具热注册、**MCP(Streamable HTTP) 接入**、责任链鉴权 |
-| 插件系统 | plugin-sdk SPI、内置插件 + **外部 jar 插件（ClassLoader 隔离）**、市场导入/删除、Attach/Detach 热插拔 |
-| 运行日志与诊断 | 结构化日志 **MySQL 持久化**（重启不丢）、trace/瀑布图、三级诊断策略（规则→向量→LLM） |
-| 提示词优化 | PromptEnhancer 策略链、规则双阶段、6 维评分 + LCS 有序 Diff |
-| 智能体管理 | 配置即资产；**删除即物理删除（含版本/插件绑定级联）**，列表默认隐藏已归档；版本快照/发布/回滚/Diff |
+| 多模型 | OpenAI / DeepSeek / Anthropic(Claude) / 通义 / 文心 / 混元等：直连厂商或经 LiteLLM；本地 Mock 兜底（无外部 Key 也能跑） |
+| 模型配置分层 | 平台「默认对话模型」+「嵌入模型」绑定（AES-GCM 加密落库、只回掩码）；智能体未单独配置时自动回退，无需每个智能体重填 Key |
+| 会话 | Session 管理、历史持久化与回放、删除/归档；前端对话历史切页不丢，「新对话」才写入会话历史 |
+| RAG | 知识库生命周期、文档摄取（解析→切分→向量化→索引）、向量 + FULLTEXT 混合检索、rerank、引用溯源、内容浏览 |
+| 工作流 | 自研 DAG 引擎（条件分支 + 虚拟线程并行）、节点 Schema 校验 |
+| Skills | **Agent Skills 开放标准目录** `skills/<name>/SKILL.md`：下载的技能放进目录 → 扫描同步即识别，运行时注入提示词 |
+| 插件 | SPI + 内置/外部 jar（ClassLoader 隔离）、市场导入/删除、Attach/Detach 热插拔 |
+| 工具 | 注册中心、HTTP 工具热注册、MCP(Streamable HTTP) 接入 |
+| 多模态 | parts[] 消息模型、文件上传/下载、TTS/ASR 插件化 |
+| 运维 | 运行日志落 MySQL（重启不丢）、trace 瀑布图、三级诊断（规则→向量→LLM）、提示词 6 维评分优化 |
+| 智能体 | 版本快照/发布/回滚/Diff；删除为物理删除（列表默认隐藏归档） |
 
-## 技术栈
+技术栈：Java 21（虚拟线程 + ScopedValue）、Spring Boot 3.4、Spring Data JPA + Flyway、MySQL 8、
+Redis（可选）、Milvus（可选）、React + Vite + antd。
 
-- **语言/框架**：Java 21（虚拟线程 + `ScopedValue`）、Spring Boot 3.4、Spring Cloud 2024
-- **数据库**：MySQL 8.4（业务 + 日志）+ Milvus 2.x（向量库，可切 in-memory）
-- **缓存**：Redis 7；**消息**：Kafka（可选开关）
-- **模型网关**：LiteLLM Proxy（可选，直连模型时可不用）
-- **前端**：React + Vite + antd 仪表盘（同源部署于 core）
-- **构建**：Maven + Flyway（DB 迁移，当前至 V10）
+---
 
-## 模块结构
+## 环境要求（克隆前请先准备）
 
+| 依赖 | 版本 | 是否必需 | 说明 |
+|------|------|----------|------|
+| JDK | **21 或更高** | ✅ 必需 | 项目使用预览特性 `ScopedValue`，编译/运行均需 `--enable-preview`（脚本已自动带） |
+| Maven | 3.9+ | ✅ 必需 | 构建依赖；首次构建需联网下载 |
+| MySQL | 8.x | ✅ 必需 | Flyway 启动时自动建表，连不上则启动失败 |
+| Redis | 7 | ❌ 可选 | 缺失时仅健康检查 DOWN，配额走内存兜底 |
+| Node / npm | 18+ | ❌ 可选 | 仅修改前端源码并重建时需要 |
+| Docker | — | ❌ 可选 | 便捷拉起 MySQL/Redis 等；不使用则手动装 MySQL |
+| Milvus/Kafka/MinIO/LiteLLM | — | ❌ 可选 | 全部有开关与降级，默认不开 |
+
+> 首次构建 `mvn package` 需要能访问 Maven Central；首次前端构建需要能访问 npm registry。
+
+---
+
+## 快速开始
+
+### 1. 克隆
+
+```bash
+git clone https://gitee.com/<你的用户名>/agent-platform.git
+cd agent-platform
 ```
-agent-platform/
-├── agent-platform-common/        # 公共：ApiResponse/BizException/IdGenerator/JwtUtil/TraceContext(ScopedValue)
-├── agent-platform-model/         # 领域：Entity/Record/Repository（含日志 LogIndex、仓储）
-├── agent-platform-plugin-sdk/    # 插件 SDK（Plugin/AgentHook/HookPoint/PluginManifest）
-├── agent-platform-infra/         # 基础设施占位
-├── agent-platform-gateway/       # API 网关（JWT 过滤器；当前主要为占位，生产建议直连 core 鉴权）
-├── agent-platform-core/          # 主应用：13 个功能子域（agent/rag/tool/workflow/skill/plugin/...）
-├── agent-platform-deploy/        # Docker/K8s/Helm 部署
-├── agent-platform-plugins/       # 独立插件工程示例（auto-reply / tts）
-├── agent-platform-ui/            # React 仪表盘（build-ui.bat 构建进 core static）
-└── docs/                         # 文档
+
+### 2. 准备 MySQL（二选一）
+
+**方式 A：用 Docker 起 MySQL（推荐）**
+
+```bash
+docker compose up -d mysql redis
 ```
 
-## 快速启动（Windows，本机 MySQL 已运行）
+**方式 B：手动创建**（用你本地 MySQL 的 root 执行）
+
+```sql
+CREATE DATABASE IF NOT EXISTS agent_platform DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
+CREATE USER IF NOT EXISTS 'agent'@'%' IDENTIFIED BY 'agent123456';
+GRANT ALL PRIVILEGES ON agent_platform.* TO 'agent'@'%';
+FLUSH PRIVILEGES;
+```
+
+> 库名/账号密码与默认配置一致；想改走「配置」一节的环境变量。
+
+### 3. 启动
+
+**Windows**（双击或命令行）：
 
 ```bat
-start-core.bat rebuild     # 一键：定位 JDK21/Maven → 起本地 Redis → 打包 → 启动 8081
+start-core.bat rebuild        REM 首次/改动后端后用 rebuild；之后可直接 start-core.bat
 ```
 
-- 前端改过源码后务必先重新构建：`cd agent-platform-ui && npm run build:prod`（产物自动同步到
-  `agent-platform-core/src/main/resources/static/`），否则仪表盘仍显示旧的编译版本。
-- 浏览器访问 **http://localhost:8081/**。需强刷（Ctrl+F5）避免旧 JS 缓存。
-
-### 用 Docker 拉起可选基础设施
+**Linux / macOS**：
 
 ```bash
-docker compose up -d   # MySQL / Redis / Milvus(+etcd+minio) / MinIO / LiteLLM / Kafka
+chmod +x start-core.sh
+./start-core.sh rebuild
 ```
 
-| 能力 | 环境变量 | 默认 |
-|------|----------|------|
-| RAG 向量存储 | `VECTOR_STORE=milvus` | `in-memory` |
-| 文件对象存储 | `STORAGE_TYPE=minio` | `local` 本地磁盘 |
-| Kafka 事件总线 | `EVENTS_ENABLED=true` | 关 |
-| core 侧 JWT 鉴权 | `SECURITY_ENABLED=true` | 关（默认密钥会给出告警） |
-
-> 全部默认关闭，保证无 Docker/无真实模型时仍可本地演示（本地 Mock 兜底、内存向量、本地磁盘）。
-
-## 快速验证
+**或手动方式（任意系统）**：
 
 ```bash
-# 健康检查
+mvn -pl agent-platform-core -am package -DskipTests
+java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.0.0-SNAPSHOT.jar
+```
+
+启动成功日志含 `Tomcat started on port 8081`，随后浏览器打开 **http://localhost:8081/**。
+
+> - 若 **8081 被占用**，脚本会自动杀掉旧进程（Windows）或提示（Linux/macOS）。
+> - Redis 没有也不影响核心功能（日志会提示 redis DOWN）。
+
+### 4. 验证
+
+```bash
 curl http://localhost:8081/actuator/health
-
-# 登录获取 JWT（未配置 AUTH_USERNAME/PASSWORD 时演示签发）
-curl -X POST http://localhost:8081/api/v1/auth/login -H "Content-Type: application/json" \
-  -d '{"tenant_id":"t1","user_id":"u1"}'
-
-# 创建智能体（不传 modelBinding → 自动回退「模型设置」里的默认对话模型）
-curl -X POST http://localhost:8081/api/v1/agents -H "X-Tenant-Id: t1" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"客服助手","systemPrompt":"你是一名客服专家"}'
-
-# 运行对话（可带 sessionId 触发会话持久化；stream:true 走 SSE）
-curl -X POST http://localhost:8081/api/v1/agent/run -H "Content-Type: application/json" \
-  -d '{"agentId":"agent_xxx","messages":[{"role":"user","content":"你好"}],"metadata":{"tenant_id":"t1"}}'
+# {"status":"UP","components":{"db":{"status":"UP"}, ... ,"redis":{"status":"DOWN"}}}  ← redis 可为 DOWN
 ```
 
-## 仪表盘功能域
+仪表盘首屏应能：新建智能体 → 在「对话运行」发消息 → 未配置任何模型 Key 时会自动返回
+**本地 Mock 回复**（可先跑通全流程）。
 
-智能体管理（新建/编辑/版本/发布回滚/删除）· 对话运行（历史常驻 + 新对话归档）· 会话历史 ·
-知识库（上传/浏览内容/删除）· 工作流 · Skills（打开目录/扫描同步/上传导入/查看编辑/删除）·
-插件市场（导入/删除/挂载）· 工具调试（含 MCP 接入）· 文件 · 模型设置（默认对话 + 嵌入绑定）·
-租户配额 · 运行日志 · 诊断 · 提示词优化。
+---
 
-## API 概览（主要管理面）
+## 配置
 
-| 分组 | 关键端点（新增标注 ✚） |
-|------|------|
-| 智能体 | `/agents` CRUD/克隆/版本/发布/回滚/`diff` |
-| 会话 | `/sessions` CRUD；`/sessions/import` ✚ 整轮对话入库；`/sessions/{id}/messages` |
-| 知识库 | `/knowledge-bases`；`/{id}/documents`、`/{id}/chunks` ✚ 内容浏览；`/documents/{docId}` ✚ 删文档 |
-| Skills | `POST /skills` 新建；`PUT /skills/{id}` 编辑；`/import` 文本导入；`/sync` ✚ 扫描目录同步；`/upload` ✚ 上传 zip/SKILL.md；`/import-folder` ✚；`/open-folder` ✚；`/dir` ✚；`/{id}/files`、`/{id}/file` ✚ 浏览资源；DELETE |
-| 插件 | `/plugins/import` ✚、`/plugins/{id}` ✚ 删除（平台内置除外）、attach/detach、市场 |
-| 工具 | `/tools/mcp` ✚ MCP 接入、`/tools/{name}` ✚ 卸载、HTTP 注册、invoke |
-| 模型配置 | `/model-config`（`/embedding`、`/chat` ✚ 默认对话模型） |
-| 日志 | `/logs` 查询/导出/瀑布图/采集；`/logs/purge` ✚ 清理 |
-| 其他 | `/files`、`/quotas`、`/diagnosis`、`/prompt` |
+平台开箱即用，绝大多数能力可用环境变量开关控制，**无需改任何代码/配置文件**：
 
-> 命名契约：强类型 record 走 camelCase；自由 Map 入参走 snake_case（详见 docs/TODO.md）。
+| 环境变量 | 作用 | 默认 |
+|----------|------|------|
+| `MYSQL_URL` / `MYSQL_USER` / `MYSQL_PASSWORD` | 数据源 | `localhost:3306/agent_platform` / `agent` / `agent123456` |
+| `SKILLS_DIR` | Skills 目录（标准 SKILL.md 布局） | `./data/skills` |
+| `SKILLS_OPEN_FOLDER` | 是否允许仪表盘打开系统文件管理器 | `false`（本地桌面可设 `true`） |
+| `STORAGE_TYPE` | 文件存储：`local` / `minio` | `local`（本地磁盘 `./data/files`） |
+| `VECTOR_STORE` | 向量库：`in-memory` / `milvus` | `in-memory` |
+| `EVENTS_ENABLED` | Kafka 事件总线开关 | `false` |
+| `SECURITY_ENABLED` | core 侧 JWT 鉴权开关 | `false` |
+| `JWT_SECRET` / `MODEL_KEY_ENC_KEY` | JWT 密钥 / 模型 Key 加密主密钥 | `change-me-*`（**生产务必覆盖**） |
+| `AUTH_USERNAME` / `AUTH_PASSWORD` | 登录静态账号（配置后登录需校验） | 空（演示模式签发） |
+| `DEFAULT_PROVIDER` / `DEFAULT_MODEL` | 未配置时的模型厂商/型号 | `deepseek` / `deepseek-chat` |
 
-## 单元测试
+> 说明：`data/` 下目录运行期自动生成；所有外部能力默认关闭、本地 Mock/内存/磁盘兜底，保证「克隆即可跑」；
+> 开启真实能力的方式在下方「接入真实模型与可选能力」。
+
+### 接入真实模型（可选，推荐先跑通 Mock 再配）
+
+全部在仪表盘 **「模型设置」** 页完成，仅需配置一次：
+
+1. **默认对话模型**（供对话智能体回退使用）：选服务商（deepseek/openai/qwen/anthropic…）→
+   填模型、接口地址 baseUrl、API Key → 保存；
+2. **嵌入模型**（RAG 向量化）：选服务商 → 填模型（如 `BAAI/bge-m3`）、baseUrl、API Key → 保存。
+
+未配置时：对话走本地 Mock（确定性文本），RAG 走内存 8 维伪向量——均可本地演示。
+
+单个智能体也可覆盖平台默认：编辑智能体时勾选「为该智能体自定义模型 / API Key」。
+
+### 可选能力接线（Docker）
 
 ```bash
-mvn test    # 100 个用例：服务层 + 诊断/日志/RAG/工作流/插件/提示词等
+docker compose up -d                      # 全部可选设施
+export VECTOR_STORE=milvus STORAGE_TYPE=minio EVENTS_ENABLED=true SECURITY_ENABLED=true
+start-core.sh rebuild                     # 或手动 java --enable-preview -jar ...
 ```
 
-## 关键设计决策
+| 能力 | 接线方式 |
+|------|----------|
+| 真实对话/嵌入 | 仪表盘「模型设置」填 Key（直连，不经 LiteLLM）；或起 LiteLLM + `.env` 填 `DEEPSEEK_API_KEY` 等 |
+| Milvus 向量 | `VECTOR_STORE=milvus`（维度变化自动重建 collection，旧文档需重新上传） |
+| MinIO 文件 | `STORAGE_TYPE=minio`（默认 `MINIO_ENDPOINT/ACCESS/SECRET` 见 `application.yml`） |
+| Kafka 事件 | `EVENTS_ENABLED=true` |
+| 生产鉴权 | `SECURITY_ENABLED=true` + 覆盖 `JWT_SECRET` + 配置 `AUTH_USERNAME/AUTH_PASSWORD` |
 
-1. **模型接入走直连 / 网关双通道**：智能体绑定直连厂商（OpenAI 兼容或 Anthropic Messages），
-   否则回退平台默认对话模型 → LiteLLM 网关 → 本地 Mock；上游错误原样透出，不静默 Mock。
-2. **Record + sealed interface**：领域模型（Persona/GenerationConfig/ContentPart/…）用 JDK 21
-   Record/密封接口建模，switch 模式匹配获得编译期穷尽检查。
-3. **ScopedValue 替代 ThreadLocal**：全链路 trace 上下文传递，根治虚拟线程下上下文串号。
-4. **删除语义 = 物理删除**：智能体/知识库/工作流/Skill/会话/插件删除即物理清理并级联子资源，
-   列表默认过滤已归档，杜绝「删了还在」的悬空态。
-5. **日志落 MySQL**：运行日志持久化（log_index），重启不丢；DB 不可用自动降级有界内存队列，
-   保证日志采集永不拖垮主流程。
+---
 
-## 技术文档
+## 前端（仪表盘）
 
-| 文档 | 说明 |
+生产版：core 同源托管 `src/main/resources/static/`（已随仓库提交）。**改过前端源码后必须重建：**
+
+```bash
+# Windows
+agent-platform-ui\build-ui.bat            # 或: cd agent-platform-ui && npm install && npm run build:prod
+# Linux / macOS
+./build-ui.sh                             # 同上等价
+```
+
+开发模式（热更新，代理 /api 到 8081）：
+
+```bash
+cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5173/
+```
+
+> 改动后端后需重启 core；改动前端后需重新 `npm run build:prod` 再重启（或直接访问 5173）。
+
+---
+
+## 数据目录（运行时自动创建，无需预先存在）
+
+| 目录 | 内容 |
 |------|------|
-| [technical-guide.md](docs/technical-guide.md) | 如何添加新模型/工具/插件/诊断规则/优化策略 |
-| [deployment.md](docs/deployment.md) | K8s 部署、环境变量、弹性策略 |
-| [demo.md](docs/demo.md) / [demo-script.sh](docs/demo-script.sh) | 端到端演示 |
-| [TODO.md](docs/TODO.md) | 当前待办与已踩坑清单（含 API 契约/环境注意） |
-| 其余 `docs/` | 各阶段自测报告与可行性/技术设计（历史存档） |
+| `./data/skills/` | Skills 目录（Agent Skills 标准：`skills/<name>/SKILL.md` + 可选 `scripts/ references/ assets/`）；首次启动自动铺示例，下载的 Skill 放进目录后点「扫描同步」即可识别 |
+| `./data/files/` | 文件上传的本地存储（`STORAGE_TYPE=local`） |
+| `./data/plugins/` | 外部插件 jar 制品（可选） |
+
+---
+
+## API 概览（前缀 `/api/v1`）
+
+| 域 | 端点 |
+|----|------|
+| 智能体 | `/agents` CRUD / 版本 / 发布 / 回滚 / diff |
+| 会话 | `/sessions` CRUD、`/sessions/import`、`/sessions/{id}/messages` |
+| 对话运行 | `/agent/run`（JSON 或 SSE） |
+| 知识库 | `/knowledge-bases`、`/{id}/documents`、`/{id}/chunks`、`/documents/{docId}`、`/search` |
+| Skills | `/skills` CRUD、`/sync`、`/upload`、`/import-folder`、`/open-folder`、`/{id}/files`、`/{id}/file` |
+| 插件 | `/plugins` 市场 / 导入 / 删除 / attach / detach |
+| 工具 | `/tools` 列表 / invoke / HTTP 注册 / MCP / 卸载 |
+| 模型配置 | `/model-config`（`/embedding`、`/chat`） |
+| 日志/诊断 | `/logs`（查询/导出/瀑布图/purge）、`/diagnosis` |
+| 文件/配额/提示词 | `/files`、`/quotas`、`/prompt` |
+
+---
+
+## 从演示到生产（检查清单）
+
+- [ ] 覆盖 `JWT_SECRET`、`MODEL_KEY_ENC_KEY`（启动守卫会在「开启鉴权但仍用默认密钥」时拒绝启动）
+- [ ] 配置 `AUTH_USERNAME` / `AUTH_PASSWORD`（或接入 OAuth2/LDAP）
+- [ ] 开启 `SECURITY_ENABLED=true`
+- [ ] 服务端部署设置 `SKILLS_OPEN_FOLDER=false`（默认已关）、`STORAGE_TYPE=minio`、`VECTOR_STORE=milvus`
+- [ ] 把 `data/` 挂到持久化卷，日志定期 `DELETE /api/v1/logs/purge`
+
+---
+
+## 测试
+
+```bash
+mvn test      # 100 个单元测试（服务/诊断/日志/RAG/工作流/插件/提示词等）
+```
+
+## 文档
+
+| 文档 | 内容 |
+|------|------|
+| [technical-guide.md](docs/technical-guide.md) | 如何扩展新模型/工具/插件/Skill/诊断/优化策略 |
+| [deployment.md](docs/deployment.md) | K8s/Helm 部署、环境变量、弹性策略 |
+| [portability-audit.md](docs/portability-audit.md) | 可移植性审计与克隆运行验收清单 |
+| [demo.md](docs/demo.md) | 端到端演示 |
+| [TODO.md](docs/TODO.md) | 待办、API 契约与已踩坑清单 |

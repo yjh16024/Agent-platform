@@ -175,8 +175,27 @@ export default function SkillsPage() {
   const doOpenFolder = async () => {
     try {
       const r = await openSkillsFolder();
-      if (r.opened) message.success(`已打开目录：${r.path}`);
-      else message.warning(`未开启目录打开能力，请手动访问：${r.path}`);
+      if (r.opened) {
+        message.success(`已打开目录：${r.path}`);
+        return;
+      }
+      // 服务端/无桌面场景默认关闭该能力：给出可复制的路径与开启方式
+      Modal.info({
+        title: '目录打开能力未开启（默认安全设置）',
+        width: 560,
+        content: (
+          <div>
+            <p>Skills 目录为：</p>
+            <Typography.Text code copyable>{r.path}</Typography.Text>
+            <p style={{ marginTop: 12 }}>请把下载的 Skill 目录直接放进该路径，然后返回本页点「扫描同步目录」。</p>
+            <p style={{ marginTop: 8 }}>
+              如需从仪表盘直接打开文件管理器，请设置环境变量{' '}
+              <Typography.Text code>SKILLS_OPEN_FOLDER=true</Typography.Text> 后重启（仅本地桌面场景建议开启）。
+            </p>
+          </div>
+        ),
+        okText: '知道了',
+      });
     } catch (e) {
       message.error((e as Error).message);
     }

@@ -6,8 +6,11 @@
 ## 前置
 
 ```bash
-docker compose up -d                     # MySQL/Redis/Milvus/LiteLLM
-cd agent-platform-core && mvn spring-boot:run   # 启动核心服务
+docker compose up -d                     # 可选：MySQL/Redis/Milvus/LiteLLM（MySQL 必需，其余可选）
+# 构建并启动核心服务（项目使用 JDK 21 预览特性，运行必须带 --enable-preview）
+mvn -pl agent-platform-core -am package -DskipTests
+java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.0.0-SNAPSHOT.jar
+# Windows 亦可直接：start-core.bat rebuild；Linux/macOS：./start-core.sh rebuild
 ```
 
 ## 演示步骤与预期

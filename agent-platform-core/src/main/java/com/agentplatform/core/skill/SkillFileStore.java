@@ -56,7 +56,7 @@ public class SkillFileStore {
     @Autowired
     public SkillFileStore(
             @Value("${agent-platform.skills.dir:./data/skills}") String dir,
-            @Value("${agent-platform.skills.open-folder-enabled:true}") boolean openFolderEnabled) {
+            @Value("${agent-platform.skills.open-folder-enabled:false}") boolean openFolderEnabled) {
         this.root = Path.of(dir).toAbsolutePath().normalize();
         this.openFolderEnabled = openFolderEnabled;
     }

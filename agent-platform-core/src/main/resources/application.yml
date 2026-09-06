@@ -100,8 +100,10 @@ agent-platform:
   # 目录内新增/修改的 Skill 可直接经仪表盘「扫描同步」识别入库。
   skills:
     dir: ${SKILLS_DIR:./data/skills}
-    # 是否允许从仪表盘打开该目录（本地/桌面场景便利；服务端部署建议关闭）
-    open-folder-enabled: ${SKILLS_OPEN_FOLDER:true}
+    # 是否允许从仪表盘打开该目录（本地桌面场景便利）。
+    # 默认关闭：无桌面环境（服务器/容器/SSH）调用会失败，且存在在服务端启动文件管理器的安全隐患；
+    # 需要时显式设置 SKILLS_OPEN_FOLDER=true 开启。
+    open-folder-enabled: ${SKILLS_OPEN_FOLDER:false}
   log:
     kafka-topic: log-events
   # 生产鉴权：core 侧 JWT 兜底（true 后直连 8081 需 Bearer Token）

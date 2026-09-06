@@ -60,8 +60,9 @@ mvn clean compile
 # 2. 测试
 mvn test
 
-# 3. 启动（需先 docker compose up -d）
-cd agent-platform-core && mvn spring-boot:run
+# 3. 启动（需先 docker compose up -d 起 MySQL；项目用 JDK 21 预览特性，须带 --enable-preview）
+java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.0.0-SNAPSHOT.jar
+#    （或先 mvn -pl agent-platform-core -am package -DskipTests 再执行上面命令；Windows: start-core.bat rebuild）
 
 # 4. 验证接口（见 README「快速启动」）
 ```

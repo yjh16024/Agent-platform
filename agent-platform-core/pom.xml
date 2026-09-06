@@ -170,6 +170,11 @@
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
+                <configuration>
+                    <!-- 项目使用 JDK 21 预览特性（ScopedValue），编译与运行都必须开启预览支持。
+                         不配置 jvmArguments 的话 `mvn spring-boot:run` 会因运行 JVM 未开启预览而加载失败。 -->
+                    <jvmArguments>--enable-preview</jvmArguments>
+                </configuration>
                 <executions>
                     <execution>
                         <goals>
