@@ -1,17 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Card, Select, Input, Button, Space, Switch, Tag, Empty, List, Typography, message, Popconfirm, Alert } from 'antd';
-import { SendOutlined, PlusOutlined, ClearOutlined } from '@ant-design/icons';
+import {
+  Card, Select, Input, Button, Space, Switch, Tag, Empty, List, Typography, message, Popconfirm, Alert, Upload,
+} from 'antd';
+import { SendOutlined, PlusOutlined, ClearOutlined, PaperClipOutlined } from '@ant-design/icons';
 import { listAgents } from '../../api/agents';
-import { runAgent, runAgentStream, RunMessage } from '../../api/run';
+import { runAgent, runAgentStream, RunMessage, MessagePart } from '../../api/run';
 import { importConversation } from '../../api/sessions';
-import { AgentResponse } from '../../api/types';
+import { uploadFile } from '../../api/files';
+import { AgentResponse, FileAsset } from '../../api/types';
 import { useAppStore } from '../../store/appStore';
 import { useChatStore, ChatMsg } from '../../store/chatStore';
 
+/** 方案 A 可读附件数量上限（后端同样限制）。 */
+const MAX_ATTACH = 4;
+
+interface Attachment extends FileAsset {
+  uploading?: boolean;
+}
+
 /**
  * 对话运行页。
- * 需求：当前对话的聊天历史常驻可见（跨页面切换 / 刷新不丢，存于全局 store + localStorage），
- * 直到用户点击「新对话」，才把本轮对话保存进「会话历史」并清空本地开始新一轮。
+ * - 当前对话历史常驻（全局 store + localStorage），「新对话」才保存进会话历史；
+ * - 支持拖入/选择文件（方案 A）：上传后以 file part 发送，后端解析文本注入上下文。
  */
 export default function ChatPage() {
   const { tenantId } = useAppStore();
@@ -21,6 +31,7 @@ export default function ChatPage() {
   const [input, setInput] = useState('');
   const [stream, setStream] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
 
   const messages: ChatMsg[] = msgsOf(agentId);
@@ -46,37 +57,86 @@ export default function ChatPage() {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
   }, [messages.length]);
 
-  const send = useCallback(async () => {
-    const text = input.trim();
-    if (!text || !agentId) {
-      if (!agentId) message.warning('请先选择智能体');
+  /** 附件文件被加入（上传中置 uploading 标记）。 */
+  const addAttachment = (file: File) => {
+    if (attachments.length >= MAX_ATTACH) {
+      message.warning(`单次最多 ${MAX_ATTACH} 个文件`);
       return;
     }
-    append(agentId, { role: 'user', content: text });
+    const placeholder: Attachment = { fileName: file.name, fileType: 'file', uploading: true };
+    setAttachments((cur) => [...cur, placeholder]);
+    uploadFile(file)
+      .then((asset) => {
+        setAttachments((cur) =>
+          cur.map((a) => (a.fileName === file.name && a.uploading ? asset : a)),
+        );
+        message.success(`已上传 ${file.name}`);
+      })
+      .catch((e) => {
+        message.error(`上传失败：${(e as Error).message}`);
+        setAttachments((cur) => cur.filter((a) => !(a.fileName === file.name && a.uploading)));
+      });
+  };
+
+  const removeAttachment = (index: number) => {
+    setAttachments((cur) => cur.filter((_, i) => i !== index));
+  };
+
+  const send = useCallback(async () => {
+    const text = input.trim();
+    if (!agentId) {
+      message.warning('请先选择智能体');
+      return;
+    }
+    if (!text && attachments.length === 0) {
+      return;
+    }
+    const ready = attachments.filter((a) => !a.uploading);
+    if (ready.length !== attachments.length) {
+      message.warning('仍有文件在上传，请稍候');
+      return;
+    }
+
+    // 组装请求消息：历史为纯文本；本次 user 消息在带附件时使用 parts[]（text + file）
+    const history: RunMessage[] = msgsOf(agentId).map((m) => ({ role: m.role, content: m.content }));
+    let userMsg: RunMessage;
+    if (ready.length > 0) {
+      const parts: MessagePart[] = [];
+      if (text) parts.push({ type: 'text', text });
+      ready.forEach((a) =>
+        parts.push({ type: 'file', fileId: a.fileId!, fileName: a.fileName }),
+      );
+      userMsg = { role: 'user', content: parts };
+    } else {
+      userMsg = { role: 'user', content: text };
+    }
+    const payload: RunMessage[] = [...history, userMsg];
+
+    // 本地展示：文本 + 附件名；历史持久化只存字符串（附件内容由当轮后端解析）
+    const displayText = ready.length > 0 && text ? text : text;
+    const tagText =
+      ready.length > 0 ? `\n\n[附文件：${ready.map((a) => a.fileName).join('、')}]` : '';
+    append(agentId, { role: 'user', content: `${displayText}${tagText}`.trim() });
     setInput('');
+    setAttachments([]);
     setBusy(true);
     try {
-      const history: RunMessage[] = [...msgsOf(agentId)].map((m) => ({
-        role: m.role,
-        content: m.content,
-      }));
       if (stream) {
         let acc = '';
         append(agentId, { role: 'assistant', content: '' });
-        await runAgentStream(agentId, history, (delta) => {
+        await runAgentStream(agentId, payload, (delta) => {
           acc += delta;
           const copy = [...msgsOf(agentId)];
           copy[copy.length - 1] = { role: 'assistant', content: acc };
           replace(agentId, copy);
         });
-        // 保证流式结尾渲染
         const finalMsgs = [...msgsOf(agentId)];
         if (finalMsgs.length > 0 && finalMsgs[finalMsgs.length - 1].content === '') {
           finalMsgs[finalMsgs.length - 1] = { role: 'assistant', content: '(空)' };
           replace(agentId, finalMsgs);
         }
       } else {
-        const r = await runAgent(agentId, history);
+        const r = await runAgent(agentId, payload);
         append(agentId, { role: 'assistant', content: r.output?.content ?? '(空)' });
       }
     } catch (e) {
@@ -84,9 +144,9 @@ export default function ChatPage() {
     } finally {
       setBusy(false);
     }
-  }, [agentId, input, stream, msgsOf, append, replace]);
+  }, [agentId, input, attachments, stream, msgsOf, append, replace]);
 
-  /** 开始新对话：先把本轮对话保存进会话历史，再清空本地。 */
+  /** 开始新对话：先把本轮保存进会话历史，再清空本地。 */
   const newConversation = useCallback(async () => {
     const current = msgsOf(agentId);
     if (!agentId) return;
@@ -102,11 +162,12 @@ export default function ChatPage() {
         message.success(`本轮对话（${current.length} 条）已保存到会话历史`);
       } catch (e) {
         message.error(`保存会话失败：${(e as Error).message}`);
-        return; // 保存失败不清空，避免丢失
+        return;
       }
     }
     reset(agentId);
     setInput('');
+    setAttachments([]);
     message.info('已开始新对话');
   }, [agentId, msgsOf, reset]);
 
@@ -139,7 +200,7 @@ export default function ChatPage() {
           message={`本轮对话共 ${messages.length} 条。切换页面不会丢失；点击「新对话」将自动保存到会话历史。`}
         />
       )}
-      <div ref={listRef} style={{ height: 'calc(100vh - 300px)', minHeight: 300, overflowY: 'auto', paddingRight: 4 }}>
+      <div ref={listRef} style={{ height: 'calc(100vh - 340px)', minHeight: 260, overflowY: 'auto', paddingRight: 4 }}>
         <List
           dataSource={messages}
           locale={{ emptyText: <Empty description="发送一条消息开始对话" /> }}
@@ -152,7 +213,7 @@ export default function ChatPage() {
                 padding: '8px 0',
               }}
             >
-              <div style={{ maxWidth: '75%' }}>
+              <div style={{ maxWidth: '80%' }}>
                 <Tag color={m.role === 'user' ? 'blue' : 'green'} style={{ marginBottom: 4 }}>
                   {m.role === 'user' ? '你' : '助手'}
                 </Tag>
@@ -164,7 +225,40 @@ export default function ChatPage() {
           )}
         />
       </div>
-      <Space.Compact style={{ width: '100%', marginTop: 12 }}>
+
+      <Upload.Dragger
+        multiple
+        showUploadList={false}
+        style={{ padding: 8, marginTop: 10 }}
+        beforeUpload={(file) => {
+          addAttachment(file as unknown as File);
+          return false;
+        }}
+      >
+        <Space direction="vertical" size={2} style={{ pointerEvents: 'none' }}>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            <PaperClipOutlined /> 拖入或点击添加文件（txt/md/pdf/docx/pptx/xlsx/csv 可读；
+            最多 {MAX_ATTACH} 个，图片/音视频暂不可直接读取）
+          </Typography.Text>
+        </Space>
+      </Upload.Dragger>
+
+      {attachments.length > 0 && (
+        <Space wrap size={[4, 4]} style={{ marginTop: 8 }}>
+          {attachments.map((a, idx) => (
+            <Tag
+              key={`${a.fileName}-${idx}`}
+              closable={!a.uploading}
+              onClose={() => removeAttachment(idx)}
+              color={a.uploading ? 'processing' : 'blue'}
+            >
+              {a.uploading ? `上传中… ${a.fileName}` : a.fileName}
+            </Tag>
+          ))}
+        </Space>
+      )}
+
+      <Space.Compact style={{ width: '100%', marginTop: 8 }}>
         <Input.TextArea
           value={input}
           onChange={(e) => setInput(e.target.value)}
@@ -181,11 +275,14 @@ export default function ChatPage() {
           type="primary"
           icon={<ClearOutlined />}
           onClick={() => {
-            if (messages.length === 0) {
+            if (messages.length === 0 && attachments.length === 0) {
               message.info('当前没有消息');
               return;
             }
-            if (window.confirm('丢弃当前对话（不保存到会话历史）？')) reset(agentId);
+            if (window.confirm('丢弃当前对话与附件（不保存到会话历史）？')) {
+              reset(agentId);
+              setAttachments([]);
+            }
           }}
         >
           清空

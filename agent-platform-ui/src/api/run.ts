@@ -1,8 +1,13 @@
 import { http, getTenantId, getToken } from './http';
 
+/** 一条消息的 content 类型：纯文本 或 parts[]（text + file 附件）。 */
+export type MessagePart =
+  | { type: 'text'; text: string }
+  | { type: 'file'; fileId: string; fileName?: string };
+
 export interface RunMessage {
   role: string;
-  content: string;
+  content: string | MessagePart[];
 }
 
 export interface RunResponse {

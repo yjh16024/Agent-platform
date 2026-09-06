@@ -2,6 +2,7 @@ package com.agentplatform.core.multimodal;
 
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.common.util.IdGenerator;
+import com.agentplatform.core.rag.pipeline.DocumentParser;
 import com.agentplatform.core.storage.StorageService;
 import com.agentplatform.model.entity.FileAsset;
 import com.agentplatform.model.repository.FileAssetRepository;
@@ -71,6 +72,12 @@ public class FileUploadService {
 
     private final FileAssetRepository fileAssetRepository;
     private final StorageService storageService;
+    private final DocumentParser documentParser;
+
+    /** 可被「对话读取」直接解析为文本的扩展名白名单。 */
+    private static final Set<String> PARSABLE_TEXT_EXT = Set.of(
+            "txt", "md", "markdown", "csv", "html", "htm", "json", "xml",
+            "pdf", "doc", "docx", "ppt", "pptx", "xls", "xlsx");
 
     /**
      * 上传文件。
@@ -165,6 +172,60 @@ public class FileUploadService {
      * 下载结果（元数据 + 内容）。
      */
     public record Download(FileAsset asset, byte[] bytes) {
+    }
+
+    /** 单个文件可注入上下文的默认最大字符数（约 100k，控制 token 成本）。 */
+    private static final int DEFAULT_MAX_TEXT_CHARS = 100_000;
+
+    /**
+     * 读取已上传文件为文本（方案 A：对话拖入即读）。
+     * <p>下载字节 → {@link DocumentParser} 解析 → 截断保护。按租户隔离，仅允许
+     * 可解析文本类（txt/md/csv/html/pdf/docx/pptx/xlsx 等）；图片/音视频给出明确提示。</p>
+     */
+    @Transactional(readOnly = true)
+    public FileText readText(String tenantId, String fileId) {
+        return readText(tenantId, fileId, DEFAULT_MAX_TEXT_CHARS);
+    }
+
+    /**
+     * 读取已上传文件为文本（可指定最大字符数）。
+     */
+    @Transactional(readOnly = true)
+    public FileText readText(String tenantId, String fileId, int maxChars) {
+        Download d = download(tenantId, fileId);
+        String ext = extensionOf(d.asset().getFileName());
+        String category = EXT_CATEGORY.getOrDefault(ext, "file");
+        if ("image".equals(category) || "audio".equals(category) || "video".equals(category)) {
+            throw BizException.badRequest("文件类型为 " + category + "，暂不支持直接读取"
+                    + "（图片视觉读取、音视频转写见后续能力）");
+        }
+        if (!PARSABLE_TEXT_EXT.contains(ext)) {
+            throw BizException.badRequest("暂不支持直接读取 ." + ext
+                    + " 类型文件，可先上传到知识库再检索使用");
+        }
+        String text;
+        try {
+            text = documentParser.parse(d.asset().getFileName(), d.bytes(), null);
+        } catch (Exception e) {
+            throw BizException.internal("解析文件文本失败（文件可能损坏或已加密）: " + e.getMessage(), e);
+        }
+        if (text == null) {
+            text = "";
+        }
+        int limit = maxChars <= 0 ? DEFAULT_MAX_TEXT_CHARS : maxChars;
+        boolean truncated = text.length() > limit;
+        String content = truncated ? text.substring(0, limit) : text;
+        return new FileText(
+                d.asset().getFileId(),
+                d.asset().getFileName(),
+                d.asset().getFileType(),
+                content,
+                truncated,
+                d.asset().getFileSize());
+    }
+
+    /** 读取结果。 */
+    public record FileText(String fileId, String fileName, String fileType, String text, boolean truncated, Long fileSize) {
     }
 
     /**

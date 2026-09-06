@@ -11,6 +11,7 @@ import com.agentplatform.core.log.LogEvent;
 import com.agentplatform.core.log.LogLevel;
 import com.agentplatform.core.log.LogService;
 import com.agentplatform.core.model.adapter.ModelAdapter;
+import com.agentplatform.core.multimodal.FileUploadService;
 import com.agentplatform.core.model.router.ModelRouter;
 import com.agentplatform.core.model.secret.ModelBindingService;
 import com.agentplatform.core.multimodal.QuotaService;
@@ -73,6 +74,10 @@ public class AgentRuntimeService {
     @Autowired(required = false)
     private SkillService skillService;
 
+    /** 附件读取（方案 A：对话拖入即读；未注入时 file part 报"服务不可用"而非崩溃）。 */
+    @Autowired(required = false)
+    private FileUploadService fileUploadService;
+
     /** 默认模型 provider / 名称（智能体未显式配置时兜底到真实模型）。 */
     @Value("${agent-platform.model.default-provider:deepseek}")
     private String defaultProvider;
@@ -107,8 +112,8 @@ public class AgentRuntimeService {
             ModelBindingService.ResolvedModel resolved = resolveModelBinding(agent, gc);
             final String provider = resolved.provider();
             final String model = resolved.model();
-            // ③ 组装用户消息（取最后一条 user 消息）
-            String userMessage = extractUserMessage(req);
+            // ③ 组装用户消息（取最后一条 user 消息；parts[] 含 file 时注入文件文本）
+            String userMessage = extractUserMessage(req, tenantId);
 
             // ④ 确保插件已挂载（热加载）
             ensurePluginsAttached(agent, tenantId);
@@ -247,7 +252,7 @@ public class AgentRuntimeService {
             String systemPrompt = withSkillPrompts(agent,
                     assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
             GenerationConfig gc = mergeGenerationConfig(agent.getGenerationConfig(), req.model());
-            String userMessage = extractUserMessage(req);
+            String userMessage = extractUserMessage(req, tenantId);
             ModelBindingService.ResolvedModel resolved = resolveModelBinding(agent, gc);
             String provider = resolved.provider();
             String model = resolved.model();
@@ -415,23 +420,89 @@ public class AgentRuntimeService {
     }
 
     /**
-     * 提取最后一条用户消息文本。
+     * 提取最后一条用户消息文本（兼容纯文本与 parts[]，含 file 附件读取）。
+     * <p>方案 A：消息 content 为 parts[] 时，text 块直接拼接；file 块经
+     * {@link FileUploadService#readText} 把文件内容解析为文本并注入上下文。</p>
      */
-    private String extractUserMessage(AgentRunRequest req) {
-        if (req.messages() == null || req.messages().isEmpty()) {
-            return "";
+    private String extractUserMessage(AgentRunRequest req, String tenantId) {
+        AgentRunRequest.Message last = lastUserMessage(req);
+        Object content = last == null ? null : last.content();
+        if (content instanceof String s) {
+            return s;
         }
-        // 从后往前找 user 消息
+        if (content instanceof List<?> parts) {
+            return renderParts(parts, tenantId);
+        }
+        return content == null ? "" : String.valueOf(content);
+    }
+
+    private AgentRunRequest.Message lastUserMessage(AgentRunRequest req) {
+        if (req.messages() == null || req.messages().isEmpty()) {
+            return null;
+        }
         for (int i = req.messages().size() - 1; i >= 0; i--) {
             AgentRunRequest.Message msg = req.messages().get(i);
             if ("user".equals(msg.role())) {
-                if (msg.content() instanceof String s) {
-                    return s;
-                }
-                // content 是 parts 数组（多模态）时暂取 text 块
-                return String.valueOf(msg.content());
+                return msg;
             }
         }
-        throw BizException.badRequest("No user message found");
+        return null;
+    }
+
+    /**
+     * 组装 parts[] 为单个文本：text 直接拼接；file 下载解析后注入
+     * {@code [文件：name]} 区块；不支持的 part 以占位说明代替（不阻断）。
+     */
+    private String renderParts(List<?> parts, String tenantId) {
+        StringBuilder text = new StringBuilder();
+        int fileCount = 0;
+        for (Object part : parts) {
+            if (!(part instanceof Map<?, ?> m)) {
+                text.append(part == null ? "" : part).append('\n');
+                continue;
+            }
+            String type = strOf(m.get("type"));
+            if ("text".equals(type)) {
+                String t = strOf(m.get("text"));
+                if (!t.isBlank()) {
+                    text.append(t).append('\n');
+                }
+            } else if ("file".equals(type)) {
+                String fileId = strOf(m.get("fileId"));
+                String fileName = strOf(m.get("fileName"));
+                if (fileCount >= 4) {
+                    text.append("\n[已跳过额外文件：" ).append(fileName).append("，单次最多读取 4 个文件]");
+                    continue;
+                }
+                fileCount++;
+                text.append("\n\n[文件：").append(fileName).append("]\n");
+                text.append(readAttachedFile(tenantId, fileId, fileName));
+            } else {
+                text.append("\n[").append(type == null ? "未知" : type).append(" 类型暂不支持直接读取]\n");
+            }
+        }
+        return text.toString().trim();
+    }
+
+    /** 读取附件文本（失败不阻断，把错误信息作为该文件的"内容"返回）。 */
+    private String readAttachedFile(String tenantId, String fileId, String fileName) {
+        if (fileUploadService == null) {
+            return "(文件读取服务不可用)";
+        }
+        try {
+            FileUploadService.FileText ft = fileUploadService.readText(tenantId, fileId);
+            String body = ft.text() == null ? "" : ft.text();
+            if (ft.truncated()) {
+                body = body + "\n…（内容过长已截断，仅展示前 100k 字符）";
+            }
+            return body;
+        } catch (Exception e) {
+            log.warn("Read attached file {} failed: {}", fileId, e.getMessage());
+            return "(文件读取失败：" + e.getMessage() + ")";
+        }
+    }
+
+    private static String strOf(Object v) {
+        return v == null ? "" : String.valueOf(v);
     }
 }
