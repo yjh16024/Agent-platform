@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  Card, Select, Input, Button, Space, Switch, Tag, Empty, List, Typography, message, Popconfirm, Alert, Upload,
+  Card, Select, Input, Button, Space, Switch, Tag, Empty, List, Typography, message, Popconfirm, Alert, Upload, Tooltip,
 } from 'antd';
-import { SendOutlined, PlusOutlined, ClearOutlined, PaperClipOutlined } from '@ant-design/icons';
+import { SendOutlined, PlusOutlined, ClearOutlined, PaperClipOutlined, BookOutlined } from '@ant-design/icons';
 import { listAgents } from '../../api/agents';
 import { runAgent, runAgentStream, RunMessage, MessagePart } from '../../api/run';
 import { importConversation } from '../../api/sessions';
@@ -119,6 +119,10 @@ export default function ChatPage() {
     append(agentId, { role: 'user', content: `${displayText}${tagText}`.trim() });
     setInput('');
     setAttachments([]);
+    const curAgent = agents.find((a) => a.agentId === agentId);
+    const kbIds = (curAgent?.capabilities?.knowledgeBaseIds ?? []).filter(Boolean) as string[];
+    const rag = kbIds.length > 0 ? { useRag: true, knowledgeBaseIds: kbIds } : undefined;
+
     setBusy(true);
     try {
       if (stream) {
@@ -129,22 +133,26 @@ export default function ChatPage() {
           const copy = [...msgsOf(agentId)];
           copy[copy.length - 1] = { role: 'assistant', content: acc };
           replace(agentId, copy);
-        });
+        }, rag);
         const finalMsgs = [...msgsOf(agentId)];
         if (finalMsgs.length > 0 && finalMsgs[finalMsgs.length - 1].content === '') {
           finalMsgs[finalMsgs.length - 1] = { role: 'assistant', content: '(空)' };
           replace(agentId, finalMsgs);
         }
       } else {
-        const r = await runAgent(agentId, payload);
-        append(agentId, { role: 'assistant', content: r.output?.content ?? '(空)' });
+        const r = await runAgent(agentId, payload, rag);
+        append(agentId, {
+          role: 'assistant',
+          content: r.output?.content ?? '(空)',
+          refs: r.references && r.references.length > 0 ? r.references : undefined,
+        });
       }
     } catch (e) {
       append(agentId, { role: 'assistant', content: `⚠️ ${(e as Error).message}` });
     } finally {
       setBusy(false);
     }
-  }, [agentId, input, attachments, stream, msgsOf, append, replace]);
+  }, [agentId, input, attachments, stream, msgsOf, append, replace, agents]);
 
   /** 开始新对话：先把本轮保存进会话历史，再清空本地。 */
   const newConversation = useCallback(async () => {
@@ -222,6 +230,23 @@ export default function ChatPage() {
                 <Typography.Paragraph style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }} copyable={false}>
                   {m.content}
                 </Typography.Paragraph>
+                {m.role === 'assistant' && m.refs && m.refs.length > 0 && (
+                  <div style={{ marginTop: 6, fontSize: 12 }}>
+                    <Space size={4} wrap>
+                      <BookOutlined style={{ color: '#8c8c8c' }} />
+                      {m.refs.slice(0, 6).map((r, ri) => (
+                        <Tooltip
+                          key={ri}
+                          title={`score: ${r.score ?? '-'}${r.page ? ` · 第${r.page}页` : ''}`}
+                        >
+                          <Tag style={{ cursor: 'pointer', marginInlineEnd: 0 }} color="gold">
+                            来源 {ri + 1}：{r.source ?? r.chunkId ?? '未知'}
+                          </Tag>
+                        </Tooltip>
+                      ))}
+                    </Space>
+                  </div>
+                )}
               </div>
             </List.Item>
           )}

@@ -11,6 +11,10 @@ import com.agentplatform.core.log.LogEvent;
 import com.agentplatform.core.log.LogLevel;
 import com.agentplatform.core.log.LogService;
 import com.agentplatform.core.model.adapter.ModelAdapter;
+import com.agentplatform.core.rag.retriever.HybridRetriever;
+import com.agentplatform.core.rag.retriever.RetrievalResult;
+import com.agentplatform.model.entity.DocumentEntity;
+import com.agentplatform.model.repository.DocumentRepository;
 import com.agentplatform.core.multimodal.FileUploadService;
 import com.agentplatform.core.model.router.ModelRouter;
 import com.agentplatform.core.model.secret.ModelBindingService;
@@ -32,6 +36,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -78,6 +83,14 @@ public class AgentRuntimeService {
     @Autowired(required = false)
     private FileUploadService fileUploadService;
 
+    /** RAG 混合检索（可选：未注入时跳过知识库注入，保持旧行为与单测可用）。 */
+    @Autowired(required = false)
+    private HybridRetriever hybridRetriever;
+
+    /** 文档仓储（可选：用于把 docId 映射成可读文件名，填充引用来源）。 */
+    @Autowired(required = false)
+    private DocumentRepository documentRepository;
+
     /** 默认模型 provider / 名称（智能体未显式配置时兜底到真实模型）。 */
     @Value("${agent-platform.model.default-provider:deepseek}")
     private String defaultProvider;
@@ -104,9 +117,6 @@ public class AgentRuntimeService {
                 quotaService.checkAndIncrement(tenantId, "model_calls", null);
             }
 
-            // ① 组装系统提示词（人格 → 提示词合并 + 变量填充 + Skill 注入）
-            String systemPrompt = withSkillPrompts(agent,
-                    assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
             // ② 合并生成参数（provider/模型未配置时兜底到默认真实模型）
             GenerationConfig gc = mergeGenerationConfig(agent.getGenerationConfig(), req.model());
             ModelBindingService.ResolvedModel resolved = resolveModelBinding(agent, gc);
@@ -114,6 +124,15 @@ public class AgentRuntimeService {
             final String model = resolved.model();
             // ③ 组装用户消息（取最后一条 user 消息；parts[] 含 file 时注入文件文本）
             String userMessage = extractUserMessage(req, tenantId);
+
+            // ③.1 组装基础系统提示词（人格 → 提示词合并 + 变量填充 + Skill 注入）
+            String basePrompt = withSkillPrompts(agent,
+                    assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
+            // ③.2 RAG 知识库自动检索（请求/智能体绑定知识库时，把命中片段注入上下文并生成引用）
+            RagRender rag = retrieveKnowledge(agent, req, userMessage);
+            final String systemPrompt = rag.systemBlock() == null || rag.systemBlock().isBlank()
+                    ? basePrompt
+                    : basePrompt + rag.systemBlock();
 
             // ④ 确保插件已挂载（热加载）
             ensurePluginsAttached(agent, tenantId);
@@ -156,11 +175,15 @@ public class AgentRuntimeService {
                 throw e;
             }
 
-            // ⑥ 计量与响应（含插件附加产物如 audio_url）
+            // ⑥ 计量与响应（含插件附加产物如 audio_url；RAG 检索命中时附带引用溯源）
             AgentRunResponse.Usage usage = new AgentRunResponse.Usage(
                     usageTokens[0], usageTokens[1], 0.0);
             AgentRunResponse resp = AgentRunResponse.of(
                     runId, req.sessionId(), req.mode(), pipeline.reply(), traceId, usage);
+            if (rag != null && !rag.references().isEmpty()) {
+                resp = new AgentRunResponse(resp.runId(), resp.sessionId(), resp.mode(),
+                        resp.output(), resp.traceId(), resp.usage(), rag.references(), resp.plugins());
+            }
             if (pipeline.extras() != null && pipeline.extras().containsKey("audio_url")) {
                 resp = new AgentRunResponse(resp.runId(), resp.sessionId(), resp.mode(),
                         new AgentRunResponse.Output("assistant", resp.output().content(),
@@ -223,6 +246,105 @@ public class AgentRuntimeService {
     }
 
     /**
+     * RAG 知识库自动检索（方案 B）。
+     * <p>
+     * 知识库范围解析顺序：请求级 {@code context.rag.knowledgeBaseIds} 优先；
+     * 否则回退智能体 {@code capabilities.knowledgeBaseIds}（默认绑定）。
+     * 命中片段拼成系统提示词附文（带来源编号），供模型作答引用；
+     * 检索结果同时生成 {@code references} 返回前端做引用溯源。
+     * 任何失败（未绑定知识库 / 检索异常）均优雅降级为 null，不阻断对话。
+     * </p>
+     */
+    private RagRender retrieveKnowledge(AgentDefinition agent, AgentRunRequest req, String userMessage) {
+        AgentRunRequest.ContextConfig ctx = req.context();
+        if (hybridRetriever == null) {
+            return null;
+        }
+        if (userMessage == null || userMessage.isBlank()) {
+            return null;
+        }
+
+        // ① 解析知识库范围
+        List<String> kbIds = new ArrayList<>();
+        Boolean useRag = ctx == null ? null : ctx.useRag();
+        if (ctx != null && ctx.rag() != null && ctx.rag().knowledgeBaseIds() != null
+                && !ctx.rag().knowledgeBaseIds().isEmpty()) {
+            kbIds.addAll(ctx.rag().knowledgeBaseIds());
+        }
+        if (kbIds.isEmpty() && agent.getCapabilities() != null
+                && agent.getCapabilities().knowledgeBaseIds() != null) {
+            kbIds.addAll(agent.getCapabilities().knowledgeBaseIds());
+        }
+        if (kbIds.isEmpty() || Boolean.FALSE.equals(useRag)) {
+            return null;
+        }
+
+        // ② 检索参数（请求可覆盖）
+        int topK = 5;
+        double scoreThreshold = 0.0;
+        if (ctx != null && ctx.rag() != null) {
+            if (ctx.rag().topK() != null && ctx.rag().topK() > 0) {
+                topK = ctx.rag().topK();
+            }
+            if (ctx.rag().scoreThreshold() != null) {
+                scoreThreshold = ctx.rag().scoreThreshold();
+            }
+        }
+
+        // ③ 执行混合检索（异常降级，不阻断主流程）
+        List<RetrievalResult> hits;
+        try {
+            hits = hybridRetriever.search(kbIds, userMessage, topK, scoreThreshold, null, true);
+        } catch (Exception e) {
+            log.warn("RAG retrieval skipped: {}", e.getMessage());
+            return null;
+        }
+        if (hits == null || hits.isEmpty()) {
+            return null;
+        }
+
+        // ④ 组装系统提示词附文 + 引用溯源
+        Map<String, String> docTitleCache = new LinkedHashMap<>();
+        StringBuilder block = new StringBuilder("\n\n## 知识库资料（只读参考）\n");
+        block.append("请优先依据下列资料作答；引用时标注〔来源编号〕；资料未覆盖的内容请明确说明\"知识库中未找到\"，不要编造。\n");
+        List<AgentRunResponse.Reference> refs = new ArrayList<>();
+        int idx = 1;
+        for (RetrievalResult hit : hits) {
+            String docId = hit.source();
+            String title = docId == null ? "未知文档"
+                    : docTitleCache.computeIfAbsent(docId, this::lookupDocTitle);
+            block.append("〔来源").append(idx).append("〕").append(title);
+            if (hit.page() != null) {
+                block.append(" 第").append(hit.page()).append("页");
+            }
+            block.append("\n").append(hit.content() == null ? "" : hit.content()).append("\n\n");
+            refs.add(new AgentRunResponse.Reference(
+                    hit.chunkId(), title, hit.page(), hit.score()));
+            idx++;
+        }
+        return new RagRender(block.toString(), refs);
+    }
+
+    /** 把 docId 映射为可读文件名（查找失败回退原 ID）。 */
+    private String lookupDocTitle(String docId) {
+        try {
+            if (documentRepository != null) {
+                DocumentEntity doc = documentRepository.findByDocId(docId).orElse(null);
+                if (doc != null && doc.getTitle() != null && !doc.getTitle().isBlank()) {
+                    return doc.getTitle();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to resolve doc title {}: {}", docId, e.getMessage());
+        }
+        return docId;
+    }
+
+    /** RAG 检索产物：注入提示词的附文 + 引用列表。 */
+    private record RagRender(String systemBlock, List<AgentRunResponse.Reference> references) {
+    }
+
+    /**
      * 确保智能体挂载的插件已热加载（幂等）。
      */
     private void ensurePluginsAttached(AgentDefinition agent, String tenantId) {
@@ -249,10 +371,14 @@ public class AgentRuntimeService {
 
         return TraceContext.withContext(traceId, runId, tenantId, () -> {
             AgentDefinition agent = agentService.getOrThrow(tenantId, req.agentId());
-            String systemPrompt = withSkillPrompts(agent,
-                    assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
-            GenerationConfig gc = mergeGenerationConfig(agent.getGenerationConfig(), req.model());
             String userMessage = extractUserMessage(req, tenantId);
+            String basePrompt = withSkillPrompts(agent,
+                    assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
+            RagRender rag = retrieveKnowledge(agent, req, userMessage);
+            final String systemPrompt = rag == null || rag.systemBlock() == null || rag.systemBlock().isBlank()
+                    ? basePrompt
+                    : basePrompt + rag.systemBlock();
+            GenerationConfig gc = mergeGenerationConfig(agent.getGenerationConfig(), req.model());
             ModelBindingService.ResolvedModel resolved = resolveModelBinding(agent, gc);
             String provider = resolved.provider();
             String model = resolved.model();

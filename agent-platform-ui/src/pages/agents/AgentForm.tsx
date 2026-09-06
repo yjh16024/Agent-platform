@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import {
-  Modal, Form, Input, Select, AutoComplete, Slider, InputNumber, Row, Col, message, Divider, Alert, Checkbox,
+  Modal, Form, Input, Select, AutoComplete, Slider, InputNumber, Row, Col, message, Divider, Alert, Checkbox, Typography,
 } from 'antd';
 import { createAgent, updateAgent } from '../../api/agents';
-import { AgentResponse } from '../../api/types';
+import { listKbs } from '../../api/knowledgeBases';
+import { AgentResponse, KnowledgeBase } from '../../api/types';
 
 const TONES = ['formal', 'friendly', 'humorous', 'concise', 'empathetic'];
 
@@ -58,8 +59,17 @@ export default function AgentForm({
   // 「自定义模型」开关：默认关 → 使用平台默认对话模型（模型设置页配置），
   // 避免每个智能体都重复填一遍 provider/baseUrl/API Key（与模型设置页功能重复）。
   const [customModel, setCustomModel] = useState(false);
+  const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
   const provider = Form.useWatch('provider', form) as string | undefined;
   const modelOptions = (PROVIDER_MODELS[provider ?? ''] ?? []).map((m) => ({ value: m, label: m }));
+
+  // 打开时加载可用知识库（供能力绑定选择）
+  useEffect(() => {
+    if (!open) return;
+    listKbs()
+      .then((list) => setKbs(list ?? []))
+      .catch(() => setKbs([]));
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -78,12 +88,13 @@ export default function AgentForm({
         provider: editing.modelBinding?.provider,
         model: editing.modelBinding?.model,
         baseUrl: editing.modelBinding?.baseUrl,
+        knowledgeBaseIds: editing.capabilities?.knowledgeBaseIds ?? [],
         // apiKey 绝不在表单回显明文，仅在 placeholder 提示「已配置」
       });
     } else {
       form.resetFields();
       setCustomModel(false);
-      form.setFieldsValue({ temperature: 0.7, maxTokens: 2048 });
+      form.setFieldsValue({ temperature: 0.7, maxTokens: 2048, knowledgeBaseIds: [] });
     }
   }, [open, editing, form]);
 
@@ -97,6 +108,11 @@ export default function AgentForm({
       systemPrompt: v.systemPrompt,
       persona: { tone: v.tone, role: v.role },
       generationConfig: { temperature: v.temperature, maxTokens: v.maxTokens },
+      capabilities: {
+        // 合并已有能力，避免覆盖 skills/plugins 等其它绑定
+        ...(editing?.capabilities ?? {}),
+        knowledgeBaseIds: (v.knowledgeBaseIds ?? []).filter(Boolean) as string[],
+      },
     };
     // 仅当用户显式勾选「自定义模型」时才提交模型绑定；
     // 否则后端回退到平台默认对话模型（模型设置页），实现“只配一次、处处复用”。
@@ -236,6 +252,25 @@ export default function AgentForm({
             </Form.Item>
           </>
         )}
+
+        <Divider orientation="left" plain>
+          能力绑定 capabilities
+        </Divider>
+        <Form.Item
+          name="knowledgeBaseIds"
+          label="关联知识库（对话时自动检索并引用）"
+          extra="绑定后，对话运行时会对你的问题自动检索所选知识库，并把命中资料注入上下文供智能体引用。"
+        >
+          <Select
+            mode="multiple"
+            allowClear
+            placeholder={kbs.length > 0 ? '选择要绑定的知识库' : '暂无知识库，请先在知识库页创建并上传文档'}
+            options={kbs.map((k) => ({ value: k.kbId, label: k.name }))}
+          />
+        </Form.Item>
+        <Typography.Text type="secondary" style={{ fontSize: 12, display: 'block', marginBottom: 12 }}>
+          也可不在此绑定：在对话页发送消息时临时指定知识库同样生效（后端支持请求级 rag 配置）。
+        </Typography.Text>
 
         <Divider orientation="left" plain>
           人格 persona

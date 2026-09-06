@@ -10,6 +10,13 @@ export interface RunMessage {
   content: string | MessagePart[];
 }
 
+export interface RunReference {
+  chunkId?: string;
+  source?: string;
+  page?: number | null;
+  score?: number;
+}
+
 export interface RunResponse {
   runId?: string;
   sessionId?: string;
@@ -17,15 +24,29 @@ export interface RunResponse {
   output?: { role?: string; content?: string; audioUrl?: string };
   traceId?: string;
   usage?: { promptTokens?: number; completionTokens?: number; totalCostUsd?: number };
-  references?: unknown[];
+  references?: RunReference[];
   plugins?: unknown[];
 }
 
+/** RAG 请求配置：useRag 置 true 并指定知识库后，对话会自动检索并返回引用。 */
+export interface RagRequest {
+  useRag?: boolean;
+  knowledgeBaseIds?: string[];
+  topK?: number;
+  scoreThreshold?: number;
+}
+
 // 非流式：/agent/run 返回裸 JSON（不套 ApiResponse），raw=true
-export function runAgent(agentId: string, messages: RunMessage[]) {
+export function runAgent(agentId: string, messages: RunMessage[], rag?: RagRequest) {
   return http.post<RunResponse>(
     '/api/v1/agent/run',
-    { agentId, mode: 'agent', messages, metadata: { tenant_id: getTenantId(), user_id: 'demo-user' } },
+    {
+      agentId,
+      mode: 'agent',
+      messages,
+      context: rag ? { useRag: rag.useRag ?? true, rag: { knowledgeBaseIds: rag.knowledgeBaseIds ?? [], topK: rag.topK ?? 5, scoreThreshold: rag.scoreThreshold ?? 0.0 } } : undefined,
+      metadata: { tenant_id: getTenantId(), user_id: 'demo-user' },
+    },
     true,
   );
 }
@@ -36,6 +57,7 @@ export async function runAgentStream(
   agentId: string,
   messages: RunMessage[],
   onDelta: (text: string) => void,
+  rag?: RagRequest,
 ): Promise<void> {
   const h: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -52,6 +74,7 @@ export async function runAgentStream(
       mode: 'agent',
       messages,
       stream: true,
+      context: rag ? { useRag: rag.useRag ?? true, rag: { knowledgeBaseIds: rag.knowledgeBaseIds ?? [], topK: rag.topK ?? 5, scoreThreshold: rag.scoreThreshold ?? 0.0 } } : undefined,
       metadata: { tenant_id: getTenantId(), user_id: 'demo-user' },
     }),
   });

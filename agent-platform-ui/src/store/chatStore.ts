@@ -6,6 +6,8 @@ import { persist } from 'zustand/middleware';
 export interface ChatMsg {
   role: 'user' | 'assistant';
   content: string;
+  /** RAG 引用溯源（来源文档 + 页码），仅当该轮智能体检索到知识库时有值。 */
+  refs?: Array<{ chunkId?: string; source?: string; page?: number | null; score?: number }>;
 }
 
 interface ChatState {
