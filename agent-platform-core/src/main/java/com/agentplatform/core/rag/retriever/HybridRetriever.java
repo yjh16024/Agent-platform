@@ -138,21 +138,39 @@ public class HybridRetriever {
 
     /**
      * 获取稀疏检索候选集：优先 FULLTEXT，回退全量扫描。
+     * <p>
+     * 注意：native FULLTEXT 查询的实体映射不可靠（@Lob content / JSON meta 可能不被填充，
+     * 导致后续关键词匹配恒为 0）。因此这里只把 FULLTEXT 结果当作「候选 ID 清单」，
+     * 内容一律经 Spring Data 派生查询 {@link #chunkRepository#findByChunkId} 回查，
+     * 保证与浏览页读到的内容一致。
+     * </p>
      */
     private List<Chunk> fullTextCandidates(List<String> kbIds, String query) {
+        Map<String, Chunk> ordered = new LinkedHashMap<>();
+        boolean fullTextOk = false;
         try {
             List<Chunk> hit = chunkRepository.fullTextSearch(kbIds, query, 500);
-            if (!hit.isEmpty()) {
-                return hit;
+            if (hit != null && !hit.isEmpty()) {
+                fullTextOk = true;
+                // 只取 FULLTEXT 精筛出的 chunkId，再回查完整实体（去重、保持相关性顺序）
+                for (Chunk c : hit) {
+                    if (c.getChunkId() == null) {
+                        continue;
+                    }
+                    chunkRepository.findByChunkId(c.getChunkId()).ifPresent(found -> ordered.putIfAbsent(found.getChunkId(), found));
+                }
             }
         } catch (Exception e) {
             log.warn("Full-text search unavailable, fallback to sequential scan: {}", e.getMessage());
         }
-        List<Chunk> all = new ArrayList<>();
-        for (String kbId : kbIds) {
-            all.addAll(chunkRepository.findByKbIdOrderBySeqNo(kbId));
+        // FULLTEXT 无命中（或仅剩缺内容的脏行）→ 顺序扫描兜底
+        if (!fullTextOk || ordered.isEmpty()) {
+            for (String kbId : kbIds) {
+                chunkRepository.findByKbIdOrderBySeqNo(kbId)
+                        .forEach(c -> ordered.putIfAbsent(c.getChunkId(), c));
+            }
         }
-        return all;
+        return new ArrayList<>(ordered.values());
     }
 
     /**
