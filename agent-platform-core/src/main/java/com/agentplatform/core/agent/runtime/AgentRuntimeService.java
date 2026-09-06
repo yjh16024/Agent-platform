@@ -128,9 +128,10 @@ public class AgentRuntimeService {
             // ③.1 组装基础系统提示词（人格 → 提示词合并 + 变量填充 + Skill 注入）
             String basePrompt = withSkillPrompts(agent,
                     assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
-            // ③.2 RAG 知识库自动检索（请求/智能体绑定知识库时，把命中片段注入上下文并生成引用）
+            // ③.2 RAG 知识库自动检索（请求/智能体绑定知识库时，把命中片段注入上下文并生成引用；
+            // 未绑定知识库/检索失败时 retrieveKnowledge 返回 null，等价于普通对话）
             RagRender rag = retrieveKnowledge(agent, req, userMessage);
-            final String systemPrompt = rag.systemBlock() == null || rag.systemBlock().isBlank()
+            final String systemPrompt = rag == null || rag.systemBlock() == null || rag.systemBlock().isBlank()
                     ? basePrompt
                     : basePrompt + rag.systemBlock();
 
