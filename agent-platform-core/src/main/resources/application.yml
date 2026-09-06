@@ -95,6 +95,13 @@ agent-platform:
     model-key: ${MODEL_KEY_ENC_KEY:change-me-model-key-encryption-32b}
   plugin:
     artifact-dir: ${PLUGIN_ARTIFACT_DIR:./data/plugins}
+  # ---- Skills 目录（Agent Skills 开放标准布局）----
+  # skills/<skill-name>/SKILL.md（YAML frontmatter + 提示词正文）+ 可选 scripts/ references/ assets/
+  # 目录内新增/修改的 Skill 可直接经仪表盘「扫描同步」识别入库。
+  skills:
+    dir: ${SKILLS_DIR:./data/skills}
+    # 是否允许从仪表盘打开该目录（本地/桌面场景便利；服务端部署建议关闭）
+    open-folder-enabled: ${SKILLS_OPEN_FOLDER:true}
   log:
     kafka-topic: log-events
   # 生产鉴权：core 侧 JWT 兜底（true 后直连 8081 需 Bearer Token）

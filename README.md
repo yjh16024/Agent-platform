@@ -14,6 +14,7 @@
 | 模型配置分层 | 平台级「默认对话模型」+「嵌入模型」绑定（模型设置页，AES-GCM 加密落库、只回掩码）；智能体未单独配置时自动回退，避免每个智能体重复填 Key |
 | 会话与上下文 | Session 管理、对话历史持久化与回放、会话归档/删除；前端对话历史切页不丢，点「新对话」才保存进会话历史 |
 | RAG | 知识库生命周期、文档摄取管线（解析→切分→向量化→索引）、稠密向量 + MySQL FULLTEXT 稀疏双路 RRF 融合、rerank、chunk 级引用溯源、内容浏览 |
+| Skills（标准目录） | 遵循 **Agent Skills 开放标准**：`skills/<name>/SKILL.md`（YAML frontmatter + 提示词正文）+ `scripts/ references/ assets/`；下载的技能丢进目录后「扫描同步」即被识别，运行时注入系统提示词 |
 | 工作流编排 | 自研 DAG 引擎（条件分支 + 虚拟线程并行）、节点 Schema 校验 |
 | 多模态 | parts[] 统一消息模型、文件上传/下载、TTS/ASR 插件化 |
 | 工具调用 | 工具注册中心、HTTP 工具热注册、**MCP(Streamable HTTP) 接入**、责任链鉴权 |
@@ -95,9 +96,9 @@ curl -X POST http://localhost:8081/api/v1/agent/run -H "Content-Type: applicatio
 ## 仪表盘功能域
 
 智能体管理（新建/编辑/版本/发布回滚/删除）· 对话运行（历史常驻 + 新对话归档）· 会话历史 ·
-知识库（上传/浏览内容/删除）· 工作流 · Skills（查看/编辑/删除）· 插件市场（导入/删除/挂载）·
-工具调试（含 MCP 接入）· 文件 · 模型设置（默认对话 + 嵌入绑定）· 租户配额 · 运行日志 ·
-诊断 · 提示词优化。
+知识库（上传/浏览内容/删除）· 工作流 · Skills（打开目录/扫描同步/上传导入/查看编辑/删除）·
+插件市场（导入/删除/挂载）· 工具调试（含 MCP 接入）· 文件 · 模型设置（默认对话 + 嵌入绑定）·
+租户配额 · 运行日志 · 诊断 · 提示词优化。
 
 ## API 概览（主要管理面）
 
@@ -106,7 +107,7 @@ curl -X POST http://localhost:8081/api/v1/agent/run -H "Content-Type: applicatio
 | 智能体 | `/agents` CRUD/克隆/版本/发布/回滚/`diff` |
 | 会话 | `/sessions` CRUD；`/sessions/import` ✚ 整轮对话入库；`/sessions/{id}/messages` |
 | 知识库 | `/knowledge-bases`；`/{id}/documents`、`/{id}/chunks` ✚ 内容浏览；`/documents/{docId}` ✚ 删文档 |
-| Skills | `POST /skills` ✚ 按字段新建；`PUT /skills/{id}` ✚ 编辑；`/import` 导入；DELETE |
+| Skills | `POST /skills` 新建；`PUT /skills/{id}` 编辑；`/import` 文本导入；`/sync` ✚ 扫描目录同步；`/upload` ✚ 上传 zip/SKILL.md；`/import-folder` ✚；`/open-folder` ✚；`/dir` ✚；`/{id}/files`、`/{id}/file` ✚ 浏览资源；DELETE |
 | 插件 | `/plugins/import` ✚、`/plugins/{id}` ✚ 删除（平台内置除外）、attach/detach、市场 |
 | 工具 | `/tools/mcp` ✚ MCP 接入、`/tools/{name}` ✚ 卸载、HTTP 注册、invoke |
 | 模型配置 | `/model-config`（`/embedding`、`/chat` ✚ 默认对话模型） |

@@ -18,6 +18,7 @@ import com.agentplatform.core.plugin.runtime.AgentPipeline;
 import com.agentplatform.core.plugin.runtime.PipelineResult;
 import com.agentplatform.core.plugin.runtime.PluginRuntime;
 import com.agentplatform.core.session.SessionService;
+import com.agentplatform.core.skill.SkillService;
 import com.agentplatform.model.entity.AgentDefinition;
 import com.agentplatform.model.entity.Session;
 import com.agentplatform.model.record.Capabilities;
@@ -68,6 +69,10 @@ public class AgentRuntimeService {
     @Autowired(required = false)
     private LogService logService;
 
+    /** Skill 注入（可选：未注入时不追加 Skill 提示词，保持旧行为与单测可用）。 */
+    @Autowired(required = false)
+    private SkillService skillService;
+
     /** 默认模型 provider / 名称（智能体未显式配置时兜底到真实模型）。 */
     @Value("${agent-platform.model.default-provider:deepseek}")
     private String defaultProvider;
@@ -94,8 +99,9 @@ public class AgentRuntimeService {
                 quotaService.checkAndIncrement(tenantId, "model_calls", null);
             }
 
-            // ① 组装系统提示词（人格 → 提示词合并 + 变量填充）
-            String systemPrompt = assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req);
+            // ① 组装系统提示词（人格 → 提示词合并 + 变量填充 + Skill 注入）
+            String systemPrompt = withSkillPrompts(agent,
+                    assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
             // ② 合并生成参数（provider/模型未配置时兜底到默认真实模型）
             GenerationConfig gc = mergeGenerationConfig(agent.getGenerationConfig(), req.model());
             ModelBindingService.ResolvedModel resolved = resolveModelBinding(agent, gc);
@@ -238,7 +244,8 @@ public class AgentRuntimeService {
 
         return TraceContext.withContext(traceId, runId, tenantId, () -> {
             AgentDefinition agent = agentService.getOrThrow(tenantId, req.agentId());
-            String systemPrompt = assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req);
+            String systemPrompt = withSkillPrompts(agent,
+                    assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
             GenerationConfig gc = mergeGenerationConfig(agent.getGenerationConfig(), req.model());
             String userMessage = extractUserMessage(req);
             ModelBindingService.ResolvedModel resolved = resolveModelBinding(agent, gc);
@@ -253,6 +260,38 @@ public class AgentRuntimeService {
                     .filter(d -> !d.finished() && d.text() != null && !d.text().isEmpty())
                     .map(d -> new AgentRunResponse.Output("assistant", d.text(), null));
         });
+    }
+
+    /**
+     * 追加已挂载 Skill 的提示词（SKILL.md 正文）。
+     * <p>
+     * Skill 以标准目录 {@code skills/<name>/SKILL.md} 存储，正文即能力说明/操作规范。
+     * 智能体通过 {@code capabilities.skillIds} 引用，运行时把正文拼接到系统提示词，
+     * 实现「挂载即生效」；单个 Skill 读取失败不阻断主流程（降级跳过）。
+     * </p>
+     */
+    public String withSkillPrompts(AgentDefinition agent, String systemPrompt) {
+        if (skillService == null || agent.getCapabilities() == null) {
+            return systemPrompt;
+        }
+        List<String> ids = agent.getCapabilities().skillIds();
+        if (ids == null || ids.isEmpty()) {
+            return systemPrompt;
+        }
+        StringBuilder sb = new StringBuilder(systemPrompt == null ? "" : systemPrompt);
+        for (String skillId : ids) {
+            try {
+                com.agentplatform.model.entity.SkillDef skill =
+                        skillService.get(agent.getTenantId(), skillId);
+                if (skill.getPromptTemplate() != null && !skill.getPromptTemplate().isBlank()) {
+                    sb.append("\n\n## Skill：").append(skill.getName()).append("\n")
+                            .append(skill.getPromptTemplate().trim());
+                }
+            } catch (Exception e) {
+                log.warn("Failed to load skill {} for agent {}: {}", skillId, agent.getAgentId(), e.getMessage());
+            }
+        }
+        return sb.toString();
     }
 
     /**

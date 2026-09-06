@@ -13,13 +13,18 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
 import java.util.Map;
 
 /**
- * Skills 导入与管理接口（RESTful）。
- * <p>除导入外，提供按字段创建、更新（编辑）与删除能力。</p>
+ * Skills 管理接口。
+ * <p>
+ * <b>标准目录存储</b>：Skill 以 {@code skills/<skill-name>/SKILL.md} 形式存放
+ * （Agent Skills 开放标准）。用户可直接把网上下载的 Skill 目录或 zip 放进去，
+ * 通过 {@code POST /skills/sync} 扫描识别；也可从仪表盘上传或打开目录。
+ * </p>
  */
 @RestController
 @RequestMapping("/api/v1/skills")
@@ -28,7 +33,65 @@ public class SkillController {
 
     private final SkillService skillService;
 
-    /** 导入 Skill（本地 Manifest 文本）。 */
+    /** skills 根目录绝对路径（前端展示/复制用）。 */
+    @GetMapping("/dir")
+    public ApiResponse<Map<String, Object>> dir() {
+        return ApiResponse.ok(Map.of("path", skillService.skillsDir()));
+    }
+
+    /** 在系统文件管理器中打开 skills 目录（本地/桌面场景）。 */
+    @PostMapping("/open-folder")
+    public ApiResponse<Map<String, Object>> openFolder() {
+        return ApiResponse.ok(skillService.openFolder(), "opened");
+    }
+
+    /** 扫描 skills 目录并同步入库（新增/更新/报告缺失）。 */
+    @PostMapping("/sync")
+    public ApiResponse<Map<String, Object>> sync(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId) {
+        return ApiResponse.ok(skillService.syncFromFolder(tenantId), "synced");
+    }
+
+    /** 导入 skills 根目录下的某个子目录。 */
+    @PostMapping("/import-folder")
+    public ApiResponse<SkillDef> importFolder(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @RequestBody Map<String, String> body) {
+        String dir = body == null ? null : body.get("dir");
+        if (dir == null || dir.isBlank()) {
+            return ApiResponse.error("BAD_REQUEST", "dir 不能为空（skills 目录下的子目录名）");
+        }
+        return ApiResponse.ok(skillService.importFolder(tenantId, dir), "imported");
+    }
+
+    /** 上传导入：.zip 标准 Skill 包 或 单个 SKILL.md。 */
+    @PostMapping("/upload")
+    public ApiResponse<List<SkillDef>> upload(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @RequestParam("file") MultipartFile file) {
+        return ApiResponse.ok(skillService.importUpload(tenantId, file), "imported");
+    }
+
+    /** 列出某 Skill 目录内的文件（渐进式披露的资源）。 */
+    @GetMapping("/{skillId}/files")
+    public ApiResponse<List<String>> files(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @PathVariable String skillId) {
+        return ApiResponse.ok(skillService.files(tenantId, skillId));
+    }
+
+    /** 读取某 Skill 目录内文件内容（如 scripts/rotate.py、references/FORMS.md）。 */
+    @GetMapping("/{skillId}/file")
+    public ApiResponse<Map<String, Object>> readFile(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @PathVariable String skillId,
+            @RequestParam String path) {
+        return ApiResponse.ok(Map.of(
+                "path", path,
+                "content", skillService.readFile(tenantId, skillId, path)));
+    }
+
+    /** 导入 Skill（本地 Manifest 文本，兼容旧格式）。 */
     @PostMapping("/import")
     public ApiResponse<SkillDef> importSkill(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
@@ -45,7 +108,7 @@ public class SkillController {
         return ApiResponse.ok(skillService.importFromUrl(tenantId, body.get("url")));
     }
 
-    /** 按字段新建 Skill（无需手写 YAML）。 */
+    /** 按字段新建 Skill（自动写入标准目录）。 */
     @PostMapping
     public ApiResponse<SkillDef> create(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
@@ -53,7 +116,7 @@ public class SkillController {
         return ApiResponse.ok(skillService.create(tenantId, req), "created");
     }
 
-    /** 更新 Skill（编辑）。 */
+    /** 更新 Skill（编辑，目录型同步回写 SKILL.md）。 */
     @PutMapping("/{skillId}")
     public ApiResponse<SkillDef> update(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
@@ -77,7 +140,7 @@ public class SkillController {
         return ApiResponse.ok(skillService.get(tenantId, skillId));
     }
 
-    /** 删除（物理删除）。 */
+    /** 删除（物理删除；目录型一并删除 skills 子目录）。 */
     @DeleteMapping("/{skillId}")
     public ApiResponse<Void> delete(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,

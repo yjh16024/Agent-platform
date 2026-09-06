@@ -15,7 +15,11 @@
 - **对话页历史语义**：前端 `chatStore`(zustand+persist) 保持当前对话；「新对话」经
   `POST /sessions/import` 把整轮保存进会话历史。
 - **知识库内容浏览**：`GET /knowledge-bases/{id}`、`/{id}/documents`、`/{id}/chunks`、`DELETE /documents/{docId}`。
-- **Skills 管理**：`POST /skills`（按字段）、`PUT /skills/{id}`（编辑）。
+- **Skills 标准目录存储（Agent Skills 开放标准）**：`skills/<name>/SKILL.md`
+  （YAML frontmatter + 提示词正文，可带 `scripts/ references/ assets/`）；
+  新增 `SkillFileStore`，支持扫描同步 `/skills/sync`、上传 `.zip`/`SKILL.md`、指定目录导入、
+  目录内文件浏览与读取、打开目录；目录型 Skill 的编辑会回写 SKILL.md，删除连带删除目录；
+  运行时把已挂载 Skill 的正文注入系统提示词（`AgentRuntimeService.withSkillPrompts`）。
 - **插件导入/删除**：`POST /plugins/import`；`DELETE /plugins/{id}`（`__platform__` 内置拒绝）。
 - **外部 jar 插件加载**：`ExternalPluginLoader` 读 `plugin_def.artifact_uri`（file/http/裸路径）
   + `entry.main_class`，用 `PluginClassLoader` 隔离加载；未配置制品时给明确错误。
@@ -49,6 +53,9 @@
   `PUT /model-config/chat`、`/tools/mcp`、`/plugins/import` 按 record/camelCase。
 - `GET /knowledge-bases` 返回 map（camelCase，含 documentCount/chunkCount）。
 - 模型回退链：**智能体绑定 → 平台 chat_binding → LiteLLM/全局 → local**；绑定有 baseUrl+Key 且非 local 即直连。
+- Skills 目录：默认 `./data/skills`（`SKILLS_DIR` 可覆盖）；目录型 Skill 删除会**连带删除该子目录**；
+  `agent-platform.skills.open-folder-enabled`（默认 true）控制能否从仪表盘打开目录——
+  服务端/远程部署建议设为 false（该能力会在服务器上启动文件管理器）。
 - `anthropic` provider 走 Messages API；若厂商实际是 OpenAI 兼容中转，需改用 `openai`/自建 provider。
 
 ## 三、注意事项（已踩过的坑）
