@@ -340,6 +340,7 @@ public class AgentRuntimeService {
             // 逐个执行模型请求的工具
             StringBuilder observations = new StringBuilder();
             for (ModelAdapter.ToolCall call : resp.toolCalls()) {
+                long toolT0 = System.nanoTime();
                 ToolResult tr;
                 try {
                     tr = toolExecutor == null
@@ -349,11 +350,12 @@ public class AgentRuntimeService {
                 } catch (Exception e) {
                     tr = ToolResult.fail(e.getMessage() == null ? "tool execution error" : e.getMessage());
                 }
+                long toolLatencyMs = (System.nanoTime() - toolT0) / 1_000_000L;
                 String outputText = tr.output() == null
                         ? (tr.error() == null ? "" : tr.error())
                         : (tr.output().isTextual() ? tr.output().asText() : tr.output().toString());
                 logTo(LogLevel.INFO, LogCategory.tool, "tool.call name=" + call.name()
-                                + " success=" + tr.success() + " args="
+                                + " success=" + tr.success() + " latency=" + toolLatencyMs + "ms args="
                                 + (call.arguments() == null ? "{}" : call.arguments().toString()),
                         traceId, runId, tenantId, agent.getAgentId());
                 observations.append("工具[").append(call.name()).append("] 执行")

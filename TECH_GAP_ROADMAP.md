@@ -131,3 +131,4 @@
 | 2026-09-07 | 初版：记录 10 项缺口，划分 P0–P3 四阶段；P0 中构建/打包/重启/清理已完成，P0-4、P0-5 待用户处理 |
 | 2026-09-07 | P1 风险项完成：模型协议扩展（ChatRequest.tools / ToolCall / ChatResponse.toolCalls），OpenAI 与 Anthropic 适配器均已支持 |
 | 2026-09-07 | P1 主任务完成：对话工具调用（resolveToolSpecs + runToolLoop，MAX_TOOL_ROUNDS=5，LogCategory.tool）；前端对话页加「工具」开关；工具管理补全（来源标记 builtin/http/mcp + PUT 修改 + 前端编辑/删除，内置受保护）。G4/G4a 标记解决 |
+| 2026-09-07 | 观测阶段 B+C 完成：`LogService` 增加统一 `LogEventSink` 出口 → `LogMetricsRecorder`（agent_run/llm/tool/log 业务指标进 Micrometer）、`LokiLogExporter`（同一份事件 JSON push Loki）、`TempoSpanExporter`（run→llm/tool 父子 Span 经 Zipkin v2 推 Tempo）；agent 运行埋点 `tool.call` 补充 latency 以便时长追踪。观测栈编排 `docker-compose.observability.yml`（Prometheus/Loki/Tempo/Grafana provisioning：3 数据源联动 + 统一看板 + 3 条告警规则）。全程零新增 Maven 依赖（离线可编译，已 `mvn -o` 验证） |

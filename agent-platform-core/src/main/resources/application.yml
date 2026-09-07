@@ -108,6 +108,24 @@ agent-platform:
     open-folder-enabled: ${SKILLS_OPEN_FOLDER:false}
   log:
     kafka-topic: log-events
+  # ---- 可观测性外推（阶段 B/C）----
+  # 指标（Micrometer→/actuator/prometheus）默认开启；Loki/Tempo 仅在配置 URL 后启用。
+  # 本地观测栈：docker compose -f docker-compose.observability.yml up -d
+  observability:
+    enabled: ${OBS_EXPORT_ENABLED:true}
+    metrics:
+      enabled: ${OBS_METRICS_ENABLED:true}
+    loki:
+      # 例 http://localhost:3100（容器网络用 http://loki:3100）
+      url: ${OBS_LOKI_URL:}
+      tenant-id: ${OBS_LOKI_TENANT:}
+      batch-size: ${OBS_LOKI_BATCH_SIZE:200}
+      flush-interval-ms: ${OBS_LOKI_FLUSH_MS:1000}
+    tempo:
+      # 例 http://localhost:9411（Tempo Zipkin 端口；容器网络用 http://tempo:9411）
+      url: ${OBS_TEMPO_URL:}
+      flush-interval-ms: ${OBS_TEMPO_FLUSH_MS:500}
+    queue-capacity: ${OBS_QUEUE_CAPACITY:4096}
   # 生产鉴权：core 侧 JWT 兜底（true 后直连 8081 需 Bearer Token）
   security:
     enabled: ${SECURITY_ENABLED:false}

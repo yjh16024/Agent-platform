@@ -1,0 +1,140 @@
+# Grafana 统一告警规则（阶段 C：阈值告警）
+# 数据源 uid：prometheus（见 datasources.yml）
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: agent-platform-rules
+    interval: 1m
+    rules:
+      # 1) 业务错误率：5 分钟窗口内运行失败占比 > 10%
+      - uid: ap-agent-high-error-rate
+        title: "Agent 运行错误率过高（>10%，持续 5m）"
+        for: 5m
+        condition: B
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              expr: sum(rate(agent_run_total{status="failed"}[5m])) / clamp_min(sum(rate(agent_run_total[5m])), 0.000001)
+              instant: true
+              range: false
+              format: time_series
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              refId: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [ 0.1 ]
+                  operator:
+                    type: and
+                  query:
+                    params: [ A ]
+                  reducer:
+                    type: last
+                  type: query
+        labels:
+          severity: critical
+        annotations:
+          summary: "Agent 运行错误率 {{ $values.A }}（阈值 >10%）"
+          description: "最近 5 分钟 Agent 运行失败率超过 10%，请到看板/运行日志下钻定位。"
+        noDataState: OK
+        executionErrorState: error
+
+      # 2) LLM 平均延迟告警：> 15s
+      - uid: ap-llm-high-latency
+        title: "LLM 平均延迟过高（>15s，持续 5m）"
+        for: 5m
+        condition: B
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              expr: (sum(rate(agent_llm_latency_seconds_sum[5m])) / clamp_min(sum(rate(agent_llm_latency_seconds_count[5m])), 0.000001)) * 1000
+              instant: true
+              range: false
+              format: time_series
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              refId: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [ 15000 ]
+                  operator:
+                    type: and
+                  query:
+                    params: [ A ]
+                  reducer:
+                    type: last
+                  type: query
+        labels:
+          severity: warning
+        annotations:
+          summary: "LLM 平均延迟 {{ $values.A }} ms（阈值 >15000ms）"
+          description: "模型响应变慢，请检查上游模型网关/Provider 状态。"
+        noDataState: OK
+        executionErrorState: error
+
+      # 3) 运行失败速率告警：持续出现失败运行
+      - uid: ap-agent-failure-rate
+        title: "Agent 持续运行失败（5m 速率 >0，持续 5m）"
+        for: 5m
+        condition: B
+        data:
+          - refId: A
+            datasourceUid: prometheus
+            relativeTimeRange:
+              from: 300
+              to: 0
+            model:
+              refId: A
+              expr: sum(rate(agent_run_total{status="failed"}[5m]))
+              instant: true
+              range: false
+              format: time_series
+              intervalMs: 1000
+              maxDataPoints: 43200
+          - refId: B
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              refId: B
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [ 0 ]
+                  operator:
+                    type: and
+                  query:
+                    params: [ A ]
+                  reducer:
+                    type: last
+                  type: query
+        labels:
+          severity: warning
+        annotations:
+          summary: "Agent 持续出现运行失败"
+          description: "5 分钟失败速率持续大于 0，请查看 Loki ERROR 日志 / Tempo Trace 定位根因。"
+        noDataState: OK
+        executionErrorState: error

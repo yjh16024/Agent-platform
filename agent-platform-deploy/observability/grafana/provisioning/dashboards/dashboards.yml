@@ -1,0 +1,13 @@
+# Grafana 看板自动导入
+apiVersion: 1
+
+providers:
+  - name: Agent Platform
+    orgId: 1
+    folder: Agent Platform
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

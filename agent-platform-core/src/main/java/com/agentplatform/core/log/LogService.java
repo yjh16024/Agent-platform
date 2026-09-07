@@ -49,6 +49,10 @@ public class LogService {
     @Autowired(required = false)
     private EventBus eventBus;
 
+    /** 可观测性外推出口（Micrometer 指标 / Loki / Tempo），未注入时为空列表。 */
+    @Autowired(required = false)
+    private List<LogEventSink> eventSinks = List.of();
+
     /** 数据库不可用时的内存兜底（有界，防 OOM）。 */
     private final LinkedBlockingQueue<LogEvent> fallback = new LinkedBlockingQueue<>(FALLBACK_CAPACITY);
 
@@ -98,6 +102,7 @@ public class LogService {
             offerFallback(enriched);
         }
         publishToKafka(enriched);
+        dispatchToSinks(enriched);
         return enriched;
     }
 
@@ -252,6 +257,17 @@ public class LogService {
             eventBus.publish(KafkaTopicConfig.LOG_TOPIC, event.logId(), event);
         } catch (Exception ignored) {
             // 日志流发布失败不影响采集主流程
+        }
+    }
+
+    /** 派发给可观测性外推 Sink（指标/Loki/Tempo）；任何 Sink 失败都自隔离，不影响主流程。 */
+    private void dispatchToSinks(LogEvent event) {
+        for (LogEventSink sink : eventSinks) {
+            try {
+                sink.onEvent(event);
+            } catch (Exception e) {
+                log.warn("[log] sink {} failed: {}", sink.getClass().getSimpleName(), e.getMessage());
+            }
         }
     }
 

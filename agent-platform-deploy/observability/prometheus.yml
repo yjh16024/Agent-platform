@@ -1,0 +1,24 @@
+# Prometheus 抓取配置：宿主机 core（8081）+ 观测栈自身
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # 业务服务：core 在宿主机运行（Docker Desktop / 已配 host-gateway 的 Docker 均可解析 host.docker.internal）
+  - job_name: agent-platform-core
+    metrics_path: /actuator/prometheus
+    static_configs:
+      - targets: ["host.docker.internal:8081"]
+        labels:
+          service: agent-platform-core
+
+  # 观测组件自身（便于监控观测栈健康）
+  - job_name: loki
+    static_configs:
+      - targets: ["loki:3100"]
+  - job_name: tempo
+    static_configs:
+      - targets: ["tempo:3200"]
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

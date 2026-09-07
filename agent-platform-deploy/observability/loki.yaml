@@ -1,0 +1,33 @@
+# Loki 单二进制配置（本地观测栈）
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  replication_factor: 1
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# 允许结构化元数据与较大日志体（满足 agent 日志 JSON 行）
+limits_config:
+  allow_structured_metadata: true
+  max_line_size: 2MB
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h

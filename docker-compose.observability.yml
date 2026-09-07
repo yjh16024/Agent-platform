@@ -1,0 +1,77 @@
+# Agent Platform · 本地可观测性栈（阶段 B + C）
+# 组成：Prometheus（指标已就位）+ Loki（日志）+ Tempo（Trace）+ Grafana（统一看板/告警）
+# 启动：docker compose -f docker-compose.observability.yml up -d
+# 访问：
+#   Grafana        http://localhost:3000   admin / admin（数据源已预置，看板已导入）
+#   Prometheus     http://localhost:9090
+#   Loki           http://localhost:3100
+#   Tempo          http://localhost:3200
+name: agent-observability
+
+services:
+  # ---- 指标：Prometheus 抓取宿主机 core 的 /actuator/prometheus ----
+  prometheus:
+    image: prom/prometheus:v2.53.1
+    container_name: obs-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-lifecycle
+    ports:
+      - "9090:9090"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # Linux 兼容：让容器能访问宿主机 8081
+    volumes:
+      - ./agent-platform-deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+
+  # ---- 日志：Loki（JSON push /loki/api/v1/push）----
+  loki:
+    image: grafana/loki:3.2.2
+    container_name: obs-loki
+    restart: unless-stopped
+    command: [-config.file=/etc/loki/config.yaml]
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./agent-platform-deploy/observability/loki.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+
+  # ---- Trace：Tempo（Zipkin v2 9411 / OTLP 4317,4318）----
+  tempo:
+    image: grafana/tempo:2.5.0
+    container_name: obs-tempo
+    restart: unless-stopped
+    command: [-config.file=/etc/tempo/config.yaml]
+    ports:
+      - "3200:3200"    # query（Grafana 数据源）
+      - "9411:9411"    # Zipkin v2 接收（core 默认上报端点）
+      - "4317:4317"    # OTLP gRPC（备用）
+      - "4318:4318"    # OTLP HTTP（备用）
+    volumes:
+      - ./agent-platform-deploy/observability/tempo.yaml:/etc/tempo/config.yaml:ro
+      - tempo-data:/var/tempo
+
+  # ---- 看板：Grafana（数据源 / 看板 / 告警全部 provisioning 预置）----
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: obs-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./agent-platform-deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./agent-platform-deploy/observability/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+volumes:
+  prometheus-data:
+  loki-data:
+  tempo-data:
+  grafana-data:

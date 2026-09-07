@@ -1,0 +1,51 @@
+# Grafana 数据源预置（uid 固定，供看板/告警引用）
+apiVersion: 1
+
+datasources:
+  # 指标：Prometheus（core 已暴露 /actuator/prometheus）
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: 15s
+
+  # 日志：Loki（日志行 JSON 内 trace_id → 跳转 Tempo Trace）
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: true
+    jsonData:
+      derivedFields:
+        - name: trace_id
+          matcherType: json
+          matcherJson: trace_id
+          datasourceUid: tempo
+          url: ""
+
+  # Trace：Tempo（看链路拓扑；Span 标签 → 跳转 Loki 日志）
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: true
+    jsonData:
+      nodeGraph:
+        enabled: true
+      tracesToLogs:
+        datasourceUid: loki
+        spanStartTimeShift: "-1h"
+        spanEndTimeShift: "1h"
+        filterByTraceID: true
+        filterBySpanID: false
+        tags:
+          - service_name
+          - tenant
+          - level
+          - category

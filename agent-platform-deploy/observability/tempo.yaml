@@ -1,0 +1,31 @@
+# Tempo 单二进制配置（本地观测栈）
+# 接收：Zipkin v2 (9411，core 默认) + OTLP gRPC/HTTP (4317/4318，备选)
+# 查询：3200（Grafana Tempo 数据源）
+server:
+  http_listen_port: 3200
+
+multitenancy_enabled: false
+
+distributor:
+  receivers:
+    zipkin:
+      endpoint: 0.0.0.0:9411
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/traces
+    retention: 336h
+
+compactor:
+  compaction:
+    block_retention: 336h

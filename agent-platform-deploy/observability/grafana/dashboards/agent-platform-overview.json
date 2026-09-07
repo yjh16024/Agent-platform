@@ -1,0 +1,269 @@
+{
+  "annotations": { "list": [] },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Token 消耗（整段范围）",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds", "thresholds": { "steps": [ { "color": "green", "value": null } ] } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(agent_llm_tokens_total[$__range]))",
+          "legendFormat": "tokens"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "运行失败数（整段范围）",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "thresholds", "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(increase(agent_run_total{status=\"failed\"}[$__range]))",
+          "legendFormat": "failed"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "运行错误率（5m）",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "color": { "mode": "thresholds", "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 5 }, { "color": "red", "value": 10 } ] } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * sum(rate(agent_run_total{status=\"failed\"}[5m])) / clamp_min(sum(rate(agent_run_total[5m])), 0.000001)",
+          "legendFormat": "错误率"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "LLM 平均延迟（5m）",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "color": { "mode": "thresholds", "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 5000 }, { "color": "red", "value": 15000 } ] } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "reduceOptions": { "calcs": [ "lastNotNull" ], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(agent_llm_latency_seconds_sum[5m])) / clamp_min(sum(rate(agent_llm_latency_seconds_count[5m])), 0.000001)) * 1000",
+          "legendFormat": "avg ms"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "LLM Token 速率（按模型）",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "stacking": { "mode": "normal" }, "lineWidth": 1, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(agent_llm_tokens_total[$__rate_interval])) by (provider, model)",
+          "legendFormat": "{{provider}}/{{model}}"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "LLM 延迟（平均值 / 最大值）",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ms",
+          "custom": { "drawStyle": "line", "fillOpacity": 8, "lineWidth": 1, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(sum(rate(agent_llm_latency_seconds_sum[$__rate_interval])) / clamp_min(sum(rate(agent_llm_latency_seconds_count[$__rate_interval])), 0.000001)) * 1000",
+          "legendFormat": "avg ms"
+        },
+        {
+          "refId": "B",
+          "expr": "max(agent_llm_latency_seconds_max) * 1000",
+          "legendFormat": "max ms"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Agent 运行速率（成功 / 失败）",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "stacking": { "mode": "normal" }, "lineWidth": 1, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(agent_run_total{status=\"ok\"}[$__rate_interval])) by (status)",
+          "legendFormat": "ok"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(agent_run_total{status=\"failed\"}[$__rate_interval])) by (status)",
+          "legendFormat": "failed"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "工具调用（成功 / 失败）",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "stacking": { "mode": "normal" }, "lineWidth": 1, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(agent_tool_calls_total{success=\"true\"}[$__rate_interval])) by (name)",
+          "legendFormat": "ok {{name}}"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(rate(agent_tool_calls_total{success=\"false\"}[$__rate_interval])) by (name)",
+          "legendFormat": "fail {{name}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "WARN / ERROR 结构化日志速率",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 20 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 15, "stacking": { "mode": "normal" }, "lineWidth": 1, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(log_events_total{level=~\"warn|error\"}[$__rate_interval])) by (level)",
+          "legendFormat": "{{level}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "text",
+      "title": "执行链路拓扑 / 关联跳转指引",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "options": {
+        "mode": "markdown",
+        "content": "### 执行链路拓扑（来自 Tempo Trace）\n\n- **Explore → Tempo**：选择 `service = agent-platform-core`，即可看到 `agent.run → llm.chat / tool.call` 的执行链路拓扑（含耗时/成功状态/Token 标签）。\n- **日志 → Trace**：在 **Explore → Loki** 查询 `{service_name=\"agent-platform-core\"}`，展开任意日志行，点击 `trace_id` 字段直达该次运行在 Tempo 的完整 Trace。\n- **Trace → 日志**：在 Tempo Trace 详情选中任一 Span，通过服务/租户/类别标签反查 Loki 对应日志。\n- **指标口径**：上方指标来自 Prometheus（Micrometer），与日志/链路来自同一份事件，可互相印证。\n\n> 告警阈值已预置（Alerting → 告警规则）：运行错误率 >10%、LLM 平均延迟 >15s、失败运行速率持续 >0。"
+      },
+      "targets": []
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "tags": [ "agent-platform" ],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Agent Platform · 统一可观测看板",
+  "uid": "agent-platform-overview",
+  "version": 1
+}
