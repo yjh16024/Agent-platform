@@ -8,6 +8,7 @@ import LogsPage from './pages/ops/LogsPage';
 import DiagnosisPage from './pages/ops/DiagnosisPage';
 import PromptOptimizePage from './pages/ops/PromptOptimizePage';
 import ToolsPage from './pages/ops/ToolsPage';
+import ObservabilityPage from './pages/ops/ObservabilityPage';
 import QuotaPage from './pages/ops/QuotaPage';
 import KnowledgeBasePage from './pages/rag/KnowledgeBasePage';
 import SessionsPage from './pages/sessions/SessionsPage';
@@ -34,6 +35,7 @@ export default function App() {
         <Route path="/diagnosis" element={<DiagnosisPage />} />
         <Route path="/prompt" element={<PromptOptimizePage />} />
         <Route path="/tools" element={<ToolsPage />} />
+        <Route path="/observability" element={<ObservabilityPage />} />
         <Route path="/quota" element={<QuotaPage />} />
         <Route path="/settings" element={<ModelSettingsPage />} />
       </Route>

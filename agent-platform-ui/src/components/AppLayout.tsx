@@ -16,6 +16,7 @@ import {
   BookOutlined,
   FolderOutlined,
   ApiOutlined,
+  LineChartOutlined,
   SafetyCertificateOutlined,
   HistoryOutlined,
   SettingOutlined,
@@ -56,6 +57,7 @@ export default function AppLayout() {
       label: '运维工具',
       children: [
         { key: '/logs', icon: <FileTextOutlined />, label: '运行日志' },
+        { key: '/observability', icon: <LineChartOutlined />, label: '智能体可观测性' },
         { key: '/diagnosis', icon: <BugOutlined />, label: '智能诊断' },
         { key: '/prompt', icon: <ThunderboltOutlined />, label: '提示词优化' },
         { key: '/tools', icon: <ApiOutlined />, label: '工具调试' },
