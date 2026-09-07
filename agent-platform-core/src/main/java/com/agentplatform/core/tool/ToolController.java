@@ -1,6 +1,7 @@
 package com.agentplatform.core.tool;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.tool.executor.HttpApiTool;
 import com.agentplatform.core.tool.executor.ToolExecutor;
 import com.agentplatform.core.tool.mcp.McpToolRegistry;
@@ -48,6 +49,10 @@ public class ToolController {
             if (t instanceof HttpApiTool http) {
                 row.put("endpoint", http.getEndpoint());
                 row.put("method", http.getMethod());
+                // parameters（入参 JSON Schema）供编辑回显
+                if (http.getInputSchema() != null) {
+                    row.put("parameters", http.getInputSchema());
+                }
             }
             tools.add(row);
         }
@@ -55,7 +60,7 @@ public class ToolController {
     }
 
     /**
-     * 修改自定义 HTTP API 工具（仅 source=http 的可修改 endpoint/method/description）。
+     * 修改自定义 HTTP API 工具（仅 source=http 的可修改 endpoint/method/description/parameters）。
      */
     @PutMapping("/{toolName}")
     public ApiResponse<Map<String, Object>> update(
@@ -75,7 +80,10 @@ public class ToolController {
         if (endpoint == null || endpoint.isBlank()) {
             return ApiResponse.error("BAD_REQUEST", "endpoint 不能为空");
         }
-        HttpApiTool updated = new HttpApiTool(toolName, description, http.getInputSchema(), endpoint, method);
+        JsonNode inputSchema = body.containsKey("parameters")
+                ? parseParameters(body.get("parameters"))
+                : http.getInputSchema();
+        HttpApiTool updated = new HttpApiTool(toolName, description, inputSchema, endpoint, method);
         registry.register(updated, "http");
         return ApiResponse.ok(Map.of("name", toolName, "updated", true));
     }
@@ -94,6 +102,10 @@ public class ToolController {
 
     /**
      * 注册自定义 HTTP API 工具（热注册）。
+     * <p>body 字段：
+     * {@code name}（必填）、{@code description}、{@code endpoint}（必填）、
+     * {@code method}（默认 POST）、{@code parameters}（可选，工具的入参 JSON Schema；支持
+     * JSON 对象或 JSON 字符串；缺省为最宽松的空对象 schema，模型仍可能传 args={}）。</p>
      */
     @PostMapping("/register")
     public ApiResponse<Map<String, Object>> registerHttp(@RequestBody Map<String, Object> body) {
@@ -106,9 +118,40 @@ public class ToolController {
             return ApiResponse.error("BAD_REQUEST", "name and endpoint are required");
         }
 
-        HttpApiTool tool = new HttpApiTool(name, description, null, endpoint, method);
+        JsonNode inputSchema = parseParameters(body.get("parameters"));
+        HttpApiTool tool = new HttpApiTool(name, description, inputSchema, endpoint, method);
         registry.register(tool, "http");
         return ApiResponse.ok(Map.of("name", name, "registered", true));
+    }
+
+    /**
+     * 解析 {@code parameters} 字段：支持 JSON 对象或 JSON 字符串；非法时回退为最宽松
+     * 的空 schema，让模型至少能调用（不报错）。
+     */
+    private JsonNode parseParameters(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof JsonNode jn) {
+            return jn;
+        }
+        if (raw instanceof String s) {
+            String t = s.trim();
+            if (t.isEmpty()) {
+                return null;
+            }
+            try {
+                return JsonUtils.toJsonNode(t);
+            } catch (Exception e) {
+                return null;
+            }
+        }
+        // Map / List 等其他结构：尝试转 JSON
+        try {
+            return JsonUtils.mapper().valueToTree(raw);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     /**

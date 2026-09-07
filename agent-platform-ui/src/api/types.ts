@@ -283,4 +283,6 @@ export interface ToolInfo {
   /** 仅 http 来源返回，编辑回显用。 */
   endpoint?: string;
   method?: string;
+  /** 入参 JSON Schema（仅 http 来源，对象形式）。 */
+  parameters?: Record<string, unknown>;
 }

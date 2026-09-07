@@ -14,14 +14,16 @@ export function registerTool(body: {
   description?: string;
   endpoint: string;
   method?: string;
+  /** 入参 JSON Schema（JSON 字符串或对象）。 */
+  parameters?: string | Record<string, unknown>;
 }) {
   return http.post<Record<string, unknown>>('/api/v1/tools/register', body);
 }
 
-/** 修改 HTTP 注册工具（name 不可变，改 description/endpoint/method）。 */
+/** 修改 HTTP 注册工具（name 不可变，改 description/endpoint/method/parameters）。 */
 export function updateTool(
   name: string,
-  body: { description?: string; endpoint?: string; method?: string },
+  body: { description?: string; endpoint?: string; method?: string; parameters?: string | Record<string, unknown> },
 ) {
   return http.put<Record<string, unknown>>(`/api/v1/tools/${encodeURIComponent(name)}`, body);
 }

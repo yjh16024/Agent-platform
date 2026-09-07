@@ -71,22 +71,35 @@ export default function ToolsPage() {
       description: t.description,
       endpoint: t.endpoint,
       method: t.method || 'POST',
+      parameters: t.parameters ? JSON.stringify(t.parameters, null, 2) : '',
     });
     setEditorOpen(true);
   };
 
   const submitEditor = async () => {
     const v = await editorForm.validateFields();
+    // parameters 文本框内容为 JSON 字符串；trim 后为合法 JSON 才提交，否则提示
+    let params: Record<string, unknown> | undefined;
+    const raw = (v.parameters ?? '').toString().trim();
+    if (raw) {
+      try {
+        params = JSON.parse(raw);
+      } catch {
+        message.error('入参 Schema 必须是合法 JSON');
+        return;
+      }
+    }
     try {
       if (editing) {
         await updateTool(editing.name!, {
           description: v.description,
           endpoint: v.endpoint,
           method: v.method,
+          ...(params ? { parameters: params } : {}),
         });
         message.success('工具已更新');
       } else {
-        await registerTool(v);
+        await registerTool({ ...v, ...(params ? { parameters: params } : {}) });
         message.success('工具已注册');
       }
       setEditorOpen(false);
@@ -203,6 +216,17 @@ export default function ToolsPage() {
           </Form.Item>
           <Form.Item name="method" label="方法" initialValue="POST">
             <Select options={['GET', 'POST'].map((m) => ({ value: m, label: m }))} />
+          </Form.Item>
+          <Form.Item
+            name="parameters"
+            label="入参 Schema（JSON，可选）"
+            extra="JSON Schema，告诉 LLM 该工具接受哪些参数。留空表示无参数。"
+          >
+            <Input.TextArea
+              rows={6}
+              style={{ fontFamily: 'monospace' }}
+              placeholder={'{\n  "type": "object",\n  "properties": {\n    "city": { "type": "string", "description": "城市名" }\n  },\n  "required": ["city"]\n}'}
+            />
           </Form.Item>
           <Typography.Text type="secondary" style={{ fontSize: 12 }}>
             编辑仅允许修改 HTTP 注册工具；内置工具（calc/search）由代码定义，MCP 工具由远端 Server 定义。
