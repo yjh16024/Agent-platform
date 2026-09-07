@@ -24,6 +24,11 @@ import com.agentplatform.core.plugin.runtime.PipelineResult;
 import com.agentplatform.core.plugin.runtime.PluginRuntime;
 import com.agentplatform.core.session.SessionService;
 import com.agentplatform.core.skill.SkillService;
+import com.agentplatform.core.tool.Tool;
+import com.agentplatform.core.tool.ToolContext;
+import com.agentplatform.core.tool.ToolResult;
+import com.agentplatform.core.tool.executor.ToolExecutor;
+import com.agentplatform.core.tool.registry.ToolRegistry;
 import com.agentplatform.model.entity.AgentDefinition;
 import com.agentplatform.model.entity.Session;
 import com.agentplatform.model.record.Capabilities;
@@ -91,6 +96,17 @@ public class AgentRuntimeService {
     @Autowired(required = false)
     private DocumentRepository documentRepository;
 
+    /** 工具注册中心（可选：未注入时对话不启用 function calling，保持旧行为与单测可用）。 */
+    @Autowired(required = false)
+    private ToolRegistry toolRegistry;
+
+    /** 工具执行器（可选：与注册中心配套，执行模型请求的工具调用）。 */
+    @Autowired(required = false)
+    private ToolExecutor toolExecutor;
+
+    /** 工具调用循环最大轮数（防止模型在 tool_calls 里死循环）。 */
+    static final int MAX_TOOL_ROUNDS = 5;
+
     /** 默认模型 provider / 名称（智能体未显式配置时兜底到真实模型）。 */
     @Value("${agent-platform.model.default-provider:deepseek}")
     private String defaultProvider;
@@ -141,21 +157,29 @@ public class AgentRuntimeService {
             // ④.5 会话解析 + 历史回放（让对话「有记忆」）
             Session session = sessionService == null ? null
                     : sessionService.resolve(tenantId, agent.getAgentId(), req.userId(), req.sessionId(), userMessage);
-            List<ModelAdapter.ChatMessage> history = loadHistory(req, tenantId);
+            final List<ModelAdapter.ChatMessage> sessionHistory = loadHistory(req, tenantId);
 
             // ⑤ 经插件 Hook 管线调用模型（before_llm → LLM → after_llm）
             final long[] latency = {0L};
             final int[] usageTokens = {0, 0};
+            // ⑤.0 解析工具声明（ToolsConfig.enabled + allowed 白名单）
+            final List<ModelAdapter.ToolSpec> toolSpecs = resolveToolSpecs(req);
             PipelineResult pipeline;
             try {
                 pipeline = agentPipeline.run(userMessage, msg -> {
+                    // 工具调用循环：仅当请求显式启用工具且注册中心可用时走工具链路
+                    if (!toolSpecs.isEmpty() && toolExecutor != null) {
+                        return runToolLoop(provider, model, systemPrompt, msg, gc, resolved,
+                                toolSpecs, sessionHistory, traceId, runId, tenantId, agent, usageTokens);
+                    }
+                    // 普通单轮 LLM 调用（无工具）
                     logTo(LogLevel.INFO, LogCategory.llm, "llm.call provider=" + provider
                                     + " model=" + model + " routing=" + resolved.routing()
-                                    + " history=" + history.size() + " chars=" + msg.length(),
+                                    + " history=" + sessionHistory.size() + " chars=" + msg.length(),
                             traceId, runId, tenantId, agent.getAgentId());
                     long t0 = System.currentTimeMillis();
                     ModelAdapter.ChatRequest chatReq = new ModelAdapter.ChatRequest(
-                            model, systemPrompt, msg, gc.temperature(), gc.maxTokens(), Map.of(), history,
+                            model, systemPrompt, msg, gc.temperature(), gc.maxTokens(), Map.of(), sessionHistory,
                             resolved.baseUrl(), resolved.apiKey());
                     ModelAdapter.ChatResponse resp = modelRouter.chat(provider, chatReq);
                     latency[0] = resp.latencyMs();
@@ -244,6 +268,105 @@ public class AgentRuntimeService {
         }
         String s = sw.toString();
         return s.length() > 4000 ? s.substring(0, 4000) + "\n...[truncated]" : s;
+    }
+
+    /**
+     * 解析本轮可用的工具声明（P1 功能 calling）。
+     * <p>
+     * 仅当请求显式 {@code tools.enabled=true} 才启用；{@code allowed} 白名单
+     * 为空时使用注册中心全部工具（内置 calc/search 及 HTTP/MCP 注册工具）。
+     * 工具注册中心未注入时返回空（等价不启用）。
+     * </p>
+     */
+    private List<ModelAdapter.ToolSpec> resolveToolSpecs(AgentRunRequest req) {
+        if (toolRegistry == null || req.tools() == null) {
+            return List.of();
+        }
+        AgentRunRequest.ToolsConfig tc = req.tools();
+        if (!Boolean.TRUE.equals(tc.enabled())) {
+            return List.of();
+        }
+        List<String> allowed = tc.allowed();
+        boolean allowAll = allowed == null || allowed.isEmpty();
+        List<ModelAdapter.ToolSpec> specs = new ArrayList<>();
+        for (Tool tool : toolRegistry.all()) {
+            if (tool == null || (!allowAll && !allowed.contains(tool.name()))) {
+                continue;
+            }
+            specs.add(new ModelAdapter.ToolSpec(tool.name(), tool.description(), tool.inputSchema()));
+        }
+        return specs;
+    }
+
+    /**
+     * 执行工具调用循环（P1）：注入 tools → 模型返回 tool_calls → 逐个执行 →
+     * 文本回灌下一轮 → 直至模型不再请求工具。
+     * <p>
+     * 采用「工具结果文本注入」的轻量闭环：把每次调用名/入参/结果拼为文本追加到
+     * 用户消息后重新请求。优点是兼容 OpenAI / Anthropic / 本地适配器且不动全局
+     * 消息协议；代价是不走原生 tool-role 消息，足够支撑 calc/search 等单步工具。
+     * </p>
+     */
+    private String runToolLoop(
+            String provider, String model, String systemPrompt, String userMessage,
+            GenerationConfig gc, ModelBindingService.ResolvedModel resolved,
+            List<ModelAdapter.ToolSpec> tools, List<ModelAdapter.ChatMessage> history,
+            String traceId, String runId, String tenantId, AgentDefinition agent, int[] usageTokens) {
+        String rolling = userMessage;
+        for (int round = 0; round < MAX_TOOL_ROUNDS; round++) {
+            boolean hasTools = round == 0 && tools != null && !tools.isEmpty();
+            logTo(LogLevel.INFO, LogCategory.llm, "llm.call provider=" + provider + " model=" + model
+                            + " routing=" + resolved.routing() + " round=" + round
+                            + " tools=" + (hasTools ? tools.size() : 0)
+                            + " history=" + history.size() + " chars=" + rolling.length(),
+                    traceId, runId, tenantId, agent.getAgentId());
+            long t0 = System.currentTimeMillis();
+            ModelAdapter.ChatRequest chatReq = new ModelAdapter.ChatRequest(
+                    model, systemPrompt, rolling, gc.temperature(), gc.maxTokens(), Map.of(), history,
+                    resolved.baseUrl(), resolved.apiKey(),
+                    hasTools ? tools : List.of(),
+                    hasTools ? "auto" : null);
+            ModelAdapter.ChatResponse resp = modelRouter.chat(provider, chatReq);
+            usageTokens[0] += resp.promptTokens();
+            usageTokens[1] += resp.completionTokens();
+            logTo(LogLevel.INFO, LogCategory.llm, "llm.done provider=" + provider + " model=" + model
+                            + " round=" + round + " latency=" + (System.currentTimeMillis() - t0) + "ms"
+                            + " tokens=" + (resp.promptTokens() + resp.completionTokens())
+                            + " toolCalls=" + (resp.toolCalls() == null ? 0 : resp.toolCalls().size()),
+                    traceId, runId, tenantId, agent.getAgentId());
+            if (resp.toolCalls() == null || resp.toolCalls().isEmpty()) {
+                return resp.content() == null ? "" : resp.content();
+            }
+            // 逐个执行模型请求的工具
+            StringBuilder observations = new StringBuilder();
+            for (ModelAdapter.ToolCall call : resp.toolCalls()) {
+                ToolResult tr;
+                try {
+                    tr = toolExecutor == null
+                            ? ToolResult.fail("tool executor not configured")
+                            : toolExecutor.run(call.name(), call.arguments(),
+                            ToolContext.of(tenantId, agent.getAgentId(), runId));
+                } catch (Exception e) {
+                    tr = ToolResult.fail(e.getMessage() == null ? "tool execution error" : e.getMessage());
+                }
+                String outputText = tr.output() == null
+                        ? (tr.error() == null ? "" : tr.error())
+                        : (tr.output().isTextual() ? tr.output().asText() : tr.output().toString());
+                logTo(LogLevel.INFO, LogCategory.tool, "tool.call name=" + call.name()
+                                + " success=" + tr.success() + " args="
+                                + (call.arguments() == null ? "{}" : call.arguments().toString()),
+                        traceId, runId, tenantId, agent.getAgentId());
+                observations.append("工具[").append(call.name()).append("] 执行")
+                        .append(tr.success() ? "成功" : "失败")
+                        .append("，结果：").append(outputText).append("\n");
+            }
+            rolling = rolling + "\n\n[工具调用结果]\n" + observations
+                    + "\n请依据上述工具结果继续回答用户问题；如无进一步工具可调用，直接给出最终答复。";
+        }
+        logTo(LogLevel.WARN, LogCategory.tool, "tool loop reached max rounds " + MAX_TOOL_ROUNDS
+                        + " agent=" + agent.getName(),
+                traceId, runId, tenantId, agent.getAgentId());
+        return "（工具调用超过最大轮次，已停止；请重试或补充说明）";
     }
 
     /**

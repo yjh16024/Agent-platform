@@ -62,7 +62,7 @@ public class McpToolRegistry {
             String description = (String) t.getOrDefault("description", "");
             JsonNode schema = t.get("input_schema") instanceof JsonNode n
                     ? n : (t.get("input_schema") == null ? null : JsonUtils.mapper().valueToTree(t.get("input_schema")));
-            toolRegistry.register(new McpToolAdapter(name, description, schema, serverUrl, client));
+            toolRegistry.register(new McpToolAdapter(name, description, schema, serverUrl, client), "mcp");
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("name", name);
             row.put("description", description);

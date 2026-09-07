@@ -16,12 +16,31 @@ import java.util.concurrent.ConcurrentHashMap;
 public class ToolRegistry {
 
     private final Map<String, Tool> tools = new ConcurrentHashMap<>();
+    /** 工具来源标记：builtin（内置）/ http（自定义 HTTP API）/ mcp（MCP Server）。 */
+    private final Map<String, String> sources = new ConcurrentHashMap<>();
 
     /**
-     * 注册工具（同名覆盖，即热更新）。
+     * 注册工具（同名覆盖，即热更新），来源默认 {@code external}。
      */
     public void register(Tool tool) {
+        register(tool, "external");
+    }
+
+    /**
+     * 注册工具并标注来源。
+     */
+    public void register(Tool tool, String source) {
         tools.put(tool.name(), tool);
+        if (source != null) {
+            sources.put(tool.name(), source);
+        }
+    }
+
+    /**
+     * 查询工具来源（未记录时按内置处理）。
+     */
+    public String sourceOf(String name) {
+        return sources.getOrDefault(name, "builtin");
     }
 
     /**
@@ -29,6 +48,7 @@ public class ToolRegistry {
      */
     public void unregister(String name) {
         tools.remove(name);
+        sources.remove(name);
     }
 
     /**

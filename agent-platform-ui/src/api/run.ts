@@ -36,8 +36,14 @@ export interface RagRequest {
   scoreThreshold?: number;
 }
 
+/** 工具配置：enabled 置 true 后，对话启用 function calling（默认全部注册工具，allowed 可白名单）。 */
+export interface ToolsRequest {
+  enabled?: boolean;
+  allowed?: string[];
+}
+
 // 非流式：/agent/run 返回裸 JSON（不套 ApiResponse），raw=true
-export function runAgent(agentId: string, messages: RunMessage[], rag?: RagRequest) {
+export function runAgent(agentId: string, messages: RunMessage[], rag?: RagRequest, tools?: ToolsRequest) {
   return http.post<RunResponse>(
     '/api/v1/agent/run',
     {
@@ -45,6 +51,7 @@ export function runAgent(agentId: string, messages: RunMessage[], rag?: RagReque
       mode: 'agent',
       messages,
       context: rag ? { useRag: rag.useRag ?? true, rag: { knowledgeBaseIds: rag.knowledgeBaseIds ?? [], topK: rag.topK ?? 5, scoreThreshold: rag.scoreThreshold ?? 0.0 } } : undefined,
+      tools: tools ? { enabled: tools.enabled ?? true, allowed: tools.allowed ?? [] } : undefined,
       metadata: { tenant_id: getTenantId(), user_id: 'demo-user' },
     },
     true,
@@ -58,6 +65,7 @@ export async function runAgentStream(
   messages: RunMessage[],
   onDelta: (text: string) => void,
   rag?: RagRequest,
+  tools?: ToolsRequest,
 ): Promise<void> {
   const h: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -75,6 +83,7 @@ export async function runAgentStream(
       messages,
       stream: true,
       context: rag ? { useRag: rag.useRag ?? true, rag: { knowledgeBaseIds: rag.knowledgeBaseIds ?? [], topK: rag.topK ?? 5, scoreThreshold: rag.scoreThreshold ?? 0.0 } } : undefined,
+      tools: tools ? { enabled: tools.enabled ?? true, allowed: tools.allowed ?? [] } : undefined,
       metadata: { tenant_id: getTenantId(), user_id: 'demo-user' },
     }),
   });

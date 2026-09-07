@@ -278,4 +278,9 @@ export interface QuotaStatus {
 export interface ToolInfo {
   name?: string;
   description?: string;
+  /** builtin（内置）/ http（自定义 HTTP API）/ mcp（MCP Server）/ external。 */
+  source?: string;
+  /** 仅 http 来源返回，编辑回显用。 */
+  endpoint?: string;
+  method?: string;
 }

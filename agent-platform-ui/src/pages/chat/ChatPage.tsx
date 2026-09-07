@@ -30,6 +30,7 @@ export default function ChatPage() {
   const [agentId, setAgentId] = useState<string | undefined>();
   const [input, setInput] = useState('');
   const [stream, setStream] = useState(false);
+  const [toolsEnabled, setToolsEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const listRef = useRef<HTMLDivElement>(null);
@@ -122,6 +123,7 @@ export default function ChatPage() {
     const curAgent = agents.find((a) => a.agentId === agentId);
     const kbIds = (curAgent?.capabilities?.knowledgeBaseIds ?? []).filter(Boolean) as string[];
     const rag = kbIds.length > 0 ? { useRag: true, knowledgeBaseIds: kbIds } : undefined;
+    const tools = toolsEnabled ? { enabled: true, allowed: [] as string[] } : undefined;
 
     setBusy(true);
     try {
@@ -133,14 +135,14 @@ export default function ChatPage() {
           const copy = [...msgsOf(agentId)];
           copy[copy.length - 1] = { role: 'assistant', content: acc };
           replace(agentId, copy);
-        }, rag);
+        }, rag, tools);
         const finalMsgs = [...msgsOf(agentId)];
         if (finalMsgs.length > 0 && finalMsgs[finalMsgs.length - 1].content === '') {
           finalMsgs[finalMsgs.length - 1] = { role: 'assistant', content: '(空)' };
           replace(agentId, finalMsgs);
         }
       } else {
-        const r = await runAgent(agentId, payload, rag);
+        const r = await runAgent(agentId, payload, rag, tools);
         append(agentId, {
           role: 'assistant',
           content: r.output?.content ?? '(空)',
@@ -152,7 +154,7 @@ export default function ChatPage() {
     } finally {
       setBusy(false);
     }
-  }, [agentId, input, attachments, stream, msgsOf, append, replace, agents]);
+  }, [agentId, input, attachments, stream, toolsEnabled, msgsOf, append, replace, agents]);
 
   /** 开始新对话：先把本轮保存进会话历史，再清空本地。 */
   const newConversation = useCallback(async () => {
@@ -193,6 +195,10 @@ export default function ChatPage() {
           />
           <span>流式</span>
           <Switch checked={stream} onChange={setStream} />
+          <span>工具</span>
+          <Tooltip title="开启后智能体可自动调用已注册工具（calc/search 等）；仅建议在支持 function calling 的模型上使用">
+            <Switch checked={toolsEnabled} onChange={setToolsEnabled} />
+          </Tooltip>
           <Popconfirm title="开始新一轮对话？当前对话将先保存到会话历史。" onConfirm={newConversation}>
             <Button type="primary" icon={<PlusOutlined />}>新对话</Button>
           </Popconfirm>

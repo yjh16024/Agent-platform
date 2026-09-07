@@ -24,7 +24,7 @@ public class ToolRegistrationConfig {
     @PostConstruct
     public void registerAll() {
         for (Tool tool : builtinTools) {
-            registry.register(tool);
+            registry.register(tool, "builtin");
             log.info("Registered builtin tool: {}", tool.name());
         }
     }

@@ -82,10 +82,11 @@ public class AnthropicAdapter implements ModelAdapter {
             }
             JsonNode node = JsonUtils.toJsonNode(response.body().string());
             String content = extractText(node);
+            List<ModelAdapter.ToolCall> toolCalls = extractToolUses(node);
             int promptTokens = node.path("usage").path("input_tokens").asInt(0);
             int completionTokens = node.path("usage").path("output_tokens").asInt(0);
             return new ChatResponse(content, promptTokens, completionTokens, 0.0,
-                    System.currentTimeMillis() - start);
+                    System.currentTimeMillis() - start, toolCalls);
         } catch (BizException e) {
             throw e;
         } catch (IOException e) {
@@ -167,6 +168,27 @@ public class AnthropicAdapter implements ModelAdapter {
         return sb.toString();
     }
 
+    /** 提取响应中的 tool_use blocks（Anthropic 工具调用以 content block 返回）。 */
+    private List<ModelAdapter.ToolCall> extractToolUses(JsonNode node) {
+        List<ModelAdapter.ToolCall> calls = new ArrayList<>();
+        JsonNode content = node.path("content");
+        if (content.isArray()) {
+            for (JsonNode block : content) {
+                if ("tool_use".equals(block.path("type").asText())) {
+                    String id = block.path("id").asText(null);
+                    String name = block.path("name").asText(null);
+                    JsonNode input = block.path("input");
+                    if (name == null || name.isBlank()) {
+                        continue;
+                    }
+                    calls.add(new ModelAdapter.ToolCall(id, name,
+                            input == null || input.isMissingNode() ? null : input));
+                }
+            }
+        }
+        return calls;
+    }
+
     private Map<String, Object> buildBody(ChatRequest req, boolean stream) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", req.model());
@@ -190,6 +212,25 @@ public class AnthropicAdapter implements ModelAdapter {
         }
         messages.add(Map.of("role", "user", "content", req.userMessage()));
         body.put("messages", messages);
+        // 工具声明（function calling）——Anthropic 格式为平铺数组：name/description/input_schema
+        if (req.tools() != null && !req.tools().isEmpty()) {
+            List<Map<String, Object>> tools = new ArrayList<>();
+            for (ModelAdapter.ToolSpec spec : req.tools()) {
+                Map<String, Object> tool = new LinkedHashMap<>();
+                tool.put("name", spec.name());
+                if (spec.description() != null && !spec.description().isBlank()) {
+                    tool.put("description", spec.description());
+                }
+                if (spec.inputSchema() != null) {
+                    tool.put("input_schema", spec.inputSchema());
+                }
+                tools.add(tool);
+            }
+            body.put("tools", tools);
+            if (req.toolChoice() != null && !req.toolChoice().isBlank()) {
+                body.put("tool_choice", Map.of("type", "auto"));
+            }
+        }
         if (req.extra() != null) {
             body.putAll(req.extra());
         }

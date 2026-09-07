@@ -15,6 +15,7 @@ import reactor.core.publisher.FluxSink;
 
 import java.io.IOException;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -73,12 +74,15 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
                         "上游模型调用失败 HTTP " + response.code() + ": " + err);
             }
             JsonNode node = JsonUtils.toJsonNode(response.body().string());
-            String content = node.path("choices").path(0).path("message").path("content").asText("");
+            JsonNode message = node.path("choices").path(0).path("message");
+            String content = message.path("content").asText("");
             int promptTokens = node.path("usage").path("prompt_tokens").asInt(0);
             int completionTokens = node.path("usage").path("completion_tokens").asInt(0);
-            log.info("[model:{}] chat 完成 来源=上游 latencyMs={}", providerName, System.currentTimeMillis() - start);
+            List<ModelAdapter.ToolCall> toolCalls = parseToolCalls(message);
+            log.info("[model:{}] chat 完成 来源=上游 latencyMs={} toolCalls={}",
+                    providerName, System.currentTimeMillis() - start, toolCalls.size());
             return new ChatResponse(content, promptTokens, completionTokens, 0.0,
-                    System.currentTimeMillis() - start);
+                    System.currentTimeMillis() - start, toolCalls);
         } catch (BizException e) {
             throw e;
         } catch (IOException e) {
@@ -191,10 +195,58 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
         }
         messages.add(Map.of("role", "user", "content", req.userMessage()));
         body.put("messages", messages);
+        // 工具声明（function calling）——tools 为空时不启用，保证旧行为不变
+        if (req.tools() != null && !req.tools().isEmpty()) {
+            java.util.List<Map<String, Object>> tools = new java.util.ArrayList<>();
+            for (ModelAdapter.ToolSpec spec : req.tools()) {
+                Map<String, Object> fn = new LinkedHashMap<>();
+                fn.put("name", spec.name());
+                if (spec.description() != null && !spec.description().isBlank()) {
+                    fn.put("description", spec.description());
+                }
+                if (spec.inputSchema() != null) {
+                    fn.put("parameters", spec.inputSchema());
+                }
+                tools.add(Map.of("type", "function", "function", fn));
+            }
+            body.put("tools", tools);
+            if (req.toolChoice() != null && !req.toolChoice().isBlank()) {
+                body.put("tool_choice", req.toolChoice());
+            }
+        }
         if (req.extra() != null) {
             body.putAll(req.extra());
         }
         return body;
+    }
+
+    /**
+     * 解析 OpenAI 响应中的 tool_calls（{@code message.tool_calls[]}）。
+     */
+    private List<ModelAdapter.ToolCall> parseToolCalls(JsonNode message) {
+        List<ModelAdapter.ToolCall> calls = new java.util.ArrayList<>();
+        JsonNode arr = message == null ? null : message.path("tool_calls");
+        if (arr != null && arr.isArray()) {
+            for (JsonNode tc : arr) {
+                String id = tc.path("id").asText(null);
+                String fnName = tc.path("function").path("name").asText(null);
+                String rawArgs = tc.path("function").path("arguments").asText(null);
+                if (fnName == null || fnName.isBlank()) {
+                    continue;
+                }
+                JsonNode arguments = null;
+                if (rawArgs != null && !rawArgs.isBlank()) {
+                    try {
+                        arguments = JsonUtils.toJsonNode(rawArgs);
+                    } catch (Exception e) {
+                        log.warn("[model:{}] tool_calls 参数非合法 JSON，按文本兜底: {}", providerName, e.getMessage());
+                        arguments = com.fasterxml.jackson.databind.node.TextNode.valueOf(rawArgs);
+                    }
+                }
+                calls.add(new ModelAdapter.ToolCall(id, fnName, arguments));
+            }
+        }
+        return calls;
     }
 
     private Response post(String url, Map<String, Object> body, String apiKey) throws IOException {

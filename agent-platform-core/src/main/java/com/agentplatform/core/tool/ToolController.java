@@ -11,11 +11,14 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -32,16 +35,49 @@ public class ToolController {
     private final McpToolRegistry mcpToolRegistry;
 
     /**
-     * 列出全部已注册工具。
+     * 列出全部已注册工具（含来源与 HTTP 工具的 endpoint/method，供前端编辑回显）。
      */
     @GetMapping
     public ApiResponse<List<Map<String, Object>>> list() {
-        List<Map<String, Object>> tools = registry.all().stream()
-                .map(t -> Map.of(
-                        "name", t.name(),
-                        "description", (Object) (t.description() == null ? "" : t.description())))
-                .toList();
+        List<Map<String, Object>> tools = new ArrayList<>();
+        for (Tool t : registry.all()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("name", t.name());
+            row.put("description", t.description() == null ? "" : t.description());
+            row.put("source", registry.sourceOf(t.name()));
+            if (t instanceof HttpApiTool http) {
+                row.put("endpoint", http.getEndpoint());
+                row.put("method", http.getMethod());
+            }
+            tools.add(row);
+        }
         return ApiResponse.ok(tools);
+    }
+
+    /**
+     * 修改自定义 HTTP API 工具（仅 source=http 的可修改 endpoint/method/description）。
+     */
+    @PutMapping("/{toolName}")
+    public ApiResponse<Map<String, Object>> update(
+            @PathVariable String toolName,
+            @RequestBody Map<String, Object> body) {
+        Tool existing = registry.get(toolName);
+        if (!(existing instanceof HttpApiTool http)) {
+            return ApiResponse.error("BAD_REQUEST",
+                    "only http-registered tools are editable (current source=" + registry.sourceOf(toolName) + ")");
+        }
+        String description = body.containsKey("description")
+                ? (String) body.get("description") : http.getDescription();
+        String endpoint = body.containsKey("endpoint")
+                ? (String) body.get("endpoint") : http.getEndpoint();
+        String method = body.containsKey("method")
+                ? String.valueOf(body.get("method")) : http.getMethod();
+        if (endpoint == null || endpoint.isBlank()) {
+            return ApiResponse.error("BAD_REQUEST", "endpoint 不能为空");
+        }
+        HttpApiTool updated = new HttpApiTool(toolName, description, http.getInputSchema(), endpoint, method);
+        registry.register(updated, "http");
+        return ApiResponse.ok(Map.of("name", toolName, "updated", true));
     }
 
     /**
@@ -71,7 +107,7 @@ public class ToolController {
         }
 
         HttpApiTool tool = new HttpApiTool(name, description, null, endpoint, method);
-        registry.register(tool);
+        registry.register(tool, "http");
         return ApiResponse.ok(Map.of("name", name, "registered", true));
     }
 
@@ -90,10 +126,17 @@ public class ToolController {
     }
 
     /**
-     * 卸载单个工具（从注册中心移除，MCP/HTTP 自定义工具均可）。
+     * 卸载单个工具（从注册中心移除，MCP/HTTP 自定义工具均可；内置工具受保护）。
      */
     @DeleteMapping("/{toolName}")
     public ApiResponse<Void> unregister(@PathVariable String toolName) {
+        if (!registry.contains(toolName)) {
+            return ApiResponse.error("NOT_FOUND", "tool not found: " + toolName);
+        }
+        if ("builtin".equals(registry.sourceOf(toolName))) {
+            return ApiResponse.error("BAD_REQUEST",
+                    "内置工具（calc/search 等）由代码注册，不可删除；如确需移除请修改代码后重启");
+        }
         registry.unregister(toolName);
         return ApiResponse.ok(null, "unregistered");
     }

@@ -17,3 +17,16 @@ export function registerTool(body: {
 }) {
   return http.post<Record<string, unknown>>('/api/v1/tools/register', body);
 }
+
+/** 修改 HTTP 注册工具（name 不可变，改 description/endpoint/method）。 */
+export function updateTool(
+  name: string,
+  body: { description?: string; endpoint?: string; method?: string },
+) {
+  return http.put<Record<string, unknown>>(`/api/v1/tools/${encodeURIComponent(name)}`, body);
+}
+
+/** 删除自定义工具（内置工具受后端保护）。 */
+export function unregisterTool(name: string) {
+  return http.delete<void>(`/api/v1/tools/${encodeURIComponent(name)}`);
+}

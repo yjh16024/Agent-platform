@@ -1,8 +1,17 @@
-import { useEffect, useState } from 'react';
-import { Table, Space, Button, Input, Select, Modal, Form, message, Card, Typography, Tag } from 'antd';
-import { PlayCircleOutlined } from '@ant-design/icons';
-import { listTools, invokeTool, registerTool } from '../../api/tools';
+import { useCallback, useEffect, useState } from 'react';
+import {
+  Table, Space, Button, Input, Select, Modal, Form, message, Card, Typography, Tag, Popconfirm,
+} from 'antd';
+import { PlayCircleOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { listTools, invokeTool, registerTool, updateTool, unregisterTool } from '../../api/tools';
 import { ToolInfo } from '../../api/types';
+
+const SOURCE_COLOR: Record<string, string> = {
+  builtin: 'blue',
+  http: 'green',
+  mcp: 'purple',
+  external: 'default',
+};
 
 export default function ToolsPage() {
   const [items, setItems] = useState<ToolInfo[]>([]);
@@ -10,10 +19,11 @@ export default function ToolsPage() {
   const [toolName, setToolName] = useState<string>();
   const [args, setArgs] = useState('{}');
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
-  const [regOpen, setRegOpen] = useState(false);
-  const [regForm] = Form.useForm();
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [editing, setEditing] = useState<ToolInfo | null>(null);
+  const [editorForm] = Form.useForm();
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       setItems(await listTools());
@@ -22,10 +32,10 @@ export default function ToolsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
   useEffect(() => {
     load();
-  }, []);
+  }, [load]);
 
   const doInvoke = async () => {
     if (!toolName) {
@@ -46,40 +56,122 @@ export default function ToolsPage() {
     }
   };
 
-  const doRegister = async () => {
-    const v = await regForm.validateFields();
+  const openCreate = () => {
+    setEditing(null);
+    editorForm.resetFields();
+    editorForm.setFieldsValue({ method: 'POST' });
+    setEditorOpen(true);
+  };
+
+  const openEdit = (t: ToolInfo) => {
+    setEditing(t);
+    editorForm.resetFields();
+    editorForm.setFieldsValue({
+      name: t.name,
+      description: t.description,
+      endpoint: t.endpoint,
+      method: t.method || 'POST',
+    });
+    setEditorOpen(true);
+  };
+
+  const submitEditor = async () => {
+    const v = await editorForm.validateFields();
     try {
-      await registerTool(v);
-      message.success('工具已注册');
-      setRegOpen(false);
-      regForm.resetFields();
+      if (editing) {
+        await updateTool(editing.name!, {
+          description: v.description,
+          endpoint: v.endpoint,
+          method: v.method,
+        });
+        message.success('工具已更新');
+      } else {
+        await registerTool(v);
+        message.success('工具已注册');
+      }
+      setEditorOpen(false);
       load();
     } catch (e) {
       message.error((e as Error).message);
     }
   };
 
+  const doDelete = async (name: string) => {
+    try {
+      await unregisterTool(name);
+      message.success('工具已删除');
+      if (toolName === name) setToolName(undefined);
+      load();
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+  };
+
+  const sourceLabel = (s?: string) => {
+    const key = s ?? 'external';
+    const text: Record<string, string> = { builtin: '内置', http: 'HTTP', mcp: 'MCP', external: '外部' };
+    return <Tag color={SOURCE_COLOR[key] ?? 'default'}>{text[key] ?? key}</Tag>;
+  };
+
+  const isBuiltin = (t: ToolInfo) => t.source === 'builtin';
+
   const columns = [
-    { title: '工具名', dataIndex: 'name', width: 200 },
+    { title: '工具名', dataIndex: 'name', width: 180 },
+    { title: '来源', dataIndex: 'source', width: 90, render: (_: unknown, r: ToolInfo) => sourceLabel(r.source) },
     { title: '描述', dataIndex: 'description', ellipsis: true },
+    { title: '端点', dataIndex: 'endpoint', ellipsis: true, render: (v: string) => v || '—' },
+    {
+      title: '操作', width: 180,
+      render: (_: unknown, r: ToolInfo) => (
+        <Space>
+          <Popconfirm title={`删除工具 ${r.name}？`} onConfirm={() => doDelete(r.name!)}>
+            <Button
+              size="small"
+              danger
+              icon={<DeleteOutlined />}
+              disabled={isBuiltin(r)}
+              title={isBuiltin(r) ? '内置工具不可删除' : undefined}
+            >
+              删除
+            </Button>
+          </Popconfirm>
+          <Button
+            size="small"
+            icon={<EditOutlined />}
+            onClick={() => openEdit(r)}
+            disabled={r.source !== 'http'}
+            title={r.source === 'http' ? '修改 HTTP 工具配置' : '仅 HTTP 注册工具可编辑'}
+          >
+            编辑
+          </Button>
+        </Space>
+      ),
+    },
   ];
 
   return (
     <div>
-      <Space style={{ marginBottom: 16 }}>
-        <Button type="primary" onClick={() => setRegOpen(true)}>注册 HTTP 工具</Button>
+      <Space style={{ marginBottom: 16 }} wrap>
+        <Button type="primary" icon={<PlayCircleOutlined />} onClick={openCreate}>注册 HTTP 工具</Button>
         <Select
           placeholder="选择要调试的工具"
-          style={{ width: 220 }}
+          style={{ width: 200 }}
           value={toolName}
           onChange={setToolName}
-          options={items.map((t) => ({ value: t.name, label: t.name }))}
+          options={items.map((t) => ({ value: t.name, label: `${t.name} (${t.source ?? 'external'})` }))}
         />
-        <Input placeholder='参数 JSON，如 {"expression":"1+1"}' style={{ width: 320 }} value={args} onChange={(e) => setArgs(e.target.value)} />
+        <Input placeholder='参数 JSON，如 {"expression":"1+1"}' style={{ width: 300 }} value={args} onChange={(e) => setArgs(e.target.value)} />
         <Button icon={<PlayCircleOutlined />} onClick={doInvoke}>执行</Button>
       </Space>
 
-      <Table rowKey="name" loading={loading} columns={columns} dataSource={items} pagination={false} />
+      <Table
+        rowKey="name"
+        loading={loading}
+        columns={columns}
+        dataSource={items}
+        pagination={false}
+        locale={{ emptyText: '暂无工具（内置 calc/search 与注册的 HTTP/MCP 工具）' }}
+      />
 
       {result && (
         <Card title="执行结果" style={{ marginTop: 16 }}>
@@ -92,14 +184,29 @@ export default function ToolsPage() {
         </Card>
       )}
 
-      <Modal title="注册 HTTP 工具" open={regOpen} onOk={doRegister} onCancel={() => setRegOpen(false)} destroyOnClose>
-        <Form form={regForm} layout="vertical">
-          <Form.Item name="name" label="工具名" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="description" label="描述"><Input /></Form.Item>
-          <Form.Item name="endpoint" label="接口地址" rules={[{ required: true }]}><Input placeholder="https://..." /></Form.Item>
+      <Modal
+        title={editing ? `编辑 HTTP 工具：${editing.name}` : '注册 HTTP 工具'}
+        open={editorOpen}
+        onOk={submitEditor}
+        onCancel={() => setEditorOpen(false)}
+        destroyOnClose
+      >
+        <Form form={editorForm} layout="vertical">
+          <Form.Item name="name" label="工具名" rules={[{ required: true }]}>
+            <Input disabled={!!editing} placeholder="全局唯一，如 weather_query" />
+          </Form.Item>
+          <Form.Item name="description" label="描述">
+            <Input placeholder="让 LLM 理解何时调用此工具" />
+          </Form.Item>
+          <Form.Item name="endpoint" label="接口地址" rules={[{ required: true }]}>
+            <Input placeholder="https://..." />
+          </Form.Item>
           <Form.Item name="method" label="方法" initialValue="POST">
             <Select options={['GET', 'POST'].map((m) => ({ value: m, label: m }))} />
           </Form.Item>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            编辑仅允许修改 HTTP 注册工具；内置工具（calc/search）由代码定义，MCP 工具由远端 Server 定义。
+          </Typography.Text>
         </Form>
       </Modal>
     </div>
