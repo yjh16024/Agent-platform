@@ -20,7 +20,7 @@
 
 | 层级 / 事项 | 状态 | 说明 |
 |---|---|---|
-| 短期记忆（Redis 缓存最近 5–10 轮） | ❌ | `SessionService` 目前直接查 MySQL，**未接入 Redis**；收益为降低延迟 |
+| 短期记忆（Redis 缓存最近 5–10 轮） | ✅ 已实现（2026-09-08） | `SessionRecentCache`（Redis List，缓存最近 25 轮/50 条/24h TTL）；`recentMessages` 优先读缓存、miss 回 DB 并回填，`recordExchange` 追加最新轮并裁剪，删除/清空会话自动清缓存；Redis 缺失全程降级不阻断 |
 | 长期记忆（用户显式画像） | ❌ | 需 `user_fact` 表 + UI；建议先做"用户主动填写"，自动抽取后置 |
 | 中期记忆（对话摘要） | ❌ | 需 `message.summary` + 定时任务 + 降级为保留原文 |
 | 向量记忆（历史对话向量召回） | ❌ | 技术栈已具备（in-memory/Milvus），风险是无关历史污染上下文 |

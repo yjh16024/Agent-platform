@@ -13,6 +13,7 @@ import com.agentplatform.model.repository.MessageRepository;
 import com.agentplatform.model.repository.SessionRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -41,6 +42,10 @@ public class SessionService {
 
     private final SessionRepository sessionRepository;
     private final MessageRepository messageRepository;
+
+    /** 可选依赖：会话短期记忆缓存（Redis；缺失/不可用时自动回 DB，不影响单测与最小环境）。 */
+    @Autowired(required = false)
+    private SessionRecentCache recentCache;
 
     // ---- 运行时记忆（供 AgentRuntimeService 调用）----
 
@@ -78,9 +83,24 @@ public class SessionService {
      */
     @Transactional(readOnly = true)
     public List<MessageDto> recentMessages(String tenantId, String sessionId, int max) {
+        int n = Math.max(max, 0);
+        // ① 短期记忆：优先读 Redis 缓存（缓存不存在/不可用返回 null → 走 DB）
+        if (recentCache != null) {
+            List<MessageDto> cached = recentCache.get(tenantId, sessionId, n);
+            if (cached != null) {
+                return cached;
+            }
+        }
+        // ② 未命中 → DB；为缓存完整性拉最近 MAX_ITEMS 条（≤25 轮），返回其中最近 n 条
         List<Message> all = messageRepository.findBySessionIdOrderByTurnNoAscSeqNoAsc(sessionId);
-        int from = Math.max(0, all.size() - Math.max(max, 0));
-        return all.subList(from, all.size()).stream().map(this::toDto).toList();
+        int fetch = Math.max(n, SessionRecentCache.MAX_ITEMS);
+        int from = Math.max(0, all.size() - fetch);
+        List<MessageDto> fetched = all.subList(from, all.size()).stream().map(this::toDto).toList();
+        if (recentCache != null) {
+            recentCache.put(tenantId, sessionId, fetched);
+        }
+        int back = Math.max(0, fetched.size() - n);
+        return fetched.subList(back, fetched.size());
     }
 
     /**
@@ -97,6 +117,10 @@ public class SessionService {
         int turnNo = messageRepository.maxTurnNo(sessionId) + 1;
         messageRepository.save(buildMessage(tenantId, sessionId, runId, turnNo, 1, "user", userText, null));
         messageRepository.save(buildMessage(tenantId, sessionId, runId, turnNo, 2, "assistant", assistantText, model));
+        // 短期记忆：同步追加最新一轮到 Redis 缓存（缓存不存在时留待读路径重建）
+        if (recentCache != null) {
+            recentCache.append(tenantId, sessionId, turnNo, userText, assistantText);
+        }
 
         if (session.getTitle() == null || session.getTitle().isBlank()) {
             session.setTitle(truncate(userText, 50));
@@ -213,6 +237,9 @@ public class SessionService {
         Session s = getOrThrow(tenantId, sessionId);
         messageRepository.deleteBySessionId(sessionId);
         sessionRepository.delete(s);
+        if (recentCache != null) {
+            recentCache.evict(tenantId, sessionId);
+        }
         log.info("Deleted session {} (tenant {})", sessionId, tenantId);
     }
 
@@ -222,6 +249,9 @@ public class SessionService {
         messageRepository.deleteBySessionId(sessionId);
         s.setStatus("cleared");
         sessionRepository.save(s);
+        if (recentCache != null) {
+            recentCache.evict(tenantId, sessionId);
+        }
     }
 
     // ---- 内部 ----
