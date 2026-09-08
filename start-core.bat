@@ -61,13 +61,14 @@ if /i "%~1"=="rebuild" set "NEED_BUILD=1"
 if not exist "%JAR_FILE%" set "NEED_BUILD=1"
 
 if defined NEED_BUILD (
-    echo [2/3] Building...
-    call mvn -q -pl agent-platform-core -am package -DskipTests -o >nul 2>&1
+    echo [2/3] Building (online first, fallback offline)...
+    rem online first to fetch new deps; fallback to -o for reproducible offline build
+    call mvn -q -pl agent-platform-core -am package -DskipTests >nul 2>&1
     if errorlevel 1 (
-        echo [WARN] offline build failed, trying online build...
-        call mvn -q -pl agent-platform-core -am package -DskipTests
+        echo [WARN] online build failed, falling back to offline (-o)...
+        call mvn -q -pl agent-platform-core -am package -DskipTests -o
         if errorlevel 1 (
-            echo [WARN] build failed again, retrying after 3s...
+            echo [WARN] offline build failed too, retrying online after 3s...
             timeout /t 3 /nobreak >nul
             call mvn -q -pl agent-platform-core -am package -DskipTests
             if errorlevel 1 goto :fail
