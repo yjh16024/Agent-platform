@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -166,6 +167,34 @@ public class ToolController {
         @SuppressWarnings("unchecked")
         Map<String, Object> headers = (Map<String, Object>) body.get("headers");
         return ApiResponse.ok(mcpToolRegistry.connect(serverUrl, apiKey, headers), "MCP tools registered");
+    }
+
+    /**
+     * 注册**本地进程内** MCP 工具（{@code McpClient} 的本地实现，零网络）。
+     * <p>body：{@code dir} 可选（本地根目录，缺省取 {@code agent-platform.mcp.local-dir}）。</p>
+     */
+    @PostMapping("/mcp/local")
+    public ApiResponse<Map<String, Object>> connectLocalMcp(
+            @RequestBody(required = false) Map<String, Object> body) {
+        String dir = body == null ? null : (String) body.get("dir");
+        return ApiResponse.ok(mcpToolRegistry.connectLocal(dir == null || dir.isBlank() ? null : Path.of(dir)),
+                "local MCP tools registered");
+    }
+
+    /**
+     * 注册**沙箱子进程** MCP 工具（{@code McpClient} 的沙箱实现：目录隔离 + 白名单 + 超时）。
+     * <p>body：{@code dir} 可选；{@code timeout_seconds} 可选。</p>
+     */
+    @PostMapping("/mcp/sandbox")
+    public ApiResponse<Map<String, Object>> connectSandboxMcp(
+            @RequestBody(required = false) Map<String, Object> body) {
+        String dir = body == null ? null : (String) body.get("dir");
+        Long timeout = null;
+        if (body != null && body.get("timeout_seconds") != null) {
+            timeout = Long.parseLong(String.valueOf(body.get("timeout_seconds")));
+        }
+        return ApiResponse.ok(mcpToolRegistry.connectSandbox(dir == null || dir.isBlank() ? null : Path.of(dir), timeout),
+                "sandbox MCP tools registered");
     }
 
     /**

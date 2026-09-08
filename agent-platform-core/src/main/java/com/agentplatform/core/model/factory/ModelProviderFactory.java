@@ -5,6 +5,7 @@ import com.agentplatform.core.model.adapter.AnthropicAdapter;
 import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.model.adapter.MockModelAdapter;
 import com.agentplatform.core.model.adapter.OpenAiCompatibleAdapter;
+import com.agentplatform.core.model.adapter.RuleEngineModelAdapter;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -62,7 +63,8 @@ public class ModelProviderFactory {
      * 支持的服务商列表（统一走 LiteLLM 兼容协议 / 直连）。
      */
     public static final String[] SUPPORTED_PROVIDERS = {
-            "auto", "openai", "anthropic", "qwen", "ernie", "hunyuan", "deepseek", "local"
+            "auto", "openai", "anthropic", "qwen", "ernie", "hunyuan", "deepseek", "local",
+            "rule", "rule-engine"
     };
 
     /**
@@ -79,6 +81,7 @@ public class ModelProviderFactory {
             case "auto", "openai", "qwen", "ernie", "hunyuan", "deepseek" -> "openai";
             case "anthropic" -> "anthropic";   // Anthropic 走 Messages API 协议（x-api-key + /v1/messages）
             case "local", "mock" -> "local";
+            case "rule", "rule-engine" -> "rule";   // 规则引擎：确定性应答，零成本
             default -> p;
         };
     }
@@ -86,6 +89,9 @@ public class ModelProviderFactory {
     private ModelAdapter create(String key) {
         if ("local".equals(key)) {
             return new MockModelAdapter();
+        }
+        if ("rule".equals(key)) {
+            return new RuleEngineModelAdapter();
         }
         if ("anthropic".equals(key)) {
             return new AnthropicAdapter(key, baseUrl, apiKey, userAgent, httpClient);

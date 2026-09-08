@@ -1,7 +1,7 @@
 # 待办与注意事项（Backlog & Notes）
 
 > 记录项目**当前仍未实现/未接通**的能力，以及开发中必须注意的坑。已实现且影响面较大的
-> 变更会在此登记，避免文档与代码再次脱节。最后核实：2026-09-04。
+> 变更会在此登记，避免文档与代码再次脱节。最后核实：2026-09-08。
 
 ## 〇、近期已补齐（与旧版 TODO 差异，均已合入代码）
 
@@ -75,3 +75,20 @@
 8. **record 派生 getter**：会参与 Jackson 序列化，派生方法加 `@JsonIgnore`（曾致反序列化失败）。
 9. **Redis/Quota**：计数以 Redis INCR+TTL 为主，缺失时内存兜底；重启会丢计数属预期。
 10. **Windows jar 锁**：`java -jar` 运行中无法 `mvn package`，先杀进程。
+
+## 四、OOP 课程设计要求对照（独立缺口清单，2026-09-08 建档）
+
+> 说明：本组缺口来自 OOP 教学设计规范（Entity 封装 / 策略 / 工厂+多态 / 命令模式），
+> 与上文「一、仍未实现/待补充」的功能缺口**相互独立**——两者判断标准不同（教学规范 vs 业务完备性），
+> 后续各自维护、各自勾销，不要合并。状态图例：✅ 已实现 | ⚠️ 部分实现 | ❌ 未实现
+>
+> **进度**：2026-09-08 已完成 M2 / M3 / M4（零新增依赖，离线 `mvn -o` 编译 + 104 个测试全绿）；
+> M1（实体封装）暂未处理——JPA 实体 setter 全开属持久化框架约束，需权衡后再改。
+
+| 编号 | 设计要求 | 需求点 | 项目现状 | 证据位置 / 预期改造 |
+|------|----------|--------|----------|----------------------|
+| M1 | Entity 数据载体 + 封装 | 智能体 `AgentTemplate`、技能 `Skill` 数据载体体现封装 | ⚠️ | 载体已在：`AgentDefinition`/`SkillDef`（含 record 子结构 `Persona/Capabilities/GenerationConfig`）。但 JPA 实体 Lombok setter 全开、无不变量/业务方法，封装不深 |
+| M1 | Entity 数据载体 + 封装 | 智能体 `AgentTemplate`、技能 `Skill` 数据载体体现封装 | ⚠️ | 载体已在（`AgentDefinition`/`SkillDef` + record 子结构），但 JPA setter 全开、无业务方法，封装不深（本轮未处理） |
+| M2 | 策略模式（抽象 + 两实现） | `ChatClient` 抽象，规则引擎/真实大模型两实现 | ✅ | 已补 `RuleEngineModelAdapter`（`core/model/adapter/`）：正则规则集 + 兜底文案，provider=`rule`/`rule-engine`；已注册进 `ModelProviderFactory`（不进 `auto` 路由，避免抢占真模型）。真模型实现沿用 `OpenAiCompatibleAdapter`/`AnthropicAdapter` |
+| M3 | 工厂 + 多态（MCP） | `McpClient` 接口 + 本地/沙箱两实现 + 工厂 | ✅ | `McpClient` 已抽象为接口；实现：`HttpMcpClient`（远程 JSON-RPC）、`LocalMcpClient`（进程内 echo/time/read_file，限 baseDir）、`SandboxMcpClient`（子进程脚本：目录隔离+解释器白名单+超时+输出截断）；`McpClientFactory` 按 `McpEndpoint` 创建。接口：`POST /tools/mcp/local`、`/tools/mcp/sandbox` |
+| M4 | 命令模式（Skill 执行器） | `SkillExecutor` 接口 + 注册表 + 多命令实现 | ✅ | 新增 `core/skill/executor/`：`SkillExecutor` 接口 + `SkillExecutorRegistry`（自动收集实现、按 type/supports 分发、prompt 兜底）+ 三个命令实现 `PromptSkillExecutor`/`ScriptSkillExecutor`/`HttpSkillExecutor`；门面 `SkillExecutionService`；接口 `GET /skills/executors`、`POST /skills/{id}/execute` |

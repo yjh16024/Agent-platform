@@ -1,6 +1,8 @@
 package com.agentplatform.core.skill;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.core.skill.executor.SkillExecutionResult;
+import com.agentplatform.core.skill.executor.SkillExecutionService;
 import com.agentplatform.model.entity.SkillDef;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -32,6 +34,7 @@ import java.util.Map;
 public class SkillController {
 
     private final SkillService skillService;
+    private final SkillExecutionService executionService;
 
     /** skills 根目录绝对路径（前端展示/复制用）。 */
     @GetMapping("/dir")
@@ -138,6 +141,30 @@ public class SkillController {
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @PathVariable String skillId) {
         return ApiResponse.ok(skillService.get(tenantId, skillId));
+    }
+
+    /** 可用 Skill 执行器清单（命令模式：prompt / script / http …）。 */
+    @GetMapping("/executors")
+    public ApiResponse<List<Map<String, Object>>> executors() {
+        return ApiResponse.ok(executionService.executors());
+    }
+
+    /**
+     * 执行 Skill（命令模式入口）。
+     * <p>body：{@code type} 可选（prompt / script / http，缺省由注册表推断）；
+     * {@code command} 可选（脚本路径 / HTTP 端点）；{@code args} 可选入参。</p>
+     */
+    @PostMapping("/{skillId}/execute")
+    public ApiResponse<SkillExecutionResult> execute(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @PathVariable String skillId,
+            @RequestBody(required = false) Map<String, Object> body) {
+        Map<String, Object> req = body == null ? Map.of() : body;
+        String type = req.get("type") == null ? null : String.valueOf(req.get("type"));
+        String command = req.get("command") == null ? null : String.valueOf(req.get("command"));
+        @SuppressWarnings("unchecked")
+        Map<String, Object> args = (Map<String, Object>) req.get("args");
+        return ApiResponse.ok(executionService.run(tenantId, skillId, type, command, args));
     }
 
     /** 删除（物理删除；目录型一并删除 skills 子目录）。 */
