@@ -1,66 +1,224 @@
 # 智能体交互平台（Agent Platform）
 
-基于 **Java 21 · Spring Boot 3.4 · MySQL · React** 的 AI 智能体平台：可视化创建/配置/发布
-智能体，以统一入口运行对话；围绕运行时可插拔挂载多模型、会话记忆、RAG 知识库、工具（含 MCP）、
-工作流、Skills、插件、多模态、日志诊断与提示词优化。
+> 一个运行入口，按需要装配模型、知识、工具与记忆。
 
----
+Agent Platform 是一个面向多租户场景的 AI 智能体运行平台。它把「创建一个能干活的智能体」拆成
+两件事：**在仪表盘上定义它是什么**（人格、提示词、生成参数、能力挂载），以及**在运行时决定它
+拥有什么**（用哪个模型、带不带知识库、能不能调工具、挂了哪些插件与技能）。
 
-## 功能概览
+平台不绑定任何一家模型厂商，也不要求先把 Redis、Milvus、Kafka、MinIO 全部装齐：所有外部能力
+都有开关与降级，缺谁都能跑，接上才算数。因此它可以从「克隆 → 启动 → 发一条消息拿到 Mock 回复」
+开始，逐步长成一套生产可用的智能体服务。
 
-| 能力 | 说明 |
-|------|------|
-| 多模型 | OpenAI / DeepSeek / Anthropic(Claude) / 通义 / 文心 / 混元等：直连厂商或经 LiteLLM；本地 Mock 兜底（无外部 Key 也能跑） |
-| 模型配置分层 | 平台「默认对话模型」+「嵌入模型」绑定（AES-GCM 加密落库、只回掩码）；智能体未单独配置时自动回退，无需每个智能体重填 Key |
-| 会话 | Session 管理、历史持久化与回放、删除/归档；前端对话历史切页不丢，「新对话」才写入会话历史 |
-| RAG | 知识库生命周期、文档摄取（解析→切分→向量化→索引）、向量 + FULLTEXT 混合检索、rerank、引用溯源、内容浏览 |
-| 工作流 | 自研 DAG 引擎（条件分支 + 虚拟线程并行）、节点 Schema 校验 |
-| Skills | **Agent Skills 开放标准目录** `skills/<name>/SKILL.md`：下载的技能放进目录 → 扫描同步即识别，运行时注入提示词 |
-| 插件 | SPI + 内置/外部 jar（ClassLoader 隔离）、市场导入/删除、Attach/Detach 热插拔 |
-| 工具 | 注册中心、HTTP 工具热注册、MCP(Streamable HTTP) 接入 |
-| 多模态 | parts[] 消息模型、文件上传/下载、TTS/ASR 插件化 |
-| 运维 | 运行日志落 MySQL（重启不丢）、trace 瀑布图、三级诊断（规则→向量→LLM）、提示词 6 维评分优化 |
-| 智能体 | 版本快照/发布/回滚/Diff；删除为物理删除（列表默认隐藏归档） |
+当前版本：`1.0.0-SNAPSHOT`。提供统一运行入口（JSON / SSE）、多模型路由与凭证分层、会话记忆、
+RAG 知识库、工具与 MCP、自研 DAG 工作流、Skills 开放标准目录、插件热插拔、多模态输入、
+运行日志与三级诊断。
 
-技术栈：Java 21（虚拟线程 + ScopedValue）、Spring Boot 3.4、Spring Data JPA + Flyway、MySQL 8、
-Redis（可选）、Milvus（可选）、React + Vite + antd。
+## 文档导航
 
----
+- 未实现事项与路线决策：[docs/backlog.md](docs/backlog.md)
+- 扩展指南与部署（K8s/Helm、演示脚本、可观测性运维）：[docs/guides.md](docs/guides.md)
+- 技术设计（对话文件支持、仪表盘、桌面打包）：[docs/designs.md](docs/designs.md)
+- 可行性评估（可移植性审计、LangChain4j/LangGraph、多层级记忆）：[docs/feasibility.md](docs/feasibility.md)
+- 阶段验收报告（Phase 1–7）：[docs/phase-reports.md](docs/phase-reports.md)
+- 待办与缺口清单：[docs/TODO.md](docs/TODO.md)
+- 桌面打包方案：[打包方案.md](打包方案.md)
+- 可观测栈（Loki / Tempo / Prometheus / Grafana）：[docker-compose.observability.yml](docker-compose.observability.yml)
 
-## 环境要求（克隆前请先准备）
+## 它解决什么问题
+
+写一个「能用的智能体 Demo」不难，难的是让它**可配置、可观测、可演进**：换个模型要不要改代码？
+加个知识库要不要重启？工具调用失败了怎么排查？提示词好不好由谁来判断？
+
+平台把这些问题的答案收敛到同一个运行时里：
+
+- **模型是可替换的后端**，不是写死在代码里的 SDK —— 一个 `ModelAdapter` 抽象，下面挂 OpenAI
+  兼容、Anthropic、规则引擎与 Mock 四种实现，按 `provider` 路由。
+- **能力是可挂载的**，不是硬编码的分支 —— 知识库、工具、插件、Skill 都通过智能体的
+  `capabilities` 声明，运行时按需装配，未装配就等于不存在。
+- **外部依赖是可退化的**，不是启动前置条件 —— Redis、Milvus、Kafka、MinIO 全部可选，缺失时
+  走内存/本地磁盘兜底，健康检查会如实报告，但不会阻断启动。
+- **每次运行都是可追溯的** —— 一次运行带一个 `traceId`，模型调用、工具调用、RAG 命中、
+  插件短路、错误堆栈全部落 MySQL，重启不丢，并可按 trace 看瀑布图。
+
+## 核心结构
+
+### 一个运行入口，按需装配
+
+所有对话都走 `POST /api/v1/agent/run`（`stream=true` 时返回 SSE）。入口本身很薄，真正的工作
+在 `AgentRuntimeService`：加载智能体配置 → 合并生成参数 → 组装提示词 → 检索知识 → 挂载插件 →
+回放会话 → 调用模型 → 落库与记账。
+
+「按需装配」体现在运行时的每个可选依赖都是 `@Autowired(required = false)`：注入了就生效，
+没注入就跳过，且跳过不会抛错。这让同一份代码既能跑在完整生产环境，也能跑在只有 MySQL 的
+最小环境里。
+
+### 模型层：一个抽象，多种后端
+
+| 适配器 | 适用 |
+| --- | --- |
+| `OpenAiCompatibleAdapter` | OpenAI / DeepSeek / 通义 / 混元 / 文心 等 OpenAI 兼容端点，以及 LiteLLM 中转 |
+| `AnthropicAdapter` | Claude 原生消息协议 |
+| `RuleEngineModelAdapter` | 不调模型，按规则产出确定性回复（教学/演示/回放） |
+| `MockModelAdapter` | 本地兜底，无 Key 也能跑通全流程 |
+
+`ModelRouter` 按 `provider` 选择适配器，`ModelBindingService` 决定最终生效的模型与凭证：
+智能体自定义绑定 → 平台默认模型 → 配置项兜底，逐级回退。凭证以 AES-GCM 加密落库，接口只回
+掩码，不会把明文 Key 送到前端。
+
+### 提示词：人格 → 模板 → 变量 → Skill
+
+系统提示词不是一段死文本，而是四层拼出来的：
+
+1. **人格（Persona）**：角色、语气、风格、亲和度、禁区，翻译成提示词段；
+2. **提示词模板**：支持 `{{user}}`、`{{tenant}}`、`{{agent_id}}` 变量，运行时填充；
+3. **Skill 正文**：智能体挂载的 Skill，其 `SKILL.md` 正文以 `## Skill：xxx` 追加；
+4. **RAG 附文**：知识库命中片段拼成「知识库资料（只读参考）」，要求模型标注来源编号。
+
+任一层读取失败都只降级跳过，不阻断本轮对话。
+
+### 记忆：会话持久化 + 短期缓存
+
+会话与消息落在 MySQL，运行结束后由 `SessionService.recordExchange` 写入本轮
+`user + assistant` 交换；下一轮按 `maxHistoryTurns`（默认 10 轮）回放历史，让对话「有记忆」。
+
+近期上下文额外走 `SessionRecentCache`（Redis List，25 轮 / 50 条 / 24h）：读优先缓存、miss
+回 DB 回填、写后追加裁剪。Redis 缺失时全程降级到 DB，功能不减，只是少一层加速。
+
+### RAG：摄取 → 混合检索 → 引用溯源
+
+文档经「解析 → 切分 → 向量化 → 索引」进入知识库；检索由 `HybridRetriever` 做向量 + FULLTEXT
+混合召回并 rerank，命中片段同时产出 `references`，前端可点开溯源到文档与页码。
+
+向量库默认 `in-memory`（8 维伪向量，纯本地演示），切 `milvus` 即接真实向量库。智能体可通过
+`capabilities.knowledgeBaseIds` 默认绑定知识库，请求级 `context.rag` 可临时覆盖。
+
+### 工具与 MCP：注册中心统一执行
+
+`ToolRegistry` 是唯一的工具来源：内置工具、HTTP 热注册工具、MCP（Streamable HTTP）接入的工具
+都注册到这里。运行入口按请求里的 `tools.enabled` 与 `allowed` 白名单决定本轮暴露哪些工具声明。
+
+工具调用采用「结果文本回灌」的轻量闭环：模型返回 `tool_calls` → `ToolExecutor` 逐个执行 →
+结果拼进下一轮输入 → 直到模型不再要工具，最多 `MAX_TOOL_ROUNDS = 5` 轮，防止死循环。
+
+### 插件：Hook 管线与 ClassLoader 隔离
+
+插件通过 `AgentPipeline` 挂到模型调用前后：`before_llm` 可以短路直接返回（内置「自动回复」
+插件即如此），`after_llm` 可以加工输出（内置 TTS 插件在此合成语音并返回 `audio_url`）。
+
+内置插件属于平台租户 `__platform__`（不可删除、对所有租户可见）；外部插件以独立
+`PluginClassLoader` 加载 jar，Attach / Detach 热插拔，卸载即反注册钩子与工具。
+
+### Skills：开放标准目录，挂载即生效
+
+Skills 采用 Agent Skills 开放标准布局 `skills/<name>/SKILL.md`（可选 `scripts/`、`references/`、
+`assets/`）。把下载的技能包放进目录 → 仪表盘点「扫描同步」→ 智能体在 `capabilities.skillIds`
+引用 → 运行时正文自动拼进系统提示词。不需要打包、不需要改代码。
+
+### 智能体：可版本化的配置
+
+智能体本身只是一份配置（`AgentDefinition`）：人格、系统提示词、生成参数、能力挂载。配置可存
+版本快照、发布、回滚，也能对比两个版本的差异。删除为物理删除，列表默认隐藏归档。
+
+前端行为也按「一次运行」的语义对齐：对话历史切页不丢，只有主动「新对话」才写入新的会话历史。
+
+### 工作流：自研 DAG 引擎
+
+复杂编排走 `workflow` 的自研 DAG 引擎：条件分支 + 虚拟线程并行，节点带 Schema 校验，
+编排错误在运行前就能暴露，而不是跑到一半才炸。
+
+### 多模态：parts[] 消息模型
+
+消息内容除了纯字符串，也支持 `parts[]`：`text` 块直接拼接，`file` 块按 `fileId` 读取文件文本
+后注入 `[文件：name]` 区块。单轮最多读取 4 个文件，单文件最多 100k 字符（超出标注截断），
+解析失败只影响该文件，不阻断整轮。
+
+### 日志、诊断与可观测
+
+运行日志统一经 `LogService` 落 MySQL，并通过 `LogEventSink` 出口外推：Micrometer 指标、
+Loki 日志、Tempo / Jaeger Span。故障排查有三级诊断（规则 → 向量 → LLM），提示词另有 6 维评分
+与优化建议。
+
+## 一次运行如何被处理
+
+```mermaid
+flowchart TD
+    R[POST /api/v1/agent/run] --> Q[配额校验 model_calls]
+    Q --> A[加载智能体 EffectiveConfig]
+    A --> P[人格 + 模板变量 + Skill 提示词]
+    A --> K{绑定知识库?}
+    K -->|是| S[混合检索 → 附文 + 引用]
+    S --> H
+    K -->|否| H
+    P --> H[插件 Hook 管线 before_llm]
+    H --> C{命中短路?}
+    C -->|是| W
+    C -->|否| T{启用工具?}
+    T -->|否| L[模型调用]
+    T -->|是| TL[工具循环 ≤ 5 轮]
+    TL --> L
+    L --> AF[after_llm Hook / TTS 产物]
+    AF --> W[落库会话 + 运行日志 + 指标]
+    W --> O{stream?}
+    O -->|否| J[返回 JSON]
+    O -->|是| E[SSE: run.delta → run.completed]
+```
+
+```text
+请求进入（JSON 或 SSE）
+        ↓
+生成 runId / traceId，进入 TraceContext
+        ↓
+加载智能体配置 → 合并生成参数 → 解析模型绑定与凭证
+        ↓
+提取用户消息（纯文本 或 parts[] 含附件）
+        ↓
+组装系统提示词：人格 → 模板变量 → Skill 正文 → RAG 附文
+        ↓
+确保插件已热挂载 → 回放会话历史
+        ↓
+插件 before_llm → 模型调用（必要时进入工具循环）→ after_llm
+        ↓
+写入会话交换、运行日志与指标
+        ↓
+返回响应（含 usage、引用溯源、插件产物）
+```
+
+## 安装
+
+### 环境要求
 
 | 依赖 | 版本 | 是否必需 | 说明 |
 |------|------|----------|------|
-| JDK | **21 或更高** | ✅ 必需 | 项目使用预览特性 `ScopedValue`，编译/运行均需 `--enable-preview`（脚本已自动带） |
-| Maven | 3.9+ | ✅ 必需 | 构建依赖；首次构建需联网下载 |
+| JDK | **21 或更高** | ✅ 必需 | 使用预览特性 `ScopedValue`，编译/运行均需 `--enable-preview`（脚本已自动带） |
+| Maven | 3.9+ | ✅ 必需 | 构建依赖；首次构建需联网 |
 | MySQL | 8.x | ✅ 必需 | Flyway 启动时自动建表，连不上则启动失败 |
-| Redis | 7 | ❌ 可选 | 缺失时仅健康检查 DOWN，配额走内存兜底 |
+| Redis | 7 | ❌ 可选 | 缺失时仅健康检查 DOWN，配额与会话缓存走内存兜底 |
 | Node / npm | 18+ | ❌ 可选 | 仅修改前端源码并重建时需要 |
-| Docker | — | ❌ 可选 | 便捷拉起 MySQL/Redis 等；不使用则手动装 MySQL |
-| Milvus/Kafka/MinIO/LiteLLM | — | ❌ 可选 | 全部有开关与降级，默认不开 |
+| Docker | — | ❌ 可选 | 便捷拉起 MySQL / Redis；不使用则手动装 MySQL |
+| Milvus / Kafka / MinIO / LiteLLM | — | ❌ 可选 | 全部有开关与降级，默认不开 |
 
 > 首次构建 `mvn package` 需要能访问 Maven Central；首次前端构建需要能访问 npm registry。
+> 命令行构建前请确认 `JAVA_HOME` 指向 JDK 21（本机默认的 17 会报「不支持发行版本 21」）。
 
----
+### 快速开始
 
-## 快速开始
-
-### 1. 克隆
+#### 1. 克隆
 
 ```bash
 git clone https://gitee.com/<你的用户名>/agent-platform.git
 cd agent-platform
 ```
 
-### 2. 准备 MySQL（二选一）
+#### 2. 准备 MySQL（二选一）
 
-**方式 A：用 Docker 起 MySQL（推荐）**
+**方式 A：用 Docker 起（推荐）**
 
 ```bash
 docker compose up -d mysql redis
 ```
 
-**方式 B：手动创建**（用你本地 MySQL 的 root 执行）
+**方式 B：手动创建**（用本地 MySQL 的 root 执行）
 
 ```sql
 CREATE DATABASE IF NOT EXISTS agent_platform DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;
@@ -71,7 +229,7 @@ FLUSH PRIVILEGES;
 
 > 库名/账号密码与默认配置一致；想改走「配置」一节的环境变量。
 
-### 3. 启动
+#### 3. 启动
 
 **Windows**（双击或命令行）：
 
@@ -98,7 +256,7 @@ java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.0.0-
 > - 若 **8081 被占用**，脚本会自动杀掉旧进程（Windows）或提示（Linux/macOS）。
 > - Redis 没有也不影响核心功能（日志会提示 redis DOWN）。
 
-### 4. 验证
+#### 4. 验证
 
 ```bash
 curl http://localhost:8081/actuator/health
@@ -108,7 +266,20 @@ curl http://localhost:8081/actuator/health
 仪表盘首屏应能：新建智能体 → 在「对话运行」发消息 → 未配置任何模型 Key 时会自动返回
 **本地 Mock 回复**（可先跑通全流程）。
 
----
+## 配置顺序
+
+建议按以下顺序配置，更快建立可验证的闭环：
+
+1. **跑通 Mock**：先不配任何 Key，确认「新建智能体 → 发消息 → 拿到回复」闭环可用。
+2. **平台默认对话模型**：仪表盘「模型设置」选服务商 → 填模型、baseUrl、API Key → 保存。
+3. **平台嵌入模型**：同上，填嵌入模型（如 `BAAI/bge-m3`），供 RAG 向量化使用。
+4. **建一个知识库**：上传文档 → 等待摄取完成 → 在智能体 `capabilities` 绑定 → 对话验证引用溯源。
+5. **挂 Skill / 插件**：把 Skill 放进 `data/skills/` 后「扫描同步」；插件在市场导入后 Attach 到智能体。
+6. **按需开工具**：请求里带 `tools.enabled` 与白名单，验证工具循环；需要外部能力再接 MCP。
+7. **可选设施**：`VECTOR_STORE=milvus`、`STORAGE_TYPE=minio`、`EVENTS_ENABLED=true`。
+8. **生产加固**：开启鉴权、覆盖密钥、配置静态账号（见「从演示到生产」）。
+
+单个智能体也可覆盖平台默认：编辑智能体时勾选「为该智能体自定义模型 / API Key」。
 
 ## 配置
 
@@ -127,20 +298,8 @@ curl http://localhost:8081/actuator/health
 | `AUTH_USERNAME` / `AUTH_PASSWORD` | 登录静态账号（配置后登录需校验） | 空（演示模式签发） |
 | `DEFAULT_PROVIDER` / `DEFAULT_MODEL` | 未配置时的模型厂商/型号 | `deepseek` / `deepseek-chat` |
 
-> 说明：`data/` 下目录运行期自动生成；所有外部能力默认关闭、本地 Mock/内存/磁盘兜底，保证「克隆即可跑」；
-> 开启真实能力的方式在下方「接入真实模型与可选能力」。
-
-### 接入真实模型（可选，推荐先跑通 Mock 再配）
-
-全部在仪表盘 **「模型设置」** 页完成，仅需配置一次：
-
-1. **默认对话模型**（供对话智能体回退使用）：选服务商（deepseek/openai/qwen/anthropic…）→
-   填模型、接口地址 baseUrl、API Key → 保存；
-2. **嵌入模型**（RAG 向量化）：选服务商 → 填模型（如 `BAAI/bge-m3`）、baseUrl、API Key → 保存。
-
-未配置时：对话走本地 Mock（确定性文本），RAG 走内存 8 维伪向量——均可本地演示。
-
-单个智能体也可覆盖平台默认：编辑智能体时勾选「为该智能体自定义模型 / API Key」。
+> 说明：`data/` 下目录运行期自动生成；所有外部能力默认关闭、本地 Mock/内存/磁盘兜底，
+> 保证「克隆即可跑」。
 
 ### 可选能力接线（Docker）
 
@@ -157,8 +316,6 @@ start-core.sh rebuild                     # 或手动 java --enable-preview -jar
 | MinIO 文件 | `STORAGE_TYPE=minio`（默认 `MINIO_ENDPOINT/ACCESS/SECRET` 见 `application.yml`） |
 | Kafka 事件 | `EVENTS_ENABLED=true` |
 | 生产鉴权 | `SECURITY_ENABLED=true` + 覆盖 `JWT_SECRET` + 配置 `AUTH_USERNAME/AUTH_PASSWORD` |
-
----
 
 ## 前端（仪表盘）
 
@@ -177,9 +334,8 @@ agent-platform-ui\build-ui.bat            # 或: cd agent-platform-ui && npm ins
 cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5173/
 ```
 
-> 改动后端后需重启 core；改动前端后需重新 `npm run build:prod` 再重启（或直接访问 5173）。
-
----
+> 改动后端后需重启 core；改动前端后需重新 `npm run build:prod` 再重启（或直接访问 5173）；
+> 查看效果前记得浏览器 `Ctrl+F5`（core 托管的是旧产物）。
 
 ## 数据目录（运行时自动创建，无需预先存在）
 
@@ -188,8 +344,6 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 | `./data/skills/` | Skills 目录（Agent Skills 标准：`skills/<name>/SKILL.md` + 可选 `scripts/ references/ assets/`）；首次启动自动铺示例，下载的 Skill 放进目录后点「扫描同步」即可识别 |
 | `./data/files/` | 文件上传的本地存储（`STORAGE_TYPE=local`） |
 | `./data/plugins/` | 外部插件 jar 制品（可选） |
-
----
 
 ## API 概览（前缀 `/api/v1`）
 
@@ -206,32 +360,51 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 | 日志/诊断 | `/logs`（查询/导出/瀑布图/purge）、`/diagnosis` |
 | 文件/配额/提示词 | `/files`、`/quotas`、`/prompt` |
 
----
+## 日志与排查
 
-## 从演示到生产（检查清单）
+建议排查顺序：
 
-- [ ] 覆盖 `JWT_SECRET`、`MODEL_KEY_ENC_KEY`（启动守卫会在「开启鉴权但仍用默认密钥」时拒绝启动）
-- [ ] 配置 `AUTH_USERNAME` / `AUTH_PASSWORD`（或接入 OAuth2/LDAP）
-- [ ] 开启 `SECURITY_ENABLED=true`
-- [ ] 服务端部署设置 `SKILLS_OPEN_FOLDER=false`（默认已关）、`STORAGE_TYPE=minio`、`VECTOR_STORE=milvus`
-- [ ] 把 `data/` 挂到持久化卷，日志定期 `DELETE /api/v1/logs/purge`
+1. 先看 `actuator/health`：确认 `db` UP；`redis` 为 DOWN 属正常降级。
+2. 拿到响应的 `traceId`，在仪表盘「运行日志」里按 trace 看瀑布图（模型调用、工具调用、RAG、
+   插件各占多少耗时）。
+3. 模型调用失败：核对「模型设置」里的 provider、baseUrl、Key 是否匹配，日志中 `llm.call`
+   会打印实际生效的 `provider` 与 `model`。
+4. RAG 命中为空：确认知识库已绑定（`capabilities.knowledgeBaseIds` 或请求 `context.rag`），
+   文档摄取已完成，且 `topK` / `scoreThreshold` 不是过严。
+5. 工具无效果：确认请求带了 `tools.enabled=true`，且工具名在 `allowed` 白名单内（留空表示全部）。
+6. 需要长期留存与告警：起 `docker-compose.observability.yml`，Grafana 对接 Prometheus / Loki /
+   Tempo，详见 [guides.md](docs/guides.md) 的可观测性运维章节。
 
----
+## 使用边界
 
-## 测试
+- 平台依赖模型的指令遵循与结构化输出能力。较小或不稳定模型的工具调用与引用标注质量会下降。
+- 内置向量库为纯内存伪向量，仅供演示；真实检索质量请接 `milvus` 与真实嵌入模型。
+- 未开启 `SECURITY_ENABLED` 时所有接口无鉴权，仅适合本地/内网演示。
+- 默认 `JWT_SECRET`、`MODEL_KEY_ENC_KEY` 为占位值；开启鉴权但仍用默认密钥时启动守卫会拒绝启动。
+- 知识的准确性取决于上传的资料；医疗、法律、金融等高风险场景应由专业人员复核后再使用。
+- 误删智能体为物理删除（列表默认隐藏归档），清理日志前建议先导出。
+
+## 从演示到生产
+
+1. 覆盖 `JWT_SECRET`、`MODEL_KEY_ENC_KEY`；
+2. 配置 `AUTH_USERNAME` / `AUTH_PASSWORD`（或接入 OAuth2 / LDAP）；
+3. 开启 `SECURITY_ENABLED=true`；
+4. 服务端部署设置 `SKILLS_OPEN_FOLDER=false`（默认已关）、`STORAGE_TYPE=minio`、`VECTOR_STORE=milvus`；
+5. 把 `data/` 挂到持久化卷，日志定期 `DELETE /api/v1/logs/purge`。
+
+## 开发与验证
 
 ```bash
-mvn test      # 104 个单元测试（服务/诊断/日志/RAG/工作流/插件/提示词等）
+mvn -pl agent-platform-core -am package -DskipTests   # 构建可执行 jar
+mvn test                                              # 单元测试（服务/诊断/日志/RAG/工作流/插件/提示词等）
+warmup.bat                                            # Windows：依赖预热，"warmup.bat verify" 校验离线构建
+cd agent-platform-ui && npm run build:prod            # 前端构建，产物同步到 core 的 static/
 ```
 
-## 文档
+构建产物位于 `agent-platform-core/target/`。Windows 上若 8081 仍有进程监听，jar 会被占用而打包失败，
+先停服务再构建。
 
-> `docs/` 下文档已按主题合并归类，只保留有长期价值的内容（已实现/已归档项见 git 历史）。
+---
 
-| 文档 | 内容 |
-|------|------|
-| [backlog.md](docs/backlog.md) | 未实现事项、能力侧待办与路线决策、API 契约、已踩坑清单 |
-| [guides.md](docs/guides.md) | 扩展指南（新模型/工具/MCP/Skill 执行器/插件/诊断/优化策略）、K8s/Helm 部署、端到端演示（可执行脚本 `docs/demo-script.sh`）、可观测性运维（Loki/Tempo/Prometheus/Grafana） |
-| [designs.md](docs/designs.md) | 技术设计：对话文件支持（A 已交付，B/C 待做）、仪表盘、桌面打包（已归档） |
-| [feasibility.md](docs/feasibility.md) | 可行性分析：仪表盘、桌面打包、可移植性审计、LangChain4j/LangGraph 评估、多层级记忆 |
-| [phase-reports.md](docs/phase-reports.md) | 阶段验收报告汇总（Phase 1–7，含与当前代码不一致的修正说明） |
+技术栈：Java 21（虚拟线程 + ScopedValue）、Spring Boot 3.4、Spring Data JPA + Flyway、MySQL 8、
+Redis（可选）、Milvus（可选）、React + Vite + antd。
