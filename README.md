@@ -221,15 +221,17 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 ## 测试
 
 ```bash
-mvn test      # 100 个单元测试（服务/诊断/日志/RAG/工作流/插件/提示词等）
+mvn test      # 104 个单元测试（服务/诊断/日志/RAG/工作流/插件/提示词等）
 ```
 
 ## 文档
 
+> `docs/` 下文档已按主题合并归类，只保留有长期价值的内容（已实现/已归档项见 git 历史）。
+
 | 文档 | 内容 |
 |------|------|
-| [technical-guide.md](docs/technical-guide.md) | 如何扩展新模型/工具/插件/Skill/诊断/优化策略 |
-| [deployment.md](docs/deployment.md) | K8s/Helm 部署、环境变量、弹性策略 |
-| [portability-audit.md](docs/portability-audit.md) | 可移植性审计与克隆运行验收清单 |
-| [demo.md](docs/demo.md) | 端到端演示 |
-| [TODO.md](docs/TODO.md) | 待办、API 契约与已踩坑清单 |
+| [backlog.md](docs/backlog.md) | 未实现事项、能力侧待办与路线决策、API 契约、已踩坑清单 |
+| [guides.md](docs/guides.md) | 扩展指南（新模型/工具/MCP/Skill 执行器/插件/诊断/优化策略）、K8s/Helm 部署、端到端演示（可执行脚本 `docs/demo-script.sh`）、可观测性运维（Loki/Tempo/Prometheus/Grafana） |
+| [designs.md](docs/designs.md) | 技术设计：对话文件支持（A 已交付，B/C 待做）、仪表盘、桌面打包（已归档） |
+| [feasibility.md](docs/feasibility.md) | 可行性分析：仪表盘、桌面打包、可移植性审计、LangChain4j/LangGraph 评估、多层级记忆 |
+| [phase-reports.md](docs/phase-reports.md) | 阶段验收报告汇总（Phase 1–7，含与当前代码不一致的修正说明） |

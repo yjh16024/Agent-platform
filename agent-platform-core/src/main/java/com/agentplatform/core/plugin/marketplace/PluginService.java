@@ -15,6 +15,7 @@ import com.agentplatform.model.repository.PluginRepository;
 import com.agentplatform.plugin.sdk.model.PluginManifest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,7 +53,7 @@ public class PluginService {
         PluginDef existing = pluginRepository.findByTenantIdAndPluginId(tenantId, pluginId)
                 .orElse(null);
         if (existing != null) {
-            throw BizException.conflict("Plugin already registered: " + pluginId);
+            throw BizException.conflict(duplicateMessage(pluginId));
         }
         PluginDef def = PluginDef.builder()
                 .pluginId(pluginId)
@@ -66,7 +67,17 @@ public class PluginService {
                 .status("published")
                 .visibility("private")
                 .build();
-        return pluginRepository.save(def);
+        try {
+            return pluginRepository.save(def);
+        } catch (DataIntegrityViolationException e) {
+            // check-then-insert 存在竞态：并发重复导入时唯一键冲突会穿透，这里统一转成 409
+            log.warn("Duplicate plugin insert (race): {} [{}]", pluginId, e.getMessage());
+            throw BizException.conflict(duplicateMessage(pluginId));
+        }
+    }
+
+    private static String duplicateMessage(String pluginId) {
+        return "插件已存在: " + pluginId + "（请勿重复导入；如需覆盖请先删除该插件）";
     }
 
     /**

@@ -28,6 +28,7 @@ export default function PluginMarketplace() {
   const [loading, setLoading] = useState(false);
   const [detailId, setDetailId] = useState<string | null>(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [form] = Form.useForm();
 
   const load = useCallback(async () => {
@@ -44,8 +45,21 @@ export default function PluginMarketplace() {
     load();
   }, [load]);
 
+  /** 从 manifest 文本中取插件 id（YAML `id: xxx` 或 JSON `"id": "xxx"`）。 */
+  const extractPluginId = (text: string): string | null => {
+    const m = /["']?id["']?\s*[:=]\s*["']?([A-Za-z0-9_.-]+)["']?/.exec(text || '');
+    return m ? m[1] : null;
+  };
+
   const submitImport = async () => {
     const v = await form.validateFields();
+    const newId = extractPluginId(v.manifest);
+    if (newId && list.some((p) => p.pluginId === newId)) {
+      message.warning(`插件 ${newId} 已存在，如需覆盖请先删除后再导入`);
+      return;
+    }
+    if (submitting) return;
+    setSubmitting(true);
     try {
       await importPlugin(v.manifest);
       message.success('插件已导入');
@@ -54,6 +68,8 @@ export default function PluginMarketplace() {
       load();
     } catch (e) {
       message.error((e as Error).message);
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -119,7 +135,16 @@ export default function PluginMarketplace() {
 
       <PluginDetailDrawer pluginId={detailId} onClose={() => setDetailId(null)} />
 
-      <Modal title="导入插件（plugin manifest）" open={importOpen} onOk={submitImport} onCancel={() => setImportOpen(false)} destroyOnClose width={680}>
+      <Modal
+        title="导入插件（plugin manifest）"
+        open={importOpen}
+        onOk={submitImport}
+        onCancel={() => setImportOpen(false)}
+        okButtonProps={{ loading: submitting }}
+        okText={submitting ? '导入中…' : '导入'}
+        destroyOnClose
+        width={680}
+      >
         <Form form={form} layout="vertical" initialValues={{ manifest: EXAMPLE_MANIFEST }}>
           <Form.Item name="manifest" label="Manifest（YAML 或 JSON）" rules={[{ required: true }]}>
             <Input.TextArea rows={14} style={{ fontFamily: 'monospace' }} />

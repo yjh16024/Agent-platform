@@ -67,11 +67,44 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<ApiResponse<Void>> handleGeneric(Exception ex) {
+        // 唯一键/约束冲突（DataIntegrityViolationException 等）→ 409，
+        // 避免把 "could not execute statement ... Duplicate entry" 这类原始 SQL 直接抛给用户
+        Throwable violation = findDuplicateViolation(ex);
+        if (violation != null) {
+            log.warn("Duplicate/constraint violation: {}", violation.getMessage());
+            return ResponseEntity.status(HttpStatus.CONFLICT)
+                    .body(ApiResponse.error("CONFLICT", "数据已存在或违反唯一约束，请勿重复提交：" + brief(violation)));
+        }
         log.error("Unhandled exception", ex);
         // 原样透出异常信息，避免上游错误被吞成笼统的 "An unexpected error occurred"
         String message = ex.getMessage() == null || ex.getMessage().isBlank()
                 ? "An unexpected error occurred" : ex.getMessage();
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(ApiResponse.error("INTERNAL_ERROR", message));
+    }
+
+    /**
+     * 在异常链中查找「重复/唯一约束冲突」。
+     * <p>用类名 + 消息判断而非直接依赖 spring-dao，保持 common 模块零新增依赖。</p>
+     */
+    private static Throwable findDuplicateViolation(Throwable t) {
+        for (Throwable c = t; c != null; c = c.getCause()) {
+            String name = c.getClass().getName();
+            String msg = c.getMessage() == null ? "" : c.getMessage();
+            boolean duplicateType = name.contains("DataIntegrityViolation")
+                    || name.contains("DuplicateKey")
+                    || name.contains("SQLIntegrityConstraintViolation");
+            if (duplicateType || msg.contains("Duplicate entry")) {
+                return c;
+            }
+        }
+        return null;
+    }
+
+    private static String brief(Throwable t) {
+        String m = t.getMessage() == null ? "" : t.getMessage();
+        int i = m.indexOf("Duplicate entry");
+        String core = i >= 0 ? m.substring(i) : m;
+        return core.length() > 160 ? core.substring(0, 160) : core;
     }
 }
