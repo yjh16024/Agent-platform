@@ -11,6 +11,7 @@ import com.agentplatform.core.log.LogEvent;
 import com.agentplatform.core.log.LogLevel;
 import com.agentplatform.core.log.LogService;
 import com.agentplatform.core.model.adapter.ModelAdapter;
+import com.agentplatform.core.rag.ConversationAttachmentService;
 import com.agentplatform.core.rag.retriever.HybridRetriever;
 import com.agentplatform.core.rag.retriever.RetrievalResult;
 import com.agentplatform.model.entity.DocumentEntity;
@@ -23,9 +24,11 @@ import com.agentplatform.core.plugin.runtime.AgentPipeline;
 import com.agentplatform.core.plugin.runtime.PipelineResult;
 import com.agentplatform.core.plugin.runtime.PluginRuntime;
 import com.agentplatform.core.session.SessionService;
+import com.agentplatform.core.session.SessionSummaryService;
 import com.agentplatform.core.skill.SkillService;
 import com.agentplatform.core.tool.Tool;
 import com.agentplatform.core.tool.ToolContext;
+import com.agentplatform.core.tool.ToolSchemas;
 import com.agentplatform.core.tool.ToolResult;
 import com.agentplatform.core.tool.executor.ToolExecutor;
 import com.agentplatform.core.tool.registry.ToolRegistry;
@@ -72,6 +75,10 @@ public class AgentRuntimeService {
     @Autowired(required = false)
     private SessionService sessionService;
 
+    /** 会话早期摘要（中期记忆，可选：未注入时不做摘要续接，保持原行为）。 */
+    @Autowired(required = false)
+    private SessionSummaryService sessionSummaryService;
+
     /** 模型绑定解析（可选：单测中未注入时退化为全局默认，凭证走适配器默认）。 */
     @Autowired(required = false)
     private ModelBindingService modelBindingService;
@@ -91,6 +98,10 @@ public class AgentRuntimeService {
     /** RAG 混合检索（可选：未注入时跳过知识库注入，保持旧行为与单测可用）。 */
     @Autowired(required = false)
     private HybridRetriever hybridRetriever;
+
+    /** 对话附件自动摄取（方案 C，可选：未注入时拖入文档仍按原路径只注入文本，不进知识库）。 */
+    @Autowired(required = false)
+    private ConversationAttachmentService attachmentService;
 
     /** 文档仓储（可选：用于把 docId 映射成可读文件名，填充引用来源）。 */
     @Autowired(required = false)
@@ -140,23 +151,36 @@ public class AgentRuntimeService {
             final String model = resolved.model();
             // ③ 组装用户消息（取最后一条 user 消息；parts[] 含 file 时注入文件文本）
             String userMessage = extractUserMessage(req, tenantId);
+            // ③.0 提取图片附件（方案 B：image part → 字节 → base64，随请求走 Spring AI 视觉通道）
+            final List<Map<String, String>> imageData = collectImageData(req, tenantId);
+            final Map<String, Object> imageExtra = imageData.isEmpty() ? Map.of() : Map.of("images", imageData);
+
+            // ④.0 会话解析（提前到提示词组装前：历史较长时需读取早期摘要；sessionId 为空返回 null 不持久化）
+            Session session = sessionService == null ? null
+                    : sessionService.resolve(tenantId, agent.getAgentId(), req.userId(), req.sessionId(), userMessage);
 
             // ③.1 组装基础系统提示词（人格 → 提示词合并 + 变量填充 + Skill 注入）
             String basePrompt = withSkillPrompts(agent,
                     assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
             // ③.2 RAG 知识库自动检索（请求/智能体绑定知识库时，把命中片段注入上下文并生成引用；
             // 未绑定知识库/检索失败时 retrieveKnowledge 返回 null，等价于普通对话）
-            RagRender rag = retrieveKnowledge(agent, req, userMessage);
+            // ③.3 对话附件自动摄取（方案 C）：文档拖入 → 归入租户附件库 → 并入本次检索范围
+            String attachmentKbId = ensureAttachments(req, tenantId);
+            RagRender rag = retrieveKnowledge(agent, req, userMessage, attachmentKbId);
             final String systemPrompt = rag == null || rag.systemBlock() == null || rag.systemBlock().isBlank()
                     ? basePrompt
                     : basePrompt + rag.systemBlock();
 
+            // ④.6 早期会话摘要续接（历史被截断丢弃的早期轮次压缩进上下文，让「记忆」跨长对话保留）
+            String earlySummary = earlySummaryOf(session);
+            final String effectivePrompt = earlySummary == null
+                    ? systemPrompt
+                    : systemPrompt + "\n\n## 早期会话摘要（较早轮次已压缩，仅作背景参考）\n" + earlySummary;
+
             // ④ 确保插件已挂载（热加载）
             ensurePluginsAttached(agent, tenantId);
 
-            // ④.5 会话解析 + 历史回放（让对话「有记忆」）
-            Session session = sessionService == null ? null
-                    : sessionService.resolve(tenantId, agent.getAgentId(), req.userId(), req.sessionId(), userMessage);
+            // ④.5 历史回放（会话已在上方解析；让对话「有记忆」）
             final List<ModelAdapter.ChatMessage> sessionHistory = loadHistory(req, tenantId);
 
             // ⑤ 经插件 Hook 管线调用模型（before_llm → LLM → after_llm）
@@ -169,8 +193,8 @@ public class AgentRuntimeService {
                 pipeline = agentPipeline.run(userMessage, msg -> {
                     // 工具调用循环：仅当请求显式启用工具且注册中心可用时走工具链路
                     if (!toolSpecs.isEmpty() && toolExecutor != null) {
-                        return runToolLoop(provider, model, systemPrompt, msg, gc, resolved,
-                                toolSpecs, sessionHistory, traceId, runId, tenantId, agent, usageTokens);
+                        return runToolLoop(provider, model, effectivePrompt, msg, gc, resolved,
+                                toolSpecs, sessionHistory, traceId, runId, tenantId, agent, usageTokens, imageExtra);
                     }
                     // 普通单轮 LLM 调用（无工具）
                     logTo(LogLevel.INFO, LogCategory.llm, "llm.call provider=" + provider
@@ -179,7 +203,7 @@ public class AgentRuntimeService {
                             traceId, runId, tenantId, agent.getAgentId());
                     long t0 = System.currentTimeMillis();
                     ModelAdapter.ChatRequest chatReq = new ModelAdapter.ChatRequest(
-                            model, systemPrompt, msg, gc.temperature(), gc.maxTokens(), Map.of(), sessionHistory,
+                            model, effectivePrompt, msg, gc.temperature(), gc.maxTokens(), imageExtra, sessionHistory,
                             resolved.baseUrl(), resolved.apiKey());
                     ModelAdapter.ChatResponse resp = modelRouter.chat(provider, chatReq);
                     latency[0] = resp.latencyMs();
@@ -293,7 +317,9 @@ public class AgentRuntimeService {
             if (tool == null || (!allowAll && !allowed.contains(tool.name()))) {
                 continue;
             }
-            specs.add(new ModelAdapter.ToolSpec(tool.name(), tool.description(), tool.inputSchema()));
+            // schema 规范化：null / 缺 type 会让厂商直接 400（schema must be 'type: object'）
+            specs.add(new ModelAdapter.ToolSpec(tool.name(), tool.description(),
+                    ToolSchemas.orEmpty(tool.inputSchema())));
         }
         return specs;
     }
@@ -311,7 +337,8 @@ public class AgentRuntimeService {
             String provider, String model, String systemPrompt, String userMessage,
             GenerationConfig gc, ModelBindingService.ResolvedModel resolved,
             List<ModelAdapter.ToolSpec> tools, List<ModelAdapter.ChatMessage> history,
-            String traceId, String runId, String tenantId, AgentDefinition agent, int[] usageTokens) {
+            String traceId, String runId, String tenantId, AgentDefinition agent, int[] usageTokens,
+            Map<String, Object> extraImages) {
         String rolling = userMessage;
         for (int round = 0; round < MAX_TOOL_ROUNDS; round++) {
             boolean hasTools = round == 0 && tools != null && !tools.isEmpty();
@@ -322,7 +349,7 @@ public class AgentRuntimeService {
                     traceId, runId, tenantId, agent.getAgentId());
             long t0 = System.currentTimeMillis();
             ModelAdapter.ChatRequest chatReq = new ModelAdapter.ChatRequest(
-                    model, systemPrompt, rolling, gc.temperature(), gc.maxTokens(), Map.of(), history,
+                    model, systemPrompt, rolling, gc.temperature(), gc.maxTokens(), extraImages, history,
                     resolved.baseUrl(), resolved.apiKey(),
                     hasTools ? tools : List.of(),
                     hasTools ? "auto" : null);
@@ -381,7 +408,8 @@ public class AgentRuntimeService {
      * 任何失败（未绑定知识库 / 检索异常）均优雅降级为 null，不阻断对话。
      * </p>
      */
-    private RagRender retrieveKnowledge(AgentDefinition agent, AgentRunRequest req, String userMessage) {
+    private RagRender retrieveKnowledge(AgentDefinition agent, AgentRunRequest req, String userMessage,
+                                        String extraKbId) {
         AgentRunRequest.ContextConfig ctx = req.context();
         if (hybridRetriever == null) {
             return null;
@@ -400,6 +428,10 @@ public class AgentRuntimeService {
         if (kbIds.isEmpty() && agent.getCapabilities() != null
                 && agent.getCapabilities().knowledgeBaseIds() != null) {
             kbIds.addAll(agent.getCapabilities().knowledgeBaseIds());
+        }
+        // 对话附件库（方案 C）并入本次检索范围
+        if (extraKbId != null && !extraKbId.isBlank() && !kbIds.contains(extraKbId)) {
+            kbIds.add(extraKbId);
         }
         if (kbIds.isEmpty() || Boolean.FALSE.equals(useRag)) {
             return null;
@@ -471,6 +503,105 @@ public class AgentRuntimeService {
     }
 
     /**
+     * 读取会话早期摘要（历史过长时压缩续接）。任何失败降级返回 null，不阻断对话。
+     */
+    private String earlySummaryOf(Session session) {
+        if (sessionSummaryService == null || session == null) {
+            return null;
+        }
+        try {
+            return sessionSummaryService.summaryFor(session);
+        } catch (Exception e) {
+            log.warn("Failed to load session summary: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 提取最后一条用户消息中的图片附件（image part → 文件字节 → base64）。
+     * <p>供 Spring AI 通道的视觉模型使用；文件读取/解码失败降级为无图（不阻断文本对话）。</p>
+     */
+    private List<Map<String, String>> collectImageData(AgentRunRequest req, String tenantId) {
+        List<Map<String, String>> images = new ArrayList<>();
+        if (fileUploadService == null) {
+            return images;
+        }
+        AgentRunRequest.Message last = lastUserMessage(req);
+        Object content = last == null ? null : last.content();
+        if (!(content instanceof List<?> parts)) {
+            return images;
+        }
+        try {
+            for (Object part : parts) {
+                if (!(part instanceof Map<?, ?> m) || !"image".equals(strOf(m.get("type")))) {
+                    continue;
+                }
+                String fileId = strOf(m.get("fileId"));
+                if (fileId.isBlank()) {
+                    continue;
+                }
+                FileUploadService.Download dl = fileUploadService.download(tenantId, fileId);
+                if (dl == null || dl.bytes() == null || dl.bytes().length == 0) {
+                    log.warn("Image {} not found or empty, skip", fileId);
+                    continue;
+                }
+                String mime = strOf(m.get("mimeType"));
+                if (mime.isBlank()) {
+                    mime = "image/png";
+                }
+                Map<String, String> item = new java.util.HashMap<>(2);
+                item.put("mimeType", mime);
+                item.put("base64", java.util.Base64.getEncoder().encodeToString(dl.bytes()));
+                images.add(item);
+            }
+        } catch (Exception e) {
+            log.warn("Collect image parts failed: {}", e.getMessage());
+        }
+        return images;
+    }
+
+    /**
+     * 自动摄取对话拖入的文档附件（方案 C），返回租户附件库 ID（无文档附件或失败返回 null）。
+     * <p>file part 仍会走原有文本注入；这里额外把文档归入知识库，使回答可获得引用溯源。</p>
+     */
+    private String ensureAttachments(AgentRunRequest req, String tenantId) {
+        if (attachmentService == null || fileUploadService == null) {
+            return null;
+        }
+        AgentRunRequest.Message last = lastUserMessage(req);
+        Object content = last == null ? null : last.content();
+        if (!(content instanceof List<?> parts)) {
+            return null;
+        }
+        String kbId = null;
+        try {
+            for (Object part : parts) {
+                if (!(part instanceof Map<?, ?> m) || !"file".equals(strOf(m.get("type")))) {
+                    continue;
+                }
+                String fileId = strOf(m.get("fileId"));
+                String fileName = strOf(m.get("fileName"));
+                if (fileId.isBlank() || !ConversationAttachmentService.isDocumentFile(fileName)) {
+                    continue;
+                }
+                FileUploadService.Download dl = fileUploadService.download(tenantId, fileId);
+                if (dl == null || dl.bytes() == null || dl.bytes().length == 0) {
+                    log.warn("Attachment {} not found or empty, skip ingest", fileId);
+                    continue;
+                }
+                if (kbId == null) {
+                    kbId = attachmentService.attachmentKbId(tenantId);
+                }
+                attachmentService.ensureDocument(tenantId, fileId, fileName, dl.bytes());
+            }
+        } catch (Exception e) {
+            log.warn("Ensure attachments failed: {}", e.getMessage());
+            return kbId;
+        }
+        return kbId;
+    }
+
+    /**
      * 确保智能体挂载的插件已热加载（幂等）。
      */
     private void ensurePluginsAttached(AgentDefinition agent, String tenantId) {
@@ -500,7 +631,7 @@ public class AgentRuntimeService {
             String userMessage = extractUserMessage(req, tenantId);
             String basePrompt = withSkillPrompts(agent,
                     assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
-            RagRender rag = retrieveKnowledge(agent, req, userMessage);
+            RagRender rag = retrieveKnowledge(agent, req, userMessage, null);
             final String systemPrompt = rag == null || rag.systemBlock() == null || rag.systemBlock().isBlank()
                     ? basePrompt
                     : basePrompt + rag.systemBlock();

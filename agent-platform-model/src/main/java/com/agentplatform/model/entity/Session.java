@@ -56,6 +56,15 @@ public class Session {
     @Builder.Default
     private String status = "active";
 
+    /** 早期会话摘要（中期记忆：历史过长时把早期轮次压缩到这里，续接上下文用）。 */
+    @Column(name = "summary", columnDefinition = "text")
+    private String summary;
+
+    /** 摘要已覆盖到的最大轮次（0 = 尚未摘要），避免重复 rollup。 */
+    @Column(name = "summary_turn")
+    @Builder.Default
+    private Integer summaryTurn = 0;
+
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private LocalDateTime createdAt;
 

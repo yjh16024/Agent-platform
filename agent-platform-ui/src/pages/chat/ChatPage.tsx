@@ -16,6 +16,8 @@ const MAX_ATTACH = 4;
 
 interface Attachment extends FileAsset {
   uploading?: boolean;
+  /** 原始 MIME（图片走视觉 part 时传给后端；上传返回的 asset 不再携带，故本地暂存）。 */
+  mime?: string;
 }
 
 /**
@@ -64,12 +66,18 @@ export default function ChatPage() {
       message.warning(`单次最多 ${MAX_ATTACH} 个文件`);
       return;
     }
-    const placeholder: Attachment = { fileName: file.name, fileType: 'file', uploading: true };
+    const isImage = file.type.startsWith('image/');
+    const placeholder: Attachment = {
+      fileName: file.name,
+      fileType: isImage ? 'image' : 'file',
+      mime: file.type,
+      uploading: true,
+    };
     setAttachments((cur) => [...cur, placeholder]);
     uploadFile(file)
       .then((asset) => {
         setAttachments((cur) =>
-          cur.map((a) => (a.fileName === file.name && a.uploading ? asset : a)),
+          cur.map((a) => (a.fileName === file.name && a.uploading ? { ...asset, mime: file.type } : a)),
         );
         message.success(`已上传 ${file.name}`);
       })
@@ -104,9 +112,14 @@ export default function ChatPage() {
     if (ready.length > 0) {
       const parts: MessagePart[] = [];
       if (text) parts.push({ type: 'text', text });
-      ready.forEach((a) =>
-        parts.push({ type: 'file', fileId: a.fileId!, fileName: a.fileName }),
-      );
+      ready.forEach((a) => {
+        // 图片以 image part 发送（后端走视觉通道）；其余仍为 file part（文本注入 / 自动摄取）
+        if (a.fileType === 'image') {
+          parts.push({ type: 'image', fileId: a.fileId!, fileName: a.fileName, mimeType: a.mime });
+        } else {
+          parts.push({ type: 'file', fileId: a.fileId!, fileName: a.fileName });
+        }
+      });
       userMsg = { role: 'user', content: parts };
     } else {
       userMsg = { role: 'user', content: text };

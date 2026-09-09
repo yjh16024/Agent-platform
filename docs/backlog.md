@@ -2,7 +2,9 @@
 
 > **合并自**：原 `docs/TODO.md` + 根目录 `TECH_GAP_ROADMAP.md` + `FEASIBILITY_ANALYSES.md`（待实施部分）。
 > **原则**：只登记**未实现**事项与必须遵守的契约/坑；已实现项不再保留（历史见 git 提交）。
-> 最后核实：2026-09-08（已逐条对照代码现状修订）。
+> 最后核实：2026-09-09。**本日已完成**（见下各 ✅ 行）：Spring AI 1.1.8 集成（模型/工具/RAG 解析切分/可观测）、
+> DB 内置化（H2 embedded）、对话早期摘要（中期记忆）、对话图片视觉与大文件自动摄取、HTTP 工具持久化与内置天气工具。
+> 此前的 `TODO.md` 已清空，内容并入本文件。
 
 ---
 
@@ -12,9 +14,13 @@
 |------|------|------|
 | 日志高阶存储 ES/ClickHouse | ❌ | 已用 MySQL `log_index` 持久化替代；超大规模检索/聚合仍需 ES/CH |
 | Temporal 长流程 | ❌ | 工作流仅内存 DAG（短链路），无持久化/断点恢复 |
-| 多模态真实 ASR/TTS/OCR | ⚠️ | 接口与文件链路在（ASR/TTS 插件化），依赖外部服务未端到端验证 |
+| 多模态真实 ASR/TTS/OCR | ⚠️ | 接口与文件链路在（ASR/TTS 插件化），依赖外部服务未端到端验证（2026-09-09 核实：TTS/ASR 均为 mock，OCR 无实现） |
 | gateway 模块 | ⚠️ 占位 | 仅 `JwtAuthFilter`，无路由/限流；生产鉴权实际在 core 侧。**注意**：早期阶段报告称"Spring Cloud Gateway 已交付"与现状不符，鉴权为 core 内 JWT 过滤器 |
-| Spring AI 依赖 | ⚠️ 未用 | 模型调用为自写 OkHttp 适配器，`spring-ai` 依赖可清理以降低歧义 |
+
+> **2026-09-09 修正**：原「Spring AI 依赖 ⚠️ 未用」已过时——现 spring-ai **1.1.8**（Boot 3.4 配套；2.x 需 Boot 4）已实际使用：
+> 模型通道（`agent-platform.springai.enabled`，OpenAI 兼容/Anthropic 走 ChatModel，凭证三级回退与 AES-GCM 仍自研）、
+> 工具调用（原生 tool-role 循环）、RAG 解析/切分（`springai.rag.enabled`）、可观测桥接。
+> 默认关闭时仍走自研适配器，两态均有测试守护。
 
 ## 二、能力侧待办（源自可行性分析，尚未实施）
 
@@ -22,10 +28,10 @@
 |---|---|---|
 | 短期记忆（Redis 缓存最近 5–10 轮） | ✅ 已实现（2026-09-08） | `SessionRecentCache`（Redis List，缓存最近 25 轮/50 条/24h TTL）；`recentMessages` 优先读缓存、miss 回 DB 并回填，`recordExchange` 追加最新轮并裁剪，删除/清空会话自动清缓存；Redis 缺失全程降级不阻断 |
 | 长期记忆（用户显式画像） | ❌ | 需 `user_fact` 表 + UI；建议先做"用户主动填写"，自动抽取后置 |
-| 中期记忆（对话摘要） | ❌ | 需 `message.summary` + 定时任务 + 降级为保留原文 |
+| 中期记忆（对话早期摘要） | ✅ 已实现（2026-09-09） | V12（mysql+h2）`session_def.summary / summary_turn`；`SessionSummaryService`：会话超过 40 轮后把将被截断的早期轮次懒 rollup 为「早期会话要点」并续接进提示词（幂等）；当前为离线要点式摘要，可后续替换为 LLM 语义摘要而不改调用方 |
 | 向量记忆（历史对话向量召回） | ❌ | 技术栈已具备（in-memory/Milvus），风险是无关历史污染上下文 |
 | 应用化：一键启动 | ✅ 已完成 | `start-core.bat` / `start-core.sh`（在线优先、失败降级 `-o`）+ `warmup.bat` 预热 |
-| 应用化：内嵌 DB（SQLite/H2） | ❌ | 桌面包前置，需 Flyway 方言分支（MySQL 特有子句如 `AFTER`） |
+| 应用化：内嵌 DB（H2 file 模式） | ✅ 已实现（2026-09-09） | Flyway `{vendor}` 双目录（`db/migration/mysql` + `h2`）；`DB_MODE=embedded` / `application-embedded.yml`（H2 MySQL 兼容模式，数据落 `./data/agent-platform.mv.db`）；`start-core.bat embedded`；默认仍 MySQL 零影响。H2 无 FULLTEXT → 稀疏检索顺序扫描兜底；索引名改库级唯一（H2 全局唯一） |
 | 应用化：桌面壳（Tauri/Electron） | ⛔ 已归档 | 仅作参考，见 `feasibility.md`；不再排期 |
 
 ## 三、编排演进决策（已定，勿重复讨论）

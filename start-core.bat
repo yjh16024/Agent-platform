@@ -54,11 +54,17 @@ set "MYSQL_URL=jdbc:mysql://localhost:3306/agent_platform?useSSL=false&serverTim
 set "MYSQL_USER=agent"
 set "MYSQL_PASSWORD=agent123456"
 
-REM ---- 5. Build only when jar missing or explicit rebuild ----
+REM ---- 5. Parse args & decide build; DB mode: mysql (default) / embedded (H2, no MySQL) ----
 set "JAR_FILE=agent-platform-core\target\agent-platform-core-1.0.0-SNAPSHOT.jar"
+set "DB_MODE=mysql"
 set "NEED_BUILD="
-if /i "%~1"=="rebuild" set "NEED_BUILD=1"
+for %%a in (%*) do (
+    if /i "%%a"=="embedded" set "DB_MODE=embedded"
+    if /i "%%a"=="rebuild" set "NEED_BUILD=1"
+)
 if not exist "%JAR_FILE%" set "NEED_BUILD=1"
+if "%DB_MODE%"=="embedded" echo [INFO] DB mode: embedded (H2, data under .\data\agent-platform.mv.db, no MySQL needed)
+if "%DB_MODE%"=="mysql" echo [INFO] DB mode: mysql (default, needs local MySQL running)
 
 if defined NEED_BUILD (
     rem online first to fetch new deps, fallback to -o for reproducible offline build
@@ -81,8 +87,8 @@ if defined NEED_BUILD (
 REM ---- 6. Start core service ----
 set "JAVA_CMD=java"
 if defined JAVA_HOME set "JAVA_CMD=%JAVA_HOME%\bin\java.exe"
-echo [3/3] Starting core service on port 8081...
-"%JAVA_CMD%" --enable-preview -XX:+UseZGC -Xms256m -Xmx1g -jar "%JAR_FILE%"
+echo [3/3] Starting core service on port 8081 (DB_MODE=%DB_MODE%)...
+"%JAVA_CMD%" --enable-preview -XX:+UseZGC -Xms256m -Xmx1g -jar "%JAR_FILE%" --spring.profiles.active=%DB_MODE%
 if errorlevel 1 goto :fail
 goto :eof
 

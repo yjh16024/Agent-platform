@@ -36,6 +36,27 @@ public class SearchTool implements Tool {
         return "Search the knowledge base for relevant documents given a query. Returns top chunks with citations.";
     }
 
+    /**
+     * 入参 schema：明确告知模型需要 {@code query}（可选 {@code knowledge_base_ids}）。
+     * <p>不声明时厂商会报 {@code schema must be a JSON Schema of 'type: "object"'}。</p>
+     */
+    @Override
+    public JsonNode inputSchema() {
+        ObjectNode schema = mapper.createObjectNode();
+        schema.put("type", "object");
+        ObjectNode properties = schema.putObject("properties");
+        ObjectNode query = properties.putObject("query");
+        query.put("type", "string");
+        query.put("description", "检索关键词或问题");
+        ObjectNode kbIds = properties.putObject("knowledge_base_ids");
+        kbIds.put("type", "array");
+        kbIds.put("description", "可选：限定检索的知识库 ID 列表，留空表示全部");
+        kbIds.putObject("items").put("type", "string");
+        ArrayNode required = schema.putArray("required");
+        required.add("query");
+        return schema;
+    }
+
     @Override
     public ToolResult execute(JsonNode args, ToolContext ctx) {
         String query = args.path("query").asText();

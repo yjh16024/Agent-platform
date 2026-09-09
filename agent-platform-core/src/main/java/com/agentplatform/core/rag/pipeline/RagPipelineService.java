@@ -6,6 +6,8 @@ import com.agentplatform.core.rag.chunker.ChunkerFactory;
 import com.agentplatform.core.rag.chunker.ChunkSegment;
 import com.agentplatform.core.rag.retriever.EmbeddingService;
 import com.agentplatform.core.rag.retriever.VectorStore;
+import com.agentplatform.core.rag.springai.SpringAiChunker;
+import com.agentplatform.core.rag.springai.SpringAiTextExtractor;
 import com.agentplatform.model.entity.Chunk;
 import com.agentplatform.model.entity.DocumentEntity;
 import com.agentplatform.model.entity.KnowledgeBase;
@@ -13,6 +15,7 @@ import com.agentplatform.model.repository.ChunkRepository;
 import com.agentplatform.model.repository.DocumentRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,6 +41,14 @@ public class RagPipelineService {
     private final VectorStore vectorStore;
     private final ChunkRepository chunkRepository;
     private final DocumentRepository documentRepository;
+
+    /** Spring AI 解析（可选）：agent-platform.springai.rag.enabled=true 时存在并优先使用。 */
+    @Autowired(required = false)
+    private SpringAiTextExtractor springAiTextExtractor;
+
+    /** Spring AI 切分（可选）：同开关控制，存在时优先使用。 */
+    @Autowired(required = false)
+    private SpringAiChunker springAiChunker;
 
     /**
      * 摄取文档（解析 + 切分 + 向量化 + 索引）。
@@ -66,15 +77,22 @@ public class RagPipelineService {
         documentRepository.save(doc);
 
         try {
-            // ② 解析
-            String text = documentParser.parse(fileName, content, fileType);
-            // ③ 切分
-            Chunker chunker = chunkerFactory.get(kb.getChunkStrategy());
-            Chunker.ChunkConfig config = new Chunker.ChunkConfig(
-                    kb.getChunkSize() == null ? 512 : kb.getChunkSize(),
-                    kb.getChunkOverlap() == null ? 50 : kb.getChunkOverlap(),
-                    Chunker.ChunkConfig.defaults().separators());
-            List<ChunkSegment> segments = chunker.chunk(text, config);
+            // ② 解析（Spring AI 通道优先；未启用时回退自研 Tika 解析，行为不变）
+            String text = springAiTextExtractor != null
+                    ? springAiTextExtractor.extract(fileName, content)
+                    : documentParser.parse(fileName, content, fileType);
+            // ③ 切分（Spring AI 通道优先；未启用时回退自研 Chunker 策略）
+            int chunkSize = kb.getChunkSize() == null ? 512 : kb.getChunkSize();
+            int chunkOverlap = kb.getChunkOverlap() == null ? 50 : kb.getChunkOverlap();
+            List<ChunkSegment> segments;
+            if (springAiChunker != null) {
+                segments = springAiChunker.split(text, chunkSize);
+            } else {
+                Chunker chunker = chunkerFactory.get(kb.getChunkStrategy());
+                Chunker.ChunkConfig config = new Chunker.ChunkConfig(
+                        chunkSize, chunkOverlap, Chunker.ChunkConfig.defaults().separators());
+                segments = chunker.chunk(text, config);
+            }
 
             // ④ 切块入库 + 向量化（解耦：chunk 内容始终入库；向量化失败仅告警，
             //    不丢弃内容，保证 UI 可浏览且关键词检索始终可用）

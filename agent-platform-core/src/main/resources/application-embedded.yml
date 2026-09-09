@@ -1,0 +1,23 @@
+# ============================================================
+# 内置库模式（DB_MODE=embedded / --spring.profiles.active=embedded）
+# 用 H2 file 库替换外部 MySQL：免安装即可运行；数据落 ./data/agent-platform.mv.db
+# H2 以 MySQL 兼容模式启动（MODE=MySQL），Flyway 走 db/migration/h2 迁移集。
+# 限制：无 FULLTEXT 全文索引，混合检索的稀疏侧在 H2 下由顺序扫描兜底（功能可用、量大时慢）；
+#       生产/大数据场景请继续使用默认 MySQL（FULLTEXT + MATCH..AGAINST）。
+# ============================================================
+spring:
+  config:
+    activate:
+      on-profile: embedded
+  datasource:
+    url: ${DB_URL:jdbc:h2:file:./data/agent-platform;MODE=MySQL;DATABASE_TO_LOWER=TRUE;CASE_INSENSITIVE_IDENTIFIERS=TRUE;AUTO_SERVER=TRUE}
+    username: sa
+    password: ""
+    driver-class-name: org.h2.Driver
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+  jpa:
+    hibernate:
+      ddl-auto: none          # schema 由 Flyway 管理
+    open-in-view: false

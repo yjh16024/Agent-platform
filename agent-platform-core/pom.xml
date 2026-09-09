@@ -108,6 +108,27 @@
             <artifactId>jackson-dataformat-yaml</artifactId>
         </dependency>
 
+        <!-- ===== Spring AI（1.1.x，与 Boot 3.4 配套）=====
+             使用非 starter 模块：只取 API/实现，避免 Spring AI 自动配置被激活而改变现有行为。
+             如后续出现自动配置副作用，可用 spring.autoconfigure.exclude 精确排除。 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-model</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-openai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-anthropic</artifactId>
+        </dependency>
+        <!-- RAG：文档解析（TikaDocumentReader）/ 切分（TokenTextSplitter，位于 spring-ai-commons） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-tika-document-reader</artifactId>
+        </dependency>
+
         <!-- Apache Tika（文档解析：PDF/Docx/PPTx/Excel/Markdown） -->
         <dependency>
             <groupId>org.apache.tika</groupId>
@@ -158,10 +179,11 @@
             <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
+        <!-- H2：test 用内存库；DB_MODE=embedded 时作为内置库运行（runtime scope 打进 jar） -->
         <dependency>
             <groupId>com.h2database</groupId>
             <artifactId>h2</artifactId>
-            <scope>test</scope>
+            <scope>runtime</scope>
         </dependency>
     </dependencies>
 

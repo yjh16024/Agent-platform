@@ -6,6 +6,9 @@ import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.model.adapter.MockModelAdapter;
 import com.agentplatform.core.model.adapter.OpenAiCompatibleAdapter;
 import com.agentplatform.core.model.adapter.RuleEngineModelAdapter;
+import com.agentplatform.core.model.springai.SpringAiChatModelFactory;
+import com.agentplatform.core.model.springai.SpringAiModelAdapter;
+import com.agentplatform.core.model.springai.SpringAiToolBridge;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -37,6 +40,27 @@ public class ModelProviderFactory {
     private final String apiKey;
     private final String userAgent;
     private final OkHttpClient httpClient;
+
+    /**
+     * Spring AI 版模型实现（可选）。
+     * <p>仅当 {@code agent-platform.springai.enabled=true} 时该 Bean 才存在，届时
+     * OpenAI 兼容与 Anthropic 走 Spring AI 的 ChatModel，其余逻辑（凭证解析 / 加密 / 掩码 /
+     * 路由）保持不变；未启用时完全走原有自研适配器。</p>
+     */
+    private SpringAiChatModelFactory springAi;
+
+    /** Spring AI 工具桥接（与 springAi 同时启用）。 */
+    private SpringAiToolBridge springAiTools;
+
+    @Autowired(required = false)
+    public void setSpringAiChatModelFactory(SpringAiChatModelFactory springAi) {
+        this.springAi = springAi;
+    }
+
+    @Autowired(required = false)
+    public void setSpringAiToolBridge(SpringAiToolBridge springAiTools) {
+        this.springAiTools = springAiTools;
+    }
 
     /** 兼容旧测试/调用的便捷构造（走默认 UA）。 */
     public ModelProviderFactory(String baseUrl, String apiKey) {
@@ -92,6 +116,11 @@ public class ModelProviderFactory {
         }
         if ("rule".equals(key)) {
             return new RuleEngineModelAdapter();
+        }
+        // Spring AI 通道（可选开关）：只替换协议层，凭证仍由 ModelBindingService 解析后按请求传入
+        if (springAi != null && SpringAiChatModelFactory.isSpringAiFamily(key)) {
+            log.info("Using Spring AI adapter for provider family: {}", key);
+            return new SpringAiModelAdapter(key, springAi, baseUrl, apiKey, springAiTools);
         }
         if ("anthropic".equals(key)) {
             return new AnthropicAdapter(key, baseUrl, apiKey, userAgent, httpClient);

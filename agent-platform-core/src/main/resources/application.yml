@@ -40,7 +40,8 @@ spring:
           time_zone: Asia/Shanghai
   flyway:
     enabled: true
-    locations: classpath:db/migration
+    # 按数据库厂商选迁移目录：{vendor} = mysql / h2（Flyway 自动替换）
+    locations: classpath:db/migration/{vendor}
     baseline-on-migrate: true
   # ---- Redis（缓存 + 二级缓存）----
   data:
@@ -82,6 +83,15 @@ agent-platform:
     expire-seconds: 86400            # 24h
   tenant:
     default-id: "default"
+  # ---- Spring AI 通道开关（默认关闭）----
+  # true：OpenAI 兼容 / Anthropic 的模型调用改走 Spring AI 1.1.x 的 ChatModel；
+  #       凭证三级回退、AES-GCM 加密与掩码逻辑不变（仍由 ModelBindingService / ModelKeyCrypto 负责）。
+  # false（默认）：走原有自研 OkHttp 适配器，行为与历史版本完全一致。
+  springai:
+    enabled: ${SPRING_AI_ENABLED:false}
+    # RAG 摄取走 Spring AI（解析 TikaDocumentReader + 切分 TokenTextSplitter）；默认关闭回退自研。
+    rag:
+      enabled: ${SPRING_AI_RAG_ENABLED:false}
   model:
     default-provider: ${DEFAULT_PROVIDER:deepseek}    # 智能体未配置 provider 时的默认模型厂商
     default-name: ${DEFAULT_MODEL:deepseek-chat}      # 智能体未配置 model 时的默认模型名

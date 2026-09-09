@@ -5,6 +5,7 @@ import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.tool.executor.HttpApiTool;
 import com.agentplatform.core.tool.executor.ToolExecutor;
 import com.agentplatform.core.tool.mcp.McpToolRegistry;
+import com.agentplatform.core.tool.registry.ToolRegistrationService;
 import com.agentplatform.core.tool.registry.ToolRegistry;
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +36,7 @@ public class ToolController {
     private final ToolRegistry registry;
     private final ToolExecutor executor;
     private final McpToolRegistry mcpToolRegistry;
+    private final ToolRegistrationService registrationService;
 
     /**
      * 列出全部已注册工具（含来源与 HTTP 工具的 endpoint/method，供前端编辑回显）。
@@ -65,6 +67,7 @@ public class ToolController {
      */
     @PutMapping("/{toolName}")
     public ApiResponse<Map<String, Object>> update(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @PathVariable String toolName,
             @RequestBody Map<String, Object> body) {
         Tool existing = registry.get(toolName);
@@ -84,9 +87,8 @@ public class ToolController {
         JsonNode inputSchema = body.containsKey("parameters")
                 ? parseParameters(body.get("parameters"))
                 : http.getInputSchema();
-        HttpApiTool updated = new HttpApiTool(toolName, description, inputSchema, endpoint, method);
-        registry.register(updated, "http");
-        return ApiResponse.ok(Map.of("name", toolName, "updated", true));
+        registrationService.register(tenantId, toolName, description, endpoint, method, inputSchema);
+        return ApiResponse.ok(Map.of("name", toolName, "updated", true, "persisted", true));
     }
 
     /**
@@ -109,7 +111,9 @@ public class ToolController {
      * JSON 对象或 JSON 字符串；缺省为最宽松的空对象 schema，模型仍可能传 args={}）。</p>
      */
     @PostMapping("/register")
-    public ApiResponse<Map<String, Object>> registerHttp(@RequestBody Map<String, Object> body) {
+    public ApiResponse<Map<String, Object>> registerHttp(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @RequestBody Map<String, Object> body) {
         String name = (String) body.get("name");
         String description = (String) body.get("description");
         String endpoint = (String) body.get("endpoint");
@@ -120,9 +124,9 @@ public class ToolController {
         }
 
         JsonNode inputSchema = parseParameters(body.get("parameters"));
-        HttpApiTool tool = new HttpApiTool(name, description, inputSchema, endpoint, method);
-        registry.register(tool, "http");
-        return ApiResponse.ok(Map.of("name", name, "registered", true));
+        // 注册到中心 + 落库（重启后自动恢复）
+        registrationService.register(tenantId, name, description, endpoint, method, inputSchema);
+        return ApiResponse.ok(Map.of("name", name, "registered", true, "persisted", true));
     }
 
     /**
@@ -201,7 +205,9 @@ public class ToolController {
      * 卸载单个工具（从注册中心移除，MCP/HTTP 自定义工具均可；内置工具受保护）。
      */
     @DeleteMapping("/{toolName}")
-    public ApiResponse<Void> unregister(@PathVariable String toolName) {
+    public ApiResponse<Void> unregister(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @PathVariable String toolName) {
         if (!registry.contains(toolName)) {
             return ApiResponse.error("NOT_FOUND", "tool not found: " + toolName);
         }
@@ -209,7 +215,7 @@ public class ToolController {
             return ApiResponse.error("BAD_REQUEST",
                     "内置工具（calc/search 等）由代码注册，不可删除；如确需移除请修改代码后重启");
         }
-        registry.unregister(toolName);
+        registrationService.unregister(tenantId, toolName);
         return ApiResponse.ok(null, "unregistered");
     }
 }
