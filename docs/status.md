@@ -22,7 +22,7 @@
 | 智能体 | 定义/CRUD/克隆/版本快照/发布/回滚/版本对比 | ✅ 已实现 | `AgentController`、`AgentDefinition` |
 | 运行入口 | 一次运行按需装配模型/知识/工具/记忆，支持 JSON 与 SSE | ✅ 已实现 | `POST /api/v1/agent/run`、`AgentRuntimeService` |
 | 模型 | 多厂商路由、四种适配器、三级凭证回退、AES-GCM 加密与掩码 | ✅ 已实现 | `ModelAdapter`/`ModelRouter`/`ModelBindingService`/`ModelKeyCrypto` |
-| 模型（可选通道） | Spring AI 1.1.8 协议层 + 原生 tool-role 工具循环 + RAG 解析切分 + 可观测桥接 | ✅ 已实现（默认关闭，可回退） | `agent-platform.springai.enabled` |
+| 模型（可选通道） | Spring AI 2.0.1 协议层 + 原生 tool-role 工具循环 + RAG 解析切分 + 可观测桥接 | ✅ 已实现（默认关闭，可回退） | `agent-platform.springai.enabled` |
 | 模型额度 | **读取厂商开放平台剩余额度**（DeepSeek / 硅基流动 / Moonshot） | ✅ 已实现（2026-09-10 新增） | `GET /api/v1/model-balance`、`ModelBalanceService` |
 | 提示词 | 人格 → 模板变量 → Skill 正文 → RAG 附文四层组装 | ✅ 已实现 | `PromptParser`、`AgentRuntimeService` |
 | 记忆 | 短期（Redis 近期缓存） | ✅ 已实现 | `SessionRecentCache`（25 轮/50 条/24h，缺失降级 DB） |

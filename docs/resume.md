@@ -8,13 +8,13 @@
 
 ## 版本一：标准版（推荐，填满 8–12 行）
 
-**智能体交互平台（Agent Platform）** ｜ 个人项目 ｜ Java 21 / Spring Boot 3.4 / React 18
+**智能体交互平台（Agent Platform）** ｜ 个人项目 ｜ Java 21 / Spring Boot 4.1 / React 18
 
 > 面向多租户的 AI 智能体运行平台：在仪表盘上定义智能体（人格、提示词、模型、知识库、工具、
 > 插件、技能），运行时按需装配并完成一次可追溯的对话。
 
-**技术栈**：Java 21（虚拟线程 / 结构化并发）、Spring Boot 3.4、Spring Data JPA + Flyway、MySQL / H2、
-Redis、Milvus、OkHttp、Spring AI 1.1.8（可选通道）、React 18 + TypeScript + Vite + antd、Electron、Docker / K8s
+**技术栈**：Java 21（虚拟线程 / 结构化并发）、Spring Boot 4.1、Spring Data JPA + Flyway、MySQL / H2、
+Redis、Milvus、OkHttp、Spring AI 2.0.1（可选通道）、React 18 + TypeScript + Vite + antd、Electron、Docker / K8s
 
 **核心工作**：
 
@@ -48,7 +48,7 @@ Redis、Milvus、OkHttp、Spring AI 1.1.8（可选通道）、React 18 + TypeScr
 
 ## 版本二：精简版（简历空间紧张时用，5 行）
 
-**智能体交互平台** ｜ 个人项目 ｜ Java 21 / Spring Boot 3.4 / React / Electron
+**智能体交互平台** ｜ 个人项目 ｜ Java 21 / Spring Boot 4.1 / React / Electron
 
 - 设计多模型适配层（4 类适配器 + provider 路由 + 三级凭证回退 + AES-GCM 加密），
   并接入 Spring AI 作可选协议通道、默认关闭可回退；

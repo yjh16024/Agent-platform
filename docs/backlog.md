@@ -21,11 +21,10 @@
 | 向量记忆（历史对话向量召回） | ❌ | 技术栈已具备（in-memory/Milvus），风险是无关历史污染上下文 |
 | 桌面应用代码签名 | ❌ | 当前未签名（需 `signtool` / `codesign` 证书），企业分发前需补 |
 | 桌面自动更新 | ❌ | 无 updater，升级需重新分发 zip / exe |
-| 框架大版本升级（Boot 4 + Spring AI 2） | ⏸ 已评估、暂不执行 | 目标 Boot 4.1（2026-06，推荐）+ Spring AI 2.0（均已于 2026 年 GA）；估算 3–6 人日。卡点：① Jackson 2→3 包名变更波及 30+ 文件（`JsonUtils` 中枢 + 7 处 `new ObjectMapper()` + YAML + 多态 `parts[]` 回归）；② Hibernate 6→7（实体 / `@JdbcTypeCode` / native SQL / H2+MySQL 双方言）；③ Spring AI 2.0 工具循环上移到 Advisor 链，自研 `SpringAiToolBridge` 需重写；④ Spring Cloud 2024→2025、Micrometer 2、Flyway 11、Tomcat 11 连带升级。建议路线：先在分支做依赖 spike 统计真实报错量，再决定是否推进 |
-
-> 已完成项不在此列出，例如 Spring AI 1.1.8 集成、H2 内置库、对话早期摘要（中期记忆）、
+> 已完成项不在此列出，例如 **框架大版本升级（Spring Boot 4.1.1 + Spring AI 2.0.1 + Jackson 3，2026-09-10 完成）**、
+> Spring AI 通道集成、H2 内置库、对话早期摘要（中期记忆）、
 > 图片视觉、HTTP 工具持久化、内置天气工具、**Electron 桌面应用**、**模型账户额度查询**
-> —— 全部见 [status.md](status.md)。
+> —— 全部见 [status.md](status.md)；升级过程中的踩坑见本文第四节。
 
 ## 二、编排演进决策（已定，勿重复讨论）
 
@@ -70,3 +69,21 @@
     UnsupportedClassVersionError；桌面壳 `desktop/main.js` 已带该参数。
 13. **构建/依赖**：官方中央仓库直连不通，全局 settings.xml 已配阿里云镜像；若本地 `.mvn/maven.config`
     含注释会导致 Maven 3.8.x 解析失败（该文件必须只放参数）。
+14. **Spring Boot 4 自动配置模块化（2026-09-10 升级踩坑）**：Flyway / Kafka 的自动配置拆到独立模块
+    （`spring-boot-flyway` / `spring-boot-kafka`），只引第三方 `flyway-core` / `spring-kafka` 时
+    **不会执行迁移、不会自动装配 `KafkaTemplate`**（表现为「表不存在」启动失败）。`@EntityScan` 迁到
+    `spring-boot-persistence`（`org.springframework.boot.persistence.autoconfigure`）。
+15. **Spring Cloud Gateway 在 2025.1 拆了坐标**：`spring-cloud-starter-gateway` →
+    `spring-cloud-starter-gateway-server-webflux`（或 `...-server-webmvc`）。
+16. **Jackson 3 迁移要点（39 个文件）**：databind/core/dataformat 的 Maven 坐标与包名迁至 `tools.jackson.*`
+    （**注解包 `com.fasterxml.jackson.annotation.*` 保留，DTO 注解无需改**）；`TextNode`→`StringNode`、
+    `JsonNode#fields()`→`properties()`、异常变 unchecked（`JacksonException`）、
+    `ObjectMapper#configure()` 移除（改 `JsonMapper.builder()`）。
+17. **Spring AI 2.0 迁移要点**：openai/anthropic 改用官方厂商 SDK（`com.openai:openai-java-core` /
+    `com.anthropic:anthropic-java-core`），`OpenAiApi`/`AnthropicApi` 移除 → 改用 `OpenAiSetup`/
+    `AnthropicSetup.setupSyncClient|setupAsyncClient`；**ChatModel 必须同时提供同步与异步客户端**
+    （只给同步时 Builder 会用默认凭证自建异步客户端并抛 `At least one credential source...`）；
+    工具循环上移 Advisor 链后 `internalToolExecutionEnabled` 移除；baseUrl 需含版本路径（如 `/v1`）。
+18. **桌面精简 JRE 必须含 `jdk.net`**：Boot 4 带来的 Lettuce 7.x 在初始化时引用
+    `jdk.net.ExtendedSocketOptions`，jlink runtime 缺该模块会导致后端启动即失败
+    （`NoClassDefFoundError`）——`desktop/build.bat|sh` 的模块列表已补上。

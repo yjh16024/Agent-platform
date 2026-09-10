@@ -16,7 +16,7 @@ Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉�
 
 工程层：**可选内置库**（`DB_MODE=embedded` 用 H2 免装 MySQL 直接跑）、**Spring AI 通道**
 （`SPRING_AI_ENABLED=true` 时模型调用 / 原生 tool-role 工具循环 / RAG 解析切分 / 可观测走
-Spring AI 1.1.8，默认关闭、可一键回退自研实现，凭证三级回退与加密始终不变）。
+Spring AI 2.0.1，默认关闭、可一键回退自研实现，凭证三级回退与加密始终不变）。
 
 ## 文档导航
 
@@ -71,7 +71,8 @@ Spring AI 1.1.8，默认关闭、可一键回退自研实现，凭证三级回�
 掩码，不会把明文 Key 送到前端。
 
 > **可选 Spring AI 通道**：`SPRING_AI_ENABLED=true` 时，OpenAI 兼容与 Anthropic 的协议层由
-> Spring AI 1.1.8 的 `ChatModel` 实现（含自定义 UA 与 429/5xx 退避重试）；**上层的凭证解析、
+> Spring AI 2.0.1 的 `ChatModel` 实现（底层为官方厂商 SDK：`openai-java` / `anthropic-java`，
+> 自定义 UA 经请求头透传、429/5xx 由 SDK `maxRetries` 重试）；**上层的凭证解析、
 > 加密/掩码、三级回退一行未动**，只是适配器换实现。默认关闭时回到自研适配器，两条链路都有测试守护。
 
 ### 提示词：人格 → 模板 → 变量 → Skill
@@ -327,7 +328,7 @@ curl http://localhost:8081/actuator/health
 | `AUTH_USERNAME` / `AUTH_PASSWORD` | 登录静态账号（配置后登录需校验） | 空（演示模式签发） |
 | `DEFAULT_PROVIDER` / `DEFAULT_MODEL` | 未配置时的模型厂商/型号 | `deepseek` / `deepseek-chat` |
 | `embedded`（`--spring.profiles.active=embedded`） | 内置 H2 库模式（免 MySQL，数据 `./data/agent-platform.mv.db`）；脚本用 `start-core.bat embedded` | 默认 mysql |
-| `SPRING_AI_ENABLED` | 模型调用 / 工具循环 / 可观测走 Spring AI 1.1.8（默认关闭 = 自研实现，可回退） | `false` |
+| `SPRING_AI_ENABLED` | 模型调用 / 工具循环 / 可观测走 Spring AI 2.0.1（默认关闭 = 自研实现，可回退） | `false` |
 | `SPRING_AI_RAG_ENABLED` | RAG 解析 / 切分走 Spring AI（TikaDocumentReader + TokenTextSplitter） | `false` |
 
 > 说明：`data/` 下目录运行期自动生成；所有外部能力默认关闭、本地 Mock/内存/磁盘兜底，
@@ -441,6 +442,6 @@ cd agent-platform-ui && npm run build:prod            # 前端构建，产物同
 
 ---
 
-技术栈：Java 21（虚拟线程 + ScopedValue）、Spring Boot 3.4、Spring Data JPA + Flyway、
-MySQL 8（或内置 H2，`DB_MODE=embedded`）、Redis（可选）、Milvus（可选）、Spring AI 1.1.8（可选通道）、
+技术栈：Java 21（虚拟线程 + ScopedValue）、Spring Boot 4.1、Spring Data JPA + Flyway、
+MySQL 8（或内置 H2，`DB_MODE=embedded`）、Redis（可选）、Milvus（可选）、Spring AI 2.0.1（可选通道）、
 React + Vite + antd。
