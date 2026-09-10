@@ -307,5 +307,9 @@ zustand         4.5.5          react-router-dom 6.28.0
 Electron        33.3.1
 ```
 
-> 升级注意：Spring AI 2.x 需要 Spring Boot 4，因此当前锁在 1.1.x 线；
-> 升级 Boot 前需先确认 Spring AI 与 Tika 的兼容版本。
+> **升级注意（2026-09-10 核实）**：当前锁在 Spring Boot 3.4 + Spring AI 1.1.x 线，**属于主动选择而非受限**。
+> Spring Boot 4.0（2025-11-20 GA）与 4.1（2026-06-10，当前推荐）、Spring AI 2.0（2026-06 GA，要求 Boot 4 + Java 21）
+> 均已可用，升级路径存在，但是一次**跨代变更**：Jackson 2→3（全项目 JSON 层包名 `com.fasterxml.jackson`→`tools.jackson`）、
+> Hibernate 6→7、Spring Framework 6→7（JSpecify 空安全、移除废弃 API）、
+> Spring AI 工具调用循环从 `ChatModel` 内部上移到 Advisor 链（`ToolCallingAdvisor` 自动接管，自研 `SpringAiToolBridge` 需重构）。
+> 成本与风险详见 [backlog.md](backlog.md) 的「框架大版本升级」评估条目。

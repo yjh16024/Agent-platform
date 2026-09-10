@@ -21,6 +21,7 @@
 | 向量记忆（历史对话向量召回） | ❌ | 技术栈已具备（in-memory/Milvus），风险是无关历史污染上下文 |
 | 桌面应用代码签名 | ❌ | 当前未签名（需 `signtool` / `codesign` 证书），企业分发前需补 |
 | 桌面自动更新 | ❌ | 无 updater，升级需重新分发 zip / exe |
+| 框架大版本升级（Boot 4 + Spring AI 2） | ⏸ 已评估、暂不执行 | 目标 Boot 4.1（2026-06，推荐）+ Spring AI 2.0（均已于 2026 年 GA）；估算 3–6 人日。卡点：① Jackson 2→3 包名变更波及 30+ 文件（`JsonUtils` 中枢 + 7 处 `new ObjectMapper()` + YAML + 多态 `parts[]` 回归）；② Hibernate 6→7（实体 / `@JdbcTypeCode` / native SQL / H2+MySQL 双方言）；③ Spring AI 2.0 工具循环上移到 Advisor 链，自研 `SpringAiToolBridge` 需重写；④ Spring Cloud 2024→2025、Micrometer 2、Flyway 11、Tomcat 11 连带升级。建议路线：先在分支做依赖 spike 统计真实报错量，再决定是否推进 |
 
 > 已完成项不在此列出，例如 Spring AI 1.1.8 集成、H2 内置库、对话早期摘要（中期记忆）、
 > 图片视觉、HTTP 工具持久化、内置天气工具、**Electron 桌面应用**、**模型账户额度查询**
