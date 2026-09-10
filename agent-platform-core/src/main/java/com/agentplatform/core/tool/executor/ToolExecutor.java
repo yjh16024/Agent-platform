@@ -4,7 +4,7 @@ import com.agentplatform.core.tool.Tool;
 import com.agentplatform.core.tool.ToolContext;
 import com.agentplatform.core.tool.ToolResult;
 import com.agentplatform.core.tool.registry.ToolRegistry;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;

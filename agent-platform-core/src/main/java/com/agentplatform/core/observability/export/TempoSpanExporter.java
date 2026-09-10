@@ -3,7 +3,7 @@ package com.agentplatform.core.observability.export;
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.log.LogEvent;
 import com.agentplatform.core.log.LogEventSink;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.MediaType;

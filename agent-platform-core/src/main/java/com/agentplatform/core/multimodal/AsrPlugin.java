@@ -4,7 +4,7 @@ import com.agentplatform.plugin.sdk.Plugin;
 import com.agentplatform.plugin.sdk.PluginContext;
 import com.agentplatform.plugin.sdk.PluginTool;
 import com.agentplatform.plugin.sdk.ToolProvider;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.node.ObjectNode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -47,7 +47,7 @@ public class AsrPlugin implements ToolProvider {
                 PluginTool.of("asr_transcribe", "将音频转写为文本（语音识别）",
                         (args, ctx) -> {
                             String fileId = args.path("file_id").asText("");
-                            ObjectNode out = com.fasterxml.jackson.databind.node.JsonNodeFactory.instance.objectNode();
+                            ObjectNode out = tools.jackson.databind.node.JsonNodeFactory.instance.objectNode();
                             // 模拟转写结果
                             out.put("transcript", "这是音频「" + fileId + "」的模拟转写结果。");
                             out.put("language", "zh-CN");

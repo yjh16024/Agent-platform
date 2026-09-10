@@ -3,7 +3,7 @@ package com.agentplatform.core.model.adapter;
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.model.ModelCapability;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -240,7 +240,7 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
                         arguments = JsonUtils.toJsonNode(rawArgs);
                     } catch (Exception e) {
                         log.warn("[model:{}] tool_calls 参数非合法 JSON，按文本兜底: {}", providerName, e.getMessage());
-                        arguments = com.fasterxml.jackson.databind.node.TextNode.valueOf(rawArgs);
+                        arguments = tools.jackson.databind.node.StringNode.valueOf(rawArgs);
                     }
                 }
                 calls.add(new ModelAdapter.ToolCall(id, fnName, arguments));

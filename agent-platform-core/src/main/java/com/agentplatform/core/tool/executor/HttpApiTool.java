@@ -5,7 +5,7 @@ import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.tool.Tool;
 import com.agentplatform.core.tool.ToolContext;
 import com.agentplatform.core.tool.ToolResult;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.MediaType;
@@ -70,11 +70,11 @@ public class HttpApiTool implements Tool {
      */
     private JsonNode parseResponse(String body) {
         if (body == null) {
-            return com.fasterxml.jackson.databind.node.TextNode.valueOf("");
+            return tools.jackson.databind.node.StringNode.valueOf("");
         }
         String trimmed = body.trim();
         if (trimmed.isEmpty()) {
-            return com.fasterxml.jackson.databind.node.TextNode.valueOf("");
+            return tools.jackson.databind.node.StringNode.valueOf("");
         }
         // 启发式：仅当像 JSON 时才尝试解析（避免误把 HTML 喂给 Jackson）
         char first = trimmed.charAt(0);
@@ -85,7 +85,7 @@ public class HttpApiTool implements Tool {
                 log.debug("HTTP tool {} response is not strict JSON, fallback to text", name);
             }
         }
-        return com.fasterxml.jackson.databind.node.TextNode.valueOf(trimmed);
+        return tools.jackson.databind.node.StringNode.valueOf(trimmed);
     }
 
     /** 匹配 endpoint 中的 {@code {param}} 占位符。 */

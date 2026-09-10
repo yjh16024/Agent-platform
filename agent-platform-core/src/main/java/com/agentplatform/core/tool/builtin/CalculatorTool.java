@@ -3,7 +3,7 @@ package com.agentplatform.core.tool.builtin;
 import com.agentplatform.core.tool.Tool;
 import com.agentplatform.core.tool.ToolContext;
 import com.agentplatform.core.tool.ToolResult;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import org.springframework.stereotype.Component;
 
 /**

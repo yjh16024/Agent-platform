@@ -1,6 +1,6 @@
 package com.agentplatform.core.tool;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 /**
  * 工具接口（统一 Tool 协议）。

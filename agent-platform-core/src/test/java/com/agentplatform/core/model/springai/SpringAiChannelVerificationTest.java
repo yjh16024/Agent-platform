@@ -10,7 +10,7 @@ import com.agentplatform.core.tool.ToolContext;
 import com.agentplatform.core.tool.ToolResult;
 import com.agentplatform.core.tool.executor.ToolExecutor;
 import com.agentplatform.core.tool.registry.ToolRegistry;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;

@@ -5,7 +5,7 @@ import com.agentplatform.core.tool.ToolContext;
 import com.agentplatform.core.tool.ToolResult;
 import com.agentplatform.plugin.sdk.PluginContext;
 import com.agentplatform.plugin.sdk.PluginTool;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 /**
  * 插件工具适配器（桥接 plugin-sdk 的 {@link PluginTool} 与核心 {@link Tool}）。

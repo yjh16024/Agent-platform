@@ -7,7 +7,7 @@ import com.agentplatform.core.tool.executor.ToolExecutor;
 import com.agentplatform.core.tool.mcp.McpToolRegistry;
 import com.agentplatform.core.tool.registry.ToolRegistrationService;
 import com.agentplatform.core.tool.registry.ToolRegistry;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;

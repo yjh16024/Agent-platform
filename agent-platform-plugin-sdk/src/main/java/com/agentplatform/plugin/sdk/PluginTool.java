@@ -1,7 +1,7 @@
 package com.agentplatform.plugin.sdk;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * 插件贡献的工具（可被 LLM function calling 触发）。

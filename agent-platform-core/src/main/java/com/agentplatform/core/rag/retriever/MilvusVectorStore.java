@@ -2,7 +2,7 @@ package com.agentplatform.core.rag.retriever;
 
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.common.util.JsonUtils;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -112,7 +112,7 @@ public class MilvusVectorStore implements VectorStore {
                 Map<String, Object> meta = new LinkedHashMap<>();
                 JsonNode entity = hit.path("entity");
                 if (entity.isObject()) {
-                    entity.fields().forEachRemaining(e -> meta.put(e.getKey(), e.getValue().asText("")));
+                    entity.properties().forEach(e -> meta.put(e.getKey(), e.getValue().asText("")));
                 }
                 matches.add(new VectorMatch(id, score, meta));
             }

@@ -4,7 +4,7 @@ import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.tool.executor.HttpApiTool;
 import com.agentplatform.model.entity.ToolRegistration;
 import com.agentplatform.model.repository.ToolRegistrationRepository;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.node.ObjectNode;
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 

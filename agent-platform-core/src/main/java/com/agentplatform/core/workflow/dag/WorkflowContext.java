@@ -1,6 +1,6 @@
 package com.agentplatform.core.workflow.dag;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 import java.util.LinkedHashMap;
 import java.util.Map;

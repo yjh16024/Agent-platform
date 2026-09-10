@@ -19,24 +19,24 @@
 | 层 | 技术 | 版本 | 用途 |
 |---|---|---|---|
 | 语言/运行时 | **Java 21**（虚拟线程、`ScopedValue`、`StructuredTaskScope` 预览特性） | 21 | 后端全部 |
-| 应用框架 | **Spring Boot** | 3.4.0 | 容器、Web、条件装配 |
-| 持久化 | **Spring Data JPA** + Hibernate | Boot 3.4 配套 | 实体映射与仓储 |
-| 迁移 | **Flyway**（mysql / h2 双目录） | 10.17.0 | 版本化 DDL |
+| 应用框架 | **Spring Boot** | 4.1.1 | 容器、Web、条件装配 |
+| 持久化 | **Spring Data JPA** + Hibernate | 4.1.1 / 7.4.5 | 实体映射与仓储 |
+| 迁移 | **Flyway**（mysql / h2 双目录） | 12.4.0 | 版本化 DDL |
 | 数据库 | **MySQL 8.4**（默认）/ **H2** file 模式（`embedded`） | MySQL driver 8.4.0 / H2 2.3 | 主库 / 免装库分发 |
 | 连接池 | HikariCP | 5.1.0 | 数据源 |
 | 缓存 | **Redis**（可选，缺失降级内存） | — | 会话近期上下文、配额计数 |
 | 向量库 | `VectorStore` 抽象：**in-memory**（默认）/ **Milvus**（REST v2） | — | RAG 稠密检索 |
 | HTTP 客户端 | **OkHttp** | 4.12.0 | 模型调用、Embedding、余额查询、Milvus |
-| AI 框架（可选通道） | **Spring AI**（仅 `spring-ai-model` / `openai` / `anthropic`，非 starter） | 1.1.8 | 协议层 / 原生 tool-role / RAG 解析切分 / 观测桥接 |
+| AI 框架（可选通道） | **Spring AI**（`spring-ai-model` / `openai` / `anthropic` / `tika-document-reader`，非 starter；底层改用官方厂商 SDK） | 2.0.1 | 协议层 / 原生 tool-role / RAG 解析切分 / 观测桥接 |
 | 文档解析 | **Apache Tika** | 2.9.x | PDF/Word/Excel/MD 等多格式文本抽取 |
-| JSON | Jackson | 2.17.2 | 序列化与多态 parts[] |
+| JSON | **Jackson 3**（`tools.jackson.*`） | 3.1.5 | 序列化与多态 parts[] |
 | 鉴权 | JJWT | 0.12.6 | JWT 签发与校验 |
 | 映射/工具 | Lombok 1.18.34、MapStruct 1.5.5、Guava 33.3、Commons | — | 样板代码与工具 |
 | 前端 | **React 18.3** + **TypeScript 5.6** + **Vite 5.4** + **antd 5.21** + zustand 4.5 + react-router 6.28 | — | 仪表盘 SPA |
 | 桌面壳 | **Electron** | 33.3.1 | 桌面窗口与生命周期 |
 | 桌面运行时 | **jlink** 精简 JRE + **electron-builder** | — | 免装 Java、portable/zip 打包 |
 | 观测 | Micrometer + Prometheus + Loki + Tempo + Grafana | — | 指标 / 日志 / 链路 |
-| 部署 | Docker 多阶段 + K8s（Kustomize/Helm）+ HPA/KEDA | Spring Cloud 2024.0.0 | 生产化 |
+| 部署 | Docker 多阶段 + K8s（Kustomize/Helm）+ HPA/KEDA | Spring Cloud 2025.1.3 | 生产化 |
 | 测试 | JUnit 5 + Mockito 5.12 + Spring Boot Test + 本地 `HttpServer` | — | 140 个测试 |
 
 ---
@@ -59,7 +59,7 @@
 **放弃的方案**：响应式（WebFlux + Reactor 全链路）——模型/工具/RAG/DB 都要改，收益仅是吞吐，
 而本项目瓶颈在上游模型而非自身线程；且响应式堆栈排查成本高。
 
-### 2.2 应用框架与持久化：Spring Boot 3.4 + JPA + Flyway
+### 2.2 应用框架与持久化：Spring Boot 4.1 + JPA + Flyway
 
 **用什么**：Spring Boot 容器、`@ConditionalOnProperty` 条件装配、Spring Data JPA 仓储、Flyway 版本化迁移。
 
@@ -80,7 +80,7 @@
 - 自研四个适配器：`OpenAiCompatibleAdapter`（OpenAI/DeepSeek/通义/混元/文心 + LiteLLM 中转）、
   `AnthropicAdapter`（Messages API）、`RuleEngineModelAdapter`（规则确定性应答）、`MockModelAdapter`（本地兜底）；
 - `ModelRouter` 按 `provider` 选择，`ModelBindingService` 决定最终凭证（三级回退）；
-- **可选通道**：`SPRING_AI_ENABLED=true` 时协议层换成 Spring AI 1.1.8 的 `ChatModel`，工具循环换成原生
+- **可选通道**：`SPRING_AI_ENABLED=true` 时协议层换成 Spring AI 2.0.1 的 `ChatModel`，工具循环换成原生
   tool-role，可观测换成 `ChatModel` 自动 Observation。
 
 **为什么自研为主**：
@@ -297,9 +297,10 @@ Jackson `@JsonTypeInfo` 反序列化 `parts[]`；`MultimodalResolver` 做模型�
 
 ```text
 Java            21（--enable-preview）
-Spring Boot     3.4.0          Spring Cloud  2024.0.0      Spring AI  1.1.8（可选通道）
-MySQL driver    8.4.0          Flyway 10.17.0  HikariCP 5.1.0
-OkHttp          4.12.0         Jackson 2.17.2  JJWT 0.12.6
+Spring Boot     4.1.1          Spring Cloud  2025.1.3      Spring AI  2.0.1（可选通道）
+MySQL driver    8.4.0          Flyway 12.4.0  HikariCP 5.1.0
+Hibernate       7.4.5          Tomcat 11.0.24 Lettuce 7.5.2
+OkHttp          4.12.0         Jackson 3.1.5  JJWT 0.12.6
 Lombok          1.18.34        MapStruct 1.5.5 Guava 33.3.0-jre
 Mockito         5.12.0         Testcontainers 1.20.1
 React           18.3.1         TypeScript 5.6.3  Vite 5.4.11  antd 5.21.6
@@ -307,9 +308,18 @@ zustand         4.5.5          react-router-dom 6.28.0
 Electron        33.3.1
 ```
 
-> **升级注意（2026-09-10 核实）**：当前锁在 Spring Boot 3.4 + Spring AI 1.1.x 线，**属于主动选择而非受限**。
-> Spring Boot 4.0（2025-11-20 GA）与 4.1（2026-06-10，当前推荐）、Spring AI 2.0（2026-06 GA，要求 Boot 4 + Java 21）
-> 均已可用，升级路径存在，但是一次**跨代变更**：Jackson 2→3（全项目 JSON 层包名 `com.fasterxml.jackson`→`tools.jackson`）、
-> Hibernate 6→7、Spring Framework 6→7（JSpecify 空安全、移除废弃 API）、
-> Spring AI 工具调用循环从 `ChatModel` 内部上移到 Advisor 链（`ToolCallingAdvisor` 自动接管，自研 `SpringAiToolBridge` 需重构）。
-> 成本与风险详见 [backlog.md](backlog.md) 的「框架大版本升级」评估条目。
+> **版本策略（2026-09-10 已升级到最新线）**：本项目的框架已从 Spring Boot 3.4 + Spring AI 1.1.8 一次性升级到
+> **Spring Boot 4.1.1 + Spring Cloud 2025.1.3 + Spring AI 2.0.1 + Jackson 3.1.5**（实测：140 个测试全绿、端到端检索与
+> 额度查询正常、桌面版启动 15.2s）。这次跨代变更的要点：
+>
+> - **Jackson 2→3**：databind/core 坐标与包名迁至 `tools.jackson.*`（注解包 `com.fasterxml.jackson.annotation.*` 保留）；
+>   `TextNode`→`StringNode`、`JsonNode#fields()`→`properties()`、异常变 unchecked、
+>   `ObjectMapper#configure()` 改为 `JsonMapper.builder()`。
+> - **Spring AI 2.0**：openai/anthropic 模块改为基于**官方厂商 SDK**（`com.openai:openai-java-core` /
+>   `com.anthropic:anthropic-java-core`），原 `OpenAiApi`/`AnthropicApi` 移除，改由
+>   `OpenAiSetup`/`AnthropicSetup` 构建；工具调用循环从 `ChatModel` 内部上移到 Advisor 链，
+>   `internalToolExecutionEnabled(false)` 随之移除（本平台仍由 `SpringAiToolBridge` 手动驱动 tool-role 往返）。
+> - **Boot 4 模块化**：Flyway、Kafka 等自动配置拆到独立模块（`spring-boot-flyway` / `spring-boot-kafka`），
+>   只引第三方 `flyway-core` 不再触发迁移；`@EntityScan` 迁至 `spring-boot-persistence`；
+>   Spring Cloud Gateway 拆分为 `spring-cloud-starter-gateway-server-webflux`。
+> - **桌面运行时**：精简 JRE 需补 `jdk.net` 模块（Lettuce 7.x 需要 `jdk.net.ExtendedSocketOptions`）。

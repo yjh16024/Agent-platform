@@ -1,6 +1,6 @@
 package com.agentplatform.core.tool.mcp;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 /**
  * MCP 工具声明（与传输方式无关的统一描述）。

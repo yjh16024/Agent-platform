@@ -1,7 +1,7 @@
 package com.agentplatform.core.model.adapter;
 
 import com.agentplatform.core.model.ModelCapability;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import reactor.core.publisher.Flux;
 
 import java.util.List;

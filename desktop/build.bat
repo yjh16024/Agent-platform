@@ -25,7 +25,7 @@ if exist "%USER_HOME%\tools\maven\apache-maven-3.9.9\bin\mvn.cmd" set "MVN=%USER
 
 echo [1/4] jlink JRE runtime (skip if exists)...
 if not exist "runtime\bin\java.exe" (
-    "%JAVA_HOME%\bin\jlink.exe" --add-modules java.se,jdk.unsupported,jdk.zipfs,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.localedata,jdk.management --output "runtime" --strip-debug --no-header-files --no-man-pages
+    "%JAVA_HOME%\bin\jlink.exe" --add-modules java.se,jdk.unsupported,jdk.zipfs,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.localedata,jdk.management,jdk.net --output "runtime" --strip-debug --no-header-files --no-man-pages
     if errorlevel 1 goto :fail
 ) else (
     echo [INFO] runtime already exists, skip jlink (delete runtime to rebuild)

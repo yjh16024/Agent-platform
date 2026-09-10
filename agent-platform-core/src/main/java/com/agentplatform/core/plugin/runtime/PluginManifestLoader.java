@@ -2,8 +2,8 @@ package com.agentplatform.core.plugin.runtime;
 
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.plugin.sdk.model.PluginManifest;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.dataformat.yaml.YAMLFactory;
 import org.springframework.stereotype.Component;
 
 /**

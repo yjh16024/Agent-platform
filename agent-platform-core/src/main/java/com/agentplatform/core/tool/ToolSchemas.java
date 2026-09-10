@@ -1,8 +1,8 @@
 package com.agentplatform.core.tool;
 
 import com.agentplatform.common.util.JsonUtils;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ObjectNode;
 
 /**
  * 工具入参 Schema 规范化。

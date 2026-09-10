@@ -7,8 +7,8 @@ import com.agentplatform.core.workflow.dag.NodeExecutor;
 import com.agentplatform.core.workflow.dag.WorkflowContext;
 import com.agentplatform.core.workflow.node.NodeType;
 import com.agentplatform.core.workflow.node.WorkflowNode;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 

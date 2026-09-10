@@ -5,9 +5,9 @@ import com.agentplatform.core.rag.retriever.RetrievalResult;
 import com.agentplatform.core.tool.Tool;
 import com.agentplatform.core.tool.ToolContext;
 import com.agentplatform.core.tool.ToolResult;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.node.ArrayNode;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.node.ArrayNode;
+import tools.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -20,7 +20,7 @@ import java.util.List;
 public class SearchTool implements Tool {
 
     private final HybridRetriever retriever;
-    private final com.fasterxml.jackson.databind.ObjectMapper mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+    private final tools.jackson.databind.ObjectMapper mapper = new tools.jackson.databind.ObjectMapper();
 
     public SearchTool(HybridRetriever retriever) {
         this.retriever = retriever;

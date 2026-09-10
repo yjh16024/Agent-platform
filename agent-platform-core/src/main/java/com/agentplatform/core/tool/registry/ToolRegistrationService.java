@@ -6,7 +6,7 @@ import com.agentplatform.core.tool.ToolResult;
 import com.agentplatform.core.tool.ToolContext;
 import com.agentplatform.model.entity.ToolRegistration;
 import com.agentplatform.model.repository.ToolRegistrationRepository;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;

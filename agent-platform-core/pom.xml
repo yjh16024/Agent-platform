@@ -52,10 +52,15 @@
             <artifactId>spring-boot-starter-data-redis</artifactId>
         </dependency>
 
-        <!-- Spring Kafka -->
+        <!-- Spring Kafka（Boot 4 起其自动配置同样拆到 spring-boot-kafka，
+             否则 events.enabled=true 时 KafkaTemplate 无法自动装配） -->
         <dependency>
             <groupId>org.springframework.kafka</groupId>
             <artifactId>spring-kafka</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-kafka</artifactId>
         </dependency>
 
         <!-- Database -->
@@ -63,6 +68,12 @@
             <groupId>com.mysql</groupId>
             <artifactId>mysql-connector-j</artifactId>
             <scope>runtime</scope>
+        </dependency>
+        <!-- Spring Boot 4 起 Flyway 自动配置拆到独立模块（spring-boot-flyway），
+             只引 flyway-core 不会触发迁移执行（曾导致表未创建、启动失败）。 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-flyway</artifactId>
         </dependency>
         <dependency>
             <groupId>org.flywaydb</groupId>
@@ -102,13 +113,13 @@
             <version>8.5.9</version>
         </dependency>
 
-        <!-- Jackson YAML（Skill Manifest 解析） -->
+        <!-- Jackson YAML（Skill Manifest 解析；Jackson 3 坐标已迁至 tools.jackson.*） -->
         <dependency>
-            <groupId>com.fasterxml.jackson.dataformat</groupId>
+            <groupId>tools.jackson.dataformat</groupId>
             <artifactId>jackson-dataformat-yaml</artifactId>
         </dependency>
 
-        <!-- ===== Spring AI（1.1.x，与 Boot 3.4 配套）=====
+        <!-- ===== Spring AI（2.0.x，与 Boot 4.1 配套）=====
              使用非 starter 模块：只取 API/实现，避免 Spring AI 自动配置被激活而改变现有行为。
              如后续出现自动配置副作用，可用 spring.autoconfigure.exclude 精确排除。 -->
         <dependency>

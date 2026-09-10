@@ -6,7 +6,7 @@ import com.agentplatform.core.model.springai.SpringAiToolBridge;
 import com.agentplatform.core.tool.builtin.SearchTool;
 import com.agentplatform.core.rag.retriever.HybridRetriever;
 import com.agentplatform.core.tool.registry.ToolRegistry;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -37,7 +37,7 @@ class ToolSchemasTest {
 
     @Test
     void existingPropertiesArePreserved() {
-        com.fasterxml.jackson.databind.node.ObjectNode raw = JsonUtils.mapper().createObjectNode();
+        tools.jackson.databind.node.ObjectNode raw = JsonUtils.mapper().createObjectNode();
         raw.putObject("properties").putObject("city").put("type", "string");
         JsonNode schema = ToolSchemas.orEmpty(raw);
         assertEquals("object", schema.path("type").asText());

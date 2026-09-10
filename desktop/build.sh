@@ -13,7 +13,7 @@ fi
 
 echo "[1/3] jlink JRE runtime (skip if exists)..."
 if [ ! -f "runtime/bin/java" ]; then
-  "$JAVA_HOME/bin/jlink" --add-modules java.se,jdk.unsupported,jdk.zipfs,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.localedata,jdk.management \
+  "$JAVA_HOME/bin/jlink" --add-modules java.se,jdk.unsupported,jdk.zipfs,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.localedata,jdk.management,jdk.net \
     --output runtime --strip-debug --no-header-files --no-man-pages
 fi
 

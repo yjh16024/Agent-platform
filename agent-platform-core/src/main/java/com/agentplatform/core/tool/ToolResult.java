@@ -1,6 +1,6 @@
 package com.agentplatform.core.tool;
 
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 
 /**
  * 工具执行结果。
@@ -16,7 +16,7 @@ public record ToolResult(boolean success, JsonNode output, String error) {
     }
 
     public static ToolResult ok(String text) {
-        return new ToolResult(true, com.fasterxml.jackson.databind.node.TextNode.valueOf(text), null);
+        return new ToolResult(true, tools.jackson.databind.node.StringNode.valueOf(text), null);
     }
 
     public static ToolResult fail(String error) {

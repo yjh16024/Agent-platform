@@ -5,7 +5,7 @@ import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.tool.Tool;
 import com.agentplatform.core.tool.ToolContext;
 import com.agentplatform.core.tool.ToolResult;
-import com.fasterxml.jackson.databind.JsonNode;
+import tools.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.HashMap;
@@ -55,9 +55,8 @@ public class McpToolAdapter implements Tool {
         try {
             Map<String, Object> arguments = new HashMap<>();
             if (args != null && args.isObject()) {
-                Iterator<Map.Entry<String, JsonNode>> it = args.fields();
-                while (it.hasNext()) {
-                    Map.Entry<String, JsonNode> e = it.next();
+                // Jackson 3：JsonNode#fields() 已由 properties() 取代（返回 Set<Map.Entry>）
+                for (Map.Entry<String, JsonNode> e : args.properties()) {
                     arguments.put(e.getKey(), JsonUtils.mapper().convertValue(e.getValue(), Object.class));
                 }
             }

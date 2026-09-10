@@ -3,7 +3,7 @@ package com.agentplatform.core.agent.controller;
 import com.agentplatform.core.agent.dto.AgentRunRequest;
 import com.agentplatform.core.agent.dto.AgentRunResponse;
 import com.agentplatform.core.agent.runtime.AgentRuntimeService;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -50,7 +50,7 @@ public class AgentRunController {
         return runtimeService.runStream(req)
                 .map(out -> {
                     Map<String, Object> event = objectMapper.convertValue(out,
-                            new com.fasterxml.jackson.core.type.TypeReference<>() {
+                            new tools.jackson.core.type.TypeReference<>() {
                             });
                     return ServerSentEvent.<Map<String, Object>>builder()
                             .event("run.delta")

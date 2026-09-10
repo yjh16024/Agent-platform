@@ -203,8 +203,10 @@ public class SpringAiModelAdapter implements ModelAdapter {
                 b.maxTokens(request.maxTokens());
             }
             if (withTools) {
+                // Spring AI 2.0：工具调用循环已上移到 Advisor 链，ChatModel 不再内部执行工具，
+                // 故原先的 internalToolExecutionEnabled(false) 已移除（该方法在 2.0 不存在）。
+                // 本平台仍由 SpringAiToolBridge 手动驱动 tool-role 往返。
                 b.toolCallbacks(toolBridge.callbacks(request.tools()));
-                b.internalToolExecutionEnabled(false);
             }
             return b.build();
         }
@@ -219,8 +221,8 @@ public class SpringAiModelAdapter implements ModelAdapter {
             b.maxTokens(request.maxTokens());
         }
         if (withTools) {
+            // Spring AI 2.0：同上，工具循环上移至 Advisor 链，ChatModel 不再内部执行工具。
             b.toolCallbacks(toolBridge.callbacks(request.tools()));
-            b.internalToolExecutionEnabled(false);
         }
         return b.build();
     }
