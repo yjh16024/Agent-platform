@@ -1,8 +1,9 @@
 # 使用与运维指南
 
-> **合并自**：`technical-guide.md`（扩展指南）、`deployment.md`（部署）、`demo.md`（演示用例），
-> 并补充**可观测性运维**章节（原散落在阶段记录中）。
-> 最后核实：2026-09-08（环境变量默认值已按 `application.yml` 修正）。
+> **职责**：怎么扩展、怎么部署、怎么演示、怎么观测。**不重复**已实现功能清单
+> （见 [status.md](status.md)）与技术设计（见 [design.md](design.md)）。
+> 环境变量的**完整权威清单**在 [../README.md](../README.md) 的「配置」一节，本文只列部署相关补充。
+> 最后核实：**2026-09-10**。
 
 ---
 
@@ -98,21 +99,18 @@ helm install agent-platform agent-platform-deploy/helm/agent-platform \
 
 ### 2.3 环境变量（core）
 
-| 变量 | 说明 | 默认值（与 `application.yml` 一致） |
-|---|---|---|
-| `MYSQL_URL` | JDBC 连接串 | `jdbc:mysql://localhost:3306/agent_platform` |
-| `MYSQL_USER` / `MYSQL_PASSWORD` | 库账号 | `agent` / `agent123456` |
-| `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` | Redis | `localhost` / `6379` / 空 |
-| `KAFKA_BOOTSTRAP` | Kafka | `localhost:9092` |
-| `MILVUS_URL` | Milvus | `http://localhost:19530` |
-| `LLM_BASE_URL` / `LLM_API_KEY` | LiteLLM 网关 | `http://localhost:4000` / `sk-local` |
-| `DEFAULT_PROVIDER` / `DEFAULT_MODEL` | 默认模型 | `deepseek` / `deepseek-chat` |
-| `JWT_SECRET` / `MODEL_KEY_ENC_KEY` | 密钥（生产必须覆盖） | `change-me-*`（占位） |
-| `SECURITY_ENABLED` | core 侧 JWT 鉴权 | `false` |
-| `VECTOR_STORE` | 向量存储 | `in-memory`（可选 `milvus`） |
-| `STORAGE_TYPE` | 文件存储 | `local`（可选 `minio`） |
-| `OBS_LOKI_URL` / `OBS_TEMPO_URL` | 日志/链路外推（空=关闭） | 空 |
-| `OBS_EXPORT_ENABLED` / `OBS_METRICS_ENABLED` | 外推总开关 / 业务指标 | `true` / `true` |
+> **完整清单与默认值见 [../README.md](../README.md) 的「配置」一节**（单一来源，避免两处口径不一致）。
+> 部署时额外需要关注的覆盖项如下：
+
+| 变量 | 部署关注点 |
+|---|---|
+| `MYSQL_URL` / `MYSQL_USER` / `MYSQL_PASSWORD` | 指向集群内 MySQL；单机分发可改用 `--spring.profiles.active=embedded`（H2，免装库） |
+| `REDIS_HOST` / `REDIS_PORT` | 生产建议接集群 Redis（会话缓存与配额计数）；缺失时走内存，重启丢计数 |
+| `MILVUS_URL` | 需与 `VECTOR_STORE=milvus` 配套；切换嵌入模型后旧向量需重新摄取 |
+| `JWT_SECRET` / `MODEL_KEY_ENC_KEY` | **生产必须覆盖**；换主密钥会导致已存的模型 Key 与 JWT 失效 |
+| `SECURITY_ENABLED` | 生产置 `true`；仅本地/内网演示可保持 `false` |
+| `OBS_LOKI_URL` / `OBS_TEMPO_URL` | 空 = exporter 完全静默；接观测栈时填 Loki/Tempo 地址 |
+| `OBS_EXPORT_ENABLED` / `OBS_METRICS_ENABLED` | 日志/链路外推总开关、业务指标开关 |
 
 ### 2.4 JVM 参数
 
@@ -140,7 +138,9 @@ helm install agent-platform agent-platform-deploy/helm/agent-platform \
 
 ## 三、端到端演示用例
 
-前置：`docker compose up -d`（MySQL 必需，其余可选）→ `mvn -pl agent-platform-core -am package -DskipTests` → `java --enable-preview -jar <jar>`（或 `start-core.bat rebuild`）。
+前置：数据库二选一 —— `docker compose up -d`（MySQL）或 `--spring.profiles.active=embedded`（H2，免装库）；
+其余中间件可选（缺失自动降级）→ `mvn -pl agent-platform-core -am package -DskipTests` →
+`java --enable-preview -jar <jar>`（或 `start-core.bat rebuild` / `start-core.bat embedded rebuild`）。
 
 | 步骤 | 命令要点 | 预期 |
 |---|---|---|

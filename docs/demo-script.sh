@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # ============================================================
 # 智能体交互平台 · 端到端演示脚本
-# 前置：docker compose up -d && 启动 agent-platform-core（见 README）
+# 前置（数据库二选一）：
+#   A) docker compose up -d            # MySQL
+#   B) 启动时加 --spring.profiles.active=embedded   # H2，免装数据库
+# 其余中间件可选，缺失自动降级；本脚本为 bash，Windows 请在 Git Bash / WSL 下运行。 && 启动 agent-platform-core（见 README）
 # 用法：bash docs/demo-script.sh
 # ============================================================
 set -e

@@ -20,13 +20,13 @@ Spring AI 1.1.8，默认关闭、可一键回退自研实现，凭证三级回�
 
 ## 文档导航
 
-- 未实现事项与路线决策：[docs/backlog.md](docs/backlog.md)
+- **已实现功能与需求现状（权威清单）**：[docs/status.md](docs/status.md)
+- 未实现事项、路线决策、契约与踩坑：[docs/backlog.md](docs/backlog.md)
+- 技术设计与可行性结论（含归档的桌面路线对比）：[docs/design.md](docs/design.md)
+- **每个功能用什么技术实现、为什么这样选**：[docs/technology.md](docs/technology.md)
 - 扩展指南与部署（K8s/Helm、演示脚本、可观测性运维）：[docs/guides.md](docs/guides.md)
-- 技术设计（对话文件支持、仪表盘、桌面打包）：[docs/designs.md](docs/designs.md)
-- 可行性评估（可移植性审计、LangChain4j/LangGraph、多层级记忆）：[docs/feasibility.md](docs/feasibility.md)
-- 阶段验收报告（Phase 1–7）：[docs/phase-reports.md](docs/phase-reports.md)
-- 待办与缺口清单：[docs/TODO.md](docs/TODO.md)
-- 桌面打包方案：[打包方案.md](打包方案.md)
+- 历史阶段验收报告（Phase 1–7，快照留档）：[docs/phase-reports.md](docs/phase-reports.md)
+- 桌面应用（Electron 壳 + jlink 运行时）：[desktop/](desktop/)（启动页、单实例、打包见 [docs/design.md](docs/design.md)）
 - 可观测栈（Loki / Tempo / Prometheus / Grafana）：[docker-compose.observability.yml](docker-compose.observability.yml)
 
 ## 它解决什么问题
@@ -431,7 +431,7 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests   # 构建可执行 jar
-mvn test                                              # 132 个单元测试（含 Spring AI 通道、内置库迁移、记忆、工具等）
+mvn test                                              # 140 个单元测试（含 Spring AI 通道、内置库迁移、记忆、工具、模型额度等）
 warmup.bat                                            # Windows：依赖预热，"warmup.bat verify" 校验离线构建
 cd agent-platform-ui && npm run build:prod            # 前端构建，产物同步到 core 的 static/
 ```

@@ -1,8 +1,9 @@
 # 阶段验收报告汇总（Phase 1 – 7）
 
 > **合并自**：`docs/phase1~phase7`（含 phase45）8 份自测报告。
-> 用途：历史交付物与决策留档。**当前测试总数 104（全绿）**，各阶段报告的累计数字为当时快照。
-> 最后核实：2026-09-08；已标注与代码现状不符之处。
+> 用途：历史交付物与决策留档 —— **以下数字均为当时快照，不代表当前状态**。
+> 当前功能现状与测试规模见 [status.md](status.md)（2026-09-10：140 个测试全绿）。
+> 最后核实：2026-09-10。
 
 ---
 
@@ -16,7 +17,7 @@
 | Phase 6「日志为内存存储、重启丢失」 | ✅ 已 MySQL 持久化（`log_index`），V10 补 `stack_trace` 与时间索引 |
 | Phase 5「可观测性：Micrometer + ServiceMonitor + OTel」 | ✅ 已扩展：业务指标（run/llm tokens/latency/tool/log_events）+ Loki 日志推送 + Tempo Span（Zipkin v2）+ Grafana 看板与告警 |
 | Phase 1「API 网关 + JWT 鉴权 ✅ Spring Cloud Gateway」 | ⚠️ 与现状不符：独立网关模块未落地（仅 `JwtAuthFilter`），生产鉴权在 core 侧；见 `backlog.md` |
-| 累计测试数 5→39→52→63→68→82→88 | 现为 **104** |
+| 累计测试数 5→39→52→63→68→82→88 | 历史快照；当前规模见 [status.md](status.md) |
 
 ---
 
