@@ -61,7 +61,7 @@ export default function AppLayout() {
         { key: '/diagnosis', icon: <BugOutlined />, label: '智能诊断' },
         { key: '/prompt', icon: <ThunderboltOutlined />, label: '提示词优化' },
         { key: '/tools', icon: <ApiOutlined />, label: '工具调试' },
-        { key: '/quota', icon: <SafetyCertificateOutlined />, label: '租户配额' },
+        { key: '/quota', icon: <SafetyCertificateOutlined />, label: '用户配额' },
       ],
     },
   ];
