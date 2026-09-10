@@ -1,0 +1,21 @@
+{
+  "name": "agent-platform-desktop",
+  "productName": "Agent Platform",
+  "version": "1.0.0",
+  "description": "Agent Platform desktop shell (Electron + embedded H2 backend)",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder"
+  },
+  "devDependencies": {
+    "electron": "^33.3.1",
+    "electron-builder": "^26.15.3"
+  },
+  "allowScripts": {
+    "electron@33.3.1": true,
+    "electron-builder@26.15.3": true,
+    "electron-winstaller@5.4.0": true
+  }
+}

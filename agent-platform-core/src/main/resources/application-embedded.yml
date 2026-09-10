@@ -21,3 +21,20 @@ spring:
     hibernate:
       ddl-auto: none          # schema 由 Flyway 管理
     open-in-view: false
+
+# 桌面/单机模式下不部署 Redis：不把它计入健康检查（否则 /actuator/health 会因 redis DOWN 显示 503）
+# H2 不支持 MySQL 的 MATCH(c.content) AGAINST(...)（native FULLTEXT），执行必然失败；
+# 关闭后稀疏检索直接走顺序扫描兜底，同时避免那条失败 SQL 把查询事务标记为 rollback-only。
+agent-platform:
+  rag:
+    fulltext:
+      enabled: false
+management:
+  health:
+    redis:
+      enabled: false
+    milvus:
+      enabled: false
+  endpoint:
+    health:
+      show-details: always

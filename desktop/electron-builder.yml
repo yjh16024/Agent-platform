@@ -1,0 +1,25 @@
+appId: com.agentplatform.desktop
+productName: Agent Platform
+directories:
+  output: dist
+  buildResources: build
+files:
+  - main.js
+  - package.json
+  - "!node_modules/**/*"
+extraResources:
+  # jlink 精简 JRE（桌面运行时）
+  - from: runtime
+    to: runtime
+  # 后端 fat jar（含前端 static + H2，以 embedded 启动）
+  - from: ../agent-platform-core/target/agent-platform-core-1.0.0-SNAPSHOT.jar
+    to: backend/app.jar
+win:
+  target:
+    - portable
+    - zip
+  artifactName: Agent-Platform-${version}-${arch}.${ext}
+# 说明：portable 每次运行需解压到临时目录（此期间无窗口），首次体验建议用 zip 绿色版：
+# 解压一次后直接运行目录下的 Agent Platform.exe，启动不再有解压开销。
+electronVersion: 33.3.1
+npmRebuild: false

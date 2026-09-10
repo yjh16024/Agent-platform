@@ -29,6 +29,7 @@ public class HybridRetriever {
     private final VectorStore vectorStore;
     private final ChunkRepository chunkRepository;
     private final EmbeddingService embeddingService;
+    private final ChunkFullTextSearcher fullTextSearcher;
 
     /**
      * 混合检索。
@@ -144,24 +145,28 @@ public class HybridRetriever {
      * 内容一律经 Spring Data 派生查询 {@link #chunkRepository#findByChunkId} 回查，
      * 保证与浏览页读到的内容一致。
      * </p>
+     *
+     * 注意：FULLTEXT 查询经由 {@link ChunkFullTextSearcher} 在<b>独立事务</b>中执行——
+     * 其 native SQL 在 H2 下会失败，若与外层共用事务会把外层标记为 rollback-only，
+     * 导致检索结果算出来了却在提交阶段抛 UnexpectedRollbackException。
      */
     private List<Chunk> fullTextCandidates(List<String> kbIds, String query) {
         Map<String, Chunk> ordered = new LinkedHashMap<>();
         boolean fullTextOk = false;
-        try {
-            List<Chunk> hit = chunkRepository.fullTextSearch(kbIds, query, 500);
-            if (hit != null && !hit.isEmpty()) {
-                fullTextOk = true;
-                // 只取 FULLTEXT 精筛出的 chunkId，再回查完整实体（去重、保持相关性顺序）
-                for (Chunk c : hit) {
-                    if (c.getChunkId() == null) {
-                        continue;
+        if (fullTextSearcher.enabled()) {
+            try {
+                List<String> ids = fullTextSearcher.searchChunkIds(kbIds, query, 500);
+                if (!ids.isEmpty()) {
+                    fullTextOk = true;
+                    // 只取 FULLTEXT 精筛出的 chunkId，再回查完整实体（去重、保持相关性顺序）
+                    for (String id : ids) {
+                        chunkRepository.findByChunkId(id)
+                                .ifPresent(found -> ordered.putIfAbsent(found.getChunkId(), found));
                     }
-                    chunkRepository.findByChunkId(c.getChunkId()).ifPresent(found -> ordered.putIfAbsent(found.getChunkId(), found));
                 }
+            } catch (Exception e) {
+                log.warn("Full-text search unavailable, fallback to sequential scan: {}", e.getMessage());
             }
-        } catch (Exception e) {
-            log.warn("Full-text search unavailable, fallback to sequential scan: {}", e.getMessage());
         }
         // FULLTEXT 无命中（或仅剩缺内容的脏行）→ 顺序扫描兜底
         if (!fullTextOk || ordered.isEmpty()) {

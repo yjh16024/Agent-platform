@@ -10,9 +10,13 @@ Agent Platform 是一个面向多租户场景的 AI 智能体运行平台。它�
 都有开关与降级，缺谁都能跑，接上才算数。因此它可以从「克隆 → 启动 → 发一条消息拿到 Mock 回复」
 开始，逐步长成一套生产可用的智能体服务。
 
-当前版本：`1.0.0-SNAPSHOT`。提供统一运行入口（JSON / SSE）、多模型路由与凭证分层、会话记忆、
-RAG 知识库、工具与 MCP、自研 DAG 工作流、Skills 开放标准目录、插件热插拔、多模态输入、
-运行日志与三级诊断。
+当前版本：`1.0.0-SNAPSHOT`。提供统一运行入口（JSON / SSE）、多模型路由与凭证分层、
+会话记忆（短期缓存 + 中期早期摘要）、RAG 知识库、工具与 MCP、自研 DAG 工作流、
+Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉）、运行日志与三级诊断。
+
+工程层：**可选内置库**（`DB_MODE=embedded` 用 H2 免装 MySQL 直接跑）、**Spring AI 通道**
+（`SPRING_AI_ENABLED=true` 时模型调用 / 原生 tool-role 工具循环 / RAG 解析切分 / 可观测走
+Spring AI 1.1.8，默认关闭、可一键回退自研实现，凭证三级回退与加密始终不变）。
 
 ## 文档导航
 
@@ -50,8 +54,8 @@ RAG 知识库、工具与 MCP、自研 DAG 工作流、Skills 开放标准目录
 回放会话 → 调用模型 → 落库与记账。
 
 「按需装配」体现在运行时的每个可选依赖都是 `@Autowired(required = false)`：注入了就生效，
-没注入就跳过，且跳过不会抛错。这让同一份代码既能跑在完整生产环境，也能跑在只有 MySQL 的
-最小环境里。
+没注入就跳过，且跳过不会抛错。这让同一份代码既能跑在完整生产环境，也能跑在「没有 MySQL 的
+最小环境」——内置库模式（H2）下甚至外部数据库都不需要。
 
 ### 模型层：一个抽象，多种后端
 
@@ -66,6 +70,10 @@ RAG 知识库、工具与 MCP、自研 DAG 工作流、Skills 开放标准目录
 智能体自定义绑定 → 平台默认模型 → 配置项兜底，逐级回退。凭证以 AES-GCM 加密落库，接口只回
 掩码，不会把明文 Key 送到前端。
 
+> **可选 Spring AI 通道**：`SPRING_AI_ENABLED=true` 时，OpenAI 兼容与 Anthropic 的协议层由
+> Spring AI 1.1.8 的 `ChatModel` 实现（含自定义 UA 与 429/5xx 退避重试）；**上层的凭证解析、
+> 加密/掩码、三级回退一行未动**，只是适配器换实现。默认关闭时回到自研适配器，两条链路都有测试守护。
+
 ### 提示词：人格 → 模板 → 变量 → Skill
 
 系统提示词不是一段死文本，而是四层拼出来的：
@@ -77,29 +85,42 @@ RAG 知识库、工具与 MCP、自研 DAG 工作流、Skills 开放标准目录
 
 任一层读取失败都只降级跳过，不阻断本轮对话。
 
-### 记忆：会话持久化 + 短期缓存
+### 记忆：短期缓存 + 中期早期摘要
 
-会话与消息落在 MySQL，运行结束后由 `SessionService.recordExchange` 写入本轮
+会话与消息落在数据库，运行结束后由 `SessionService.recordExchange` 写入本轮
 `user + assistant` 交换；下一轮按 `maxHistoryTurns`（默认 10 轮）回放历史，让对话「有记忆」。
 
 近期上下文额外走 `SessionRecentCache`（Redis List，25 轮 / 50 条 / 24h）：读优先缓存、miss
 回 DB 回填、写后追加裁剪。Redis 缺失时全程降级到 DB，功能不减，只是少一层加速。
 
+**中期记忆（早期摘要）**：会话超过 40 轮后，上下文窗口开始截断最早轮次——`SessionSummaryService`
+会把这段「即将被丢弃」的早期消息懒压缩成要点，续接进系统提示词（`session_def.summary`，幂等）。
+长对话因此仍「记得开头」；摘要当前为离线要点式，可平滑替换为 LLM 语义摘要。
+
 ### RAG：摄取 → 混合检索 → 引用溯源
 
 文档经「解析 → 切分 → 向量化 → 索引」进入知识库；检索由 `HybridRetriever` 做向量 + FULLTEXT
 混合召回并 rerank，命中片段同时产出 `references`，前端可点开溯源到文档与页码。
+解析/切分默认走自研实现；`SPRING_AI_RAG_ENABLED=true` 时可切换到 Spring AI 的
+`TikaDocumentReader + TokenTextSplitter`（混合检索本身始终自研，不受影响）。
 
 向量库默认 `in-memory`（8 维伪向量，纯本地演示），切 `milvus` 即接真实向量库。智能体可通过
 `capabilities.knowledgeBaseIds` 默认绑定知识库，请求级 `context.rag` 可临时覆盖。
 
+对话拖入的文档也会自动摄取进租户级「对话附件库」（`__chat_attachments__`），并入当次检索并带引用，
+让大文件不必整篇塞进上下文。
+
 ### 工具与 MCP：注册中心统一执行
 
-`ToolRegistry` 是唯一的工具来源：内置工具、HTTP 热注册工具、MCP（Streamable HTTP）接入的工具
-都注册到这里。运行入口按请求里的 `tools.enabled` 与 `allowed` 白名单决定本轮暴露哪些工具声明。
+`ToolRegistry` 是唯一的工具来源：内置工具、HTTP 注册工具、MCP（Streamable HTTP）接入的工具
+都注册到这里。**HTTP 工具注册会持久化**（`tool_registration` 表），重启 / 重新构建后自动恢复。
+内置**天气工具**开箱即用：城市名自动做 URL 编码后查询 `wttr.in`。运行入口按请求里的
+`tools.enabled` 与 `allowed` 白名单决定本轮暴露哪些工具声明。
 
-工具调用采用「结果文本回灌」的轻量闭环：模型返回 `tool_calls` → `ToolExecutor` 逐个执行 →
+工具调用默认走「结果文本回灌」的轻量闭环：模型返回 `tool_calls` → `ToolExecutor` 逐个执行 →
 结果拼进下一轮输入 → 直到模型不再要工具，最多 `MAX_TOOL_ROUNDS = 5` 轮，防止死循环。
+启用 Spring AI 通道后改为**原生 tool-role 循环**（assistant(tool_calls) → tool(result)），上限一致。
+所有工具声明发给模型前统一做 schema 规范化（缺省补 `type:object`），杜绝厂商侧 400。
 
 ### 插件：Hook 管线与 ClassLoader 隔离
 
@@ -130,8 +151,8 @@ Skills 采用 Agent Skills 开放标准布局 `skills/<name>/SKILL.md`（可选 
 ### 多模态：parts[] 消息模型
 
 消息内容除了纯字符串，也支持 `parts[]`：`text` 块直接拼接，`file` 块按 `fileId` 读取文件文本
-后注入 `[文件：name]` 区块。单轮最多读取 4 个文件，单文件最多 100k 字符（超出标注截断），
-解析失败只影响该文件，不阻断整轮。
+后注入 `[文件：name]` 区块；`image` 块会把图片发给支持视觉的模型（Spring AI 通道，`data: URL`）。
+单轮最多读取 4 个附件，单文件最多 100k 字符（超出标注截断），解析失败只影响该附件，不阻断整轮。
 
 ### 日志、诊断与可观测
 
@@ -192,7 +213,7 @@ flowchart TD
 |------|------|----------|------|
 | JDK | **21 或更高** | ✅ 必需 | 使用预览特性 `ScopedValue`，编译/运行均需 `--enable-preview`（脚本已自动带） |
 | Maven | 3.9+ | ✅ 必需 | 构建依赖；首次构建需联网 |
-| MySQL | 8.x | ✅ 必需 | Flyway 启动时自动建表，连不上则启动失败 |
+| MySQL | 8.x | ✅（默认） | 默认必需；不想装 MySQL 可改用内置 H2：`DB_MODE=embedded`（见「快速开始」方式 C） |
 | Redis | 7 | ❌ 可选 | 缺失时仅健康检查 DOWN，配额与会话缓存走内存兜底 |
 | Node / npm | 18+ | ❌ 可选 | 仅修改前端源码并重建时需要 |
 | Docker | — | ❌ 可选 | 便捷拉起 MySQL / Redis；不使用则手动装 MySQL |
@@ -206,13 +227,13 @@ flowchart TD
 #### 1. 克隆
 
 ```bash
-git clone https://gitee.com/<你的用户名>/agent-platform.git
+git clone https://gitee.com/sxyjyjh/agent-platform.git
 cd agent-platform
 ```
 
-#### 2. 准备 MySQL（二选一）
+#### 2. 选择数据源（三选一）
 
-**方式 A：用 Docker 起（推荐）**
+**方式 A：用 Docker 起 MySQL（推荐用于开发联调）**
 
 ```bash
 docker compose up -d mysql redis
@@ -229,12 +250,18 @@ FLUSH PRIVILEGES;
 
 > 库名/账号密码与默认配置一致；想改走「配置」一节的环境变量。
 
+**方式 C：内置 H2（免装数据库，最快上手 / 演示 / 分发）**
+
+什么都不用装。启动时追加 `embedded`（见下一步），数据自动落在 `./data/agent-platform.mv.db`
+（H2 file，MySQL 兼容模式，Flyway 按厂商自动选用 `h2` 迁移集）。生产仍推荐 MySQL（保 FULLTEXT 全文检索）。
+
 #### 3. 启动
 
 **Windows**（双击或命令行）：
 
 ```bat
-start-core.bat rebuild        REM 首次/改动后端后用 rebuild；之后可直接 start-core.bat
+start-core.bat rebuild             REM 首次/改动后端后用 rebuild；之后可直接 start-core.bat
+start-core.bat embedded rebuild    REM 免装 MySQL：用内置 H2（DB_MODE=embedded）
 ```
 
 **Linux / macOS**：
@@ -242,6 +269,7 @@ start-core.bat rebuild        REM 首次/改动后端后用 rebuild；之后可�
 ```bash
 chmod +x start-core.sh
 ./start-core.sh rebuild
+./start-core.sh embedded rebuild   # 免装 MySQL：用内置 H2
 ```
 
 **或手动方式（任意系统）**：
@@ -255,6 +283,7 @@ java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.0.0-
 
 > - 若 **8081 被占用**，脚本会自动杀掉旧进程（Windows）或提示（Linux/macOS）。
 > - Redis 没有也不影响核心功能（日志会提示 redis DOWN）。
+> - 手动方式启动内置库：`java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.0.0-SNAPSHOT.jar --spring.profiles.active=embedded`
 
 #### 4. 验证
 
@@ -297,6 +326,9 @@ curl http://localhost:8081/actuator/health
 | `JWT_SECRET` / `MODEL_KEY_ENC_KEY` | JWT 密钥 / 模型 Key 加密主密钥 | `change-me-*`（**生产务必覆盖**） |
 | `AUTH_USERNAME` / `AUTH_PASSWORD` | 登录静态账号（配置后登录需校验） | 空（演示模式签发） |
 | `DEFAULT_PROVIDER` / `DEFAULT_MODEL` | 未配置时的模型厂商/型号 | `deepseek` / `deepseek-chat` |
+| `embedded`（`--spring.profiles.active=embedded`） | 内置 H2 库模式（免 MySQL，数据 `./data/agent-platform.mv.db`）；脚本用 `start-core.bat embedded` | 默认 mysql |
+| `SPRING_AI_ENABLED` | 模型调用 / 工具循环 / 可观测走 Spring AI 1.1.8（默认关闭 = 自研实现，可回退） | `false` |
+| `SPRING_AI_RAG_ENABLED` | RAG 解析 / 切分走 Spring AI（TikaDocumentReader + TokenTextSplitter） | `false` |
 
 > 说明：`data/` 下目录运行期自动生成；所有外部能力默认关闭、本地 Mock/内存/磁盘兜底，
 > 保证「克隆即可跑」。
@@ -344,6 +376,7 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 | `./data/skills/` | Skills 目录（Agent Skills 标准：`skills/<name>/SKILL.md` + 可选 `scripts/ references/ assets/`）；首次启动自动铺示例，下载的 Skill 放进目录后点「扫描同步」即可识别 |
 | `./data/files/` | 文件上传的本地存储（`STORAGE_TYPE=local`） |
 | `./data/plugins/` | 外部插件 jar 制品（可选） |
+| `./data/agent-platform.mv.db` | 内置库模式（`embedded`）的 H2 数据文件（迁移前请备份） |
 
 ## API 概览（前缀 `/api/v1`）
 
@@ -379,6 +412,8 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 
 - 平台依赖模型的指令遵循与结构化输出能力。较小或不稳定模型的工具调用与引用标注质量会下降。
 - 内置向量库为纯内存伪向量，仅供演示；真实检索质量请接 `milvus` 与真实嵌入模型。
+- 内置库模式（H2）无 FULLTEXT 全文索引，稀疏检索由顺序扫描兜底（功能可用、文档量大时慢）；生产/大规模仍用 MySQL。
+- 图片视觉依赖 Spring AI 通道（`SPRING_AI_ENABLED=true`）且模型支持视觉（如 `gpt-4o-mini`）；未开启时图片不发送、文本对话正常。
 - 未开启 `SECURITY_ENABLED` 时所有接口无鉴权，仅适合本地/内网演示。
 - 默认 `JWT_SECRET`、`MODEL_KEY_ENC_KEY` 为占位值；开启鉴权但仍用默认密钥时启动守卫会拒绝启动。
 - 知识的准确性取决于上传的资料；医疗、法律、金融等高风险场景应由专业人员复核后再使用。
@@ -396,7 +431,7 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests   # 构建可执行 jar
-mvn test                                              # 单元测试（服务/诊断/日志/RAG/工作流/插件/提示词等）
+mvn test                                              # 132 个单元测试（含 Spring AI 通道、内置库迁移、记忆、工具等）
 warmup.bat                                            # Windows：依赖预热，"warmup.bat verify" 校验离线构建
 cd agent-platform-ui && npm run build:prod            # 前端构建，产物同步到 core 的 static/
 ```
@@ -406,5 +441,6 @@ cd agent-platform-ui && npm run build:prod            # 前端构建，产物同
 
 ---
 
-技术栈：Java 21（虚拟线程 + ScopedValue）、Spring Boot 3.4、Spring Data JPA + Flyway、MySQL 8、
-Redis（可选）、Milvus（可选）、React + Vite + antd。
+技术栈：Java 21（虚拟线程 + ScopedValue）、Spring Boot 3.4、Spring Data JPA + Flyway、
+MySQL 8（或内置 H2，`DB_MODE=embedded`）、Redis（可选）、Milvus（可选）、Spring AI 1.1.8（可选通道）、
+React + Vite + antd。

@@ -122,6 +122,13 @@
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-anthropic</artifactId>
+            <exclusions>
+                <!-- spring-ai-anthropic 误把测试库 rest-assured 打成 compile，运行不需要（含 groovy ~8MB） -->
+                <exclusion>
+                    <groupId>io.rest-assured</groupId>
+                    <artifactId>json-path</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
         <!-- RAG：文档解析（TikaDocumentReader）/ 切分（TokenTextSplitter，位于 spring-ai-commons） -->
         <dependency>
