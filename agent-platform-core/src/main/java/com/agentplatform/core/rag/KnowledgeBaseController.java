@@ -60,7 +60,27 @@ public class KnowledgeBaseController {
             @RequestParam(defaultValue = "0.0") double scoreThreshold,
             @RequestParam(required = false) Map<String, Object> filter,
             @RequestParam(defaultValue = "true") boolean rerank) {
-        return ApiResponse.ok(kbService.search(tenantId, kbIds, query, topK, scoreThreshold, filter, rerank));
+        return ApiResponse.ok(kbService.search(tenantId, kbIds, query, topK, scoreThreshold,
+                sanitizeFilter(filter), rerank));
+    }
+
+    /**
+     * 剔除检索参数本身，只保留真正的元数据过滤条件。
+     * <p>
+     * {@code @RequestParam Map} 会收集<b>全部</b>查询参数，若不剔除，{@code kbIds/query/topK} 等
+     * 会被当成 chunk 元数据字段参与过滤（meta 中不存在这些键 → 全部 chunk 被过滤 → 检索恒为空）。
+     * </p>
+     */
+    private Map<String, Object> sanitizeFilter(Map<String, Object> filter) {
+        if (filter == null || filter.isEmpty()) {
+            return null;
+        }
+        filter.remove("kbIds");
+        filter.remove("query");
+        filter.remove("topK");
+        filter.remove("scoreThreshold");
+        filter.remove("rerank");
+        return filter.isEmpty() ? null : filter;
     }
 
     /** 列表（含文档数 / chunk 数）。 */
