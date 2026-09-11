@@ -172,18 +172,24 @@ export function toCanvas(def: BackendDefinition | null | undefined): FlowDocumen
   return { nodes: order.map((id) => toNodeJson(id)).filter((n): n is FlowNodeJSON => !!n) };
 }
 
-/** 画布默认图：开始 → LLM → 结束。 */
+/**
+ * 画布默认图：开始 → LLM → 结束。
+ *
+ * 字段与后端契约严格对齐（config 用 snake_case、Start 声明 `input_key`、
+ * 末尾必须有 End 终结节点），因此「创建工作流」时可直接把它经 `toBackend`
+ * 转成后端定义入库，用户进画布后无需先修数据就能保存/试运行。
+ */
 export function defaultCanvas(workflowName = '新工作流'): FlowDocumentJSON {
   return {
     nodes: [
-      { id: 'start_0', type: 'start', data: { title: '开始', config: {} } },
+      { id: 'start_0', type: 'start', data: { title: '开始', config: { input_key: 'input' } } },
       {
         id: 'llm_0',
         type: 'llm',
         data: {
           title: 'LLM 生成',
           outputVar: 'llm_output',
-          config: { model: 'deepseek-chat', systemPrompt: '', prompt: '${input}' },
+          config: { provider: 'auto', model: 'deepseek-chat', prompt: '${input}' },
         },
       },
       { id: 'end_0', type: 'end', data: { title: '结束', config: {} } },

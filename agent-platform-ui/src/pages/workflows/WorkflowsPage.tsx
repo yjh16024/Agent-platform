@@ -1,32 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Table, Space, Button, Modal, Form, Input, Tag, message, Card, Popconfirm } from 'antd';
+import { Table, Space, Button, Modal, Form, Input, Tag, message, Card, Popconfirm, Typography } from 'antd';
 import { PlusOutlined, PlayCircleOutlined, BranchesOutlined } from '@ant-design/icons';
 import { listWorkflows, createWorkflow, executeWorkflow, getWorkflow, deleteWorkflow } from '../../api/workflows';
 import { WorkflowDef } from '../../api/types';
 import WorkflowCanvas from './canvas/WorkflowCanvas';
-import { defaultCanvas, toCanvas } from './canvas/adapter';
+import { defaultCanvas, toBackend, toCanvas } from './canvas/adapter';
 import type { BackendDefinition, FlowDocumentJSON } from './canvas/types';
 
-/**
- * 示例定义：与后端契约一致 —— 用 `next` 串联（旧示例误用 `edges`，建出来的流程链路是断的）。
- */
-const EXAMPLE = {
-  name: '示例流程',
-  nodes: [
-    { id: 'start', type: 'Start', name: '开始', next: 'transform', outputVar: null, config: { inputKey: 'input' } },
-    {
-      id: 'transform',
-      type: 'Transform',
-      name: '变量转换',
-      next: 'end',
-      outputVar: 'result',
-      inputMapping: { name: '${input}' },
-      config: {},
-    },
-    { id: 'end', type: 'End', name: '结束', next: null, outputVar: null, config: {} },
-  ],
-  entryNode: 'start',
-};
+/** 默认图的入口节点 id（与 adapter.defaultCanvas 保持一致）。 */
+const DEFAULT_ENTRY = 'start_0';
 
 export default function WorkflowsPage() {
   const [items, setItems] = useState<WorkflowDef[]>([]);
@@ -73,18 +55,20 @@ export default function WorkflowsPage() {
     }
   }, []);
 
+  /**
+   * 创建：只需名称/描述，定义由「开始 → LLM → 结束」默认图自动生成（经 toBackend 转成后端契约），
+   * 创建成功后立即进入画布拖拽编排 —— 不再要求用户先手写 DAG JSON。
+   */
   const submitCreate = async () => {
     const v = await form.validateFields();
-    let definition: Record<string, unknown>;
-    try {
-      definition = JSON.parse(v.definition);
-    } catch {
-      message.error('工作流定义必须是合法 JSON');
-      return;
-    }
+    const definition = toBackend(
+      defaultCanvas(v.name),
+      v.name,
+      DEFAULT_ENTRY
+    ) as unknown as Record<string, unknown>;
     try {
       const created = await createWorkflow(v.name, definition, v.description);
-      message.success('工作流已创建，可直接进入画布拖拽编辑');
+      message.success('已创建工作流，进入画布开始编排');
       setCreateOpen(false);
       form.resetFields();
       load();
@@ -178,14 +162,27 @@ export default function WorkflowsPage() {
       </Space>
       <Table rowKey="workflowId" loading={loading} columns={columns} dataSource={items} pagination={false} />
 
-      <Modal title="创建工作流" open={createOpen} onOk={submitCreate} onCancel={() => setCreateOpen(false)} destroyOnClose width={640}>
-        <Form form={form} layout="vertical" initialValues={{ definition: JSON.stringify(EXAMPLE, null, 2) }}>
-          <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
-          <Form.Item name="description" label="描述"><Input /></Form.Item>
-          <Form.Item name="definition" label="DAG 定义（JSON，可先用默认示例，创建后进画布拖拽）" rules={[{ required: true }]}>
-            <Input.TextArea rows={10} style={{ fontFamily: 'monospace' }} />
+      <Modal
+        title="创建工作流"
+        open={createOpen}
+        onOk={submitCreate}
+        onCancel={() => {
+          setCreateOpen(false);
+          form.resetFields();
+        }}
+        destroyOnClose
+        width={640}
+      >
+        <Form form={form} layout="vertical">
+          <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+            <Input placeholder="例如：客服问答流程" />
           </Form.Item>
+          <Form.Item name="description" label="描述"><Input placeholder="选填" /></Form.Item>
         </Form>
+        <Typography.Paragraph type="secondary" style={{ fontSize: 12, marginBottom: 0 }}>
+          创建后直接进入画布：默认给你一张「开始 → LLM → 结束」的最小可跑图，
+          再按需拖入 LLM / 知识库 / 代码 / HTTP / 插件 / Agent / 条件分支。
+        </Typography.Paragraph>
       </Modal>
 
       <Modal
