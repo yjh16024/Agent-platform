@@ -251,6 +251,10 @@ export interface WorkflowDef {
   description?: string;
   definition?: Record<string, unknown>;
   status?: string;
+  version?: string;
+  /** 已发布版本号（如 v1.0.0），未发布为 null */
+  publishedVersion?: string;
+  publishedAt?: string;
   createdAt?: string;
   updatedAt?: string;
 }

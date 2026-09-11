@@ -35,6 +35,7 @@
 | 插件 | SPI + ClassLoader 隔离 + before/after Hook + 市场 + 热插拔 | ✅ 已实现 | `AgentPipeline`、`PluginRuntime` |
 | Skills | Agent Skills 标准目录、扫描同步、导入、三种执行器 | ✅ 已实现 | `SkillService`、`SkillExecutorRegistry` |
 | 工作流 | 自研 DAG（条件分支 + 虚拟线程并行 + Schema 校验） | ✅ 已实现 | `DagEngine`、`WorkflowController` |
+| 工作流画布 | **拖拽式编排画布**（FlowGram 固定布局：拖拽/连线/分支/撤销重做）+ 11 类节点（LLM/知识库/代码/HTTP/插件/工具/Agent/条件/转换）+ 节点级调试轨迹 + 发布/回滚 | ✅ 已实现（2026-09-11） | `pages/workflows/canvas/`、`node/executor/*` |
 | 多模态 | `parts[]`（text / file / image），图片走视觉模型 | ✅ 已实现 | `MultimodalResolver`、`FileUploadService` |
 | 日志与诊断 | 结构化运行日志 + 三级诊断（规则/向量/LLM）+ 6 维提示词评分 | ✅ 已实现 | `LogService`、`DiagnosisEngine`、`PromptOptimizer` |
 | 可观测 | Micrometer 指标 + Loki 日志 + Tempo Span + Grafana 看板与告警 | ✅ 已实现 | `LogEventSink`、`docker-compose.observability.yml` |
@@ -61,7 +62,7 @@
 | 工具 | `/tools` | 列表、`PUT /{name}`、`POST /{name}/invoke`、`POST /register`、`POST /mcp`、`/mcp/local`、`/mcp/sandbox`、`DELETE /{name}` |
 | 插件 | `/plugins` | `register`、`import`、`marketplace`、详情、`attach`、`detach`、`attachments`、删除 |
 | Skills | `/skills` | CRUD、`/sync`、`/upload`、`/import-folder`、`/open-folder`、`/dir`、`/{id}/files`、`/{id}/file`、`/{id}/execute`、`/executors` |
-| 工作流 | `/workflows` | CRUD、运行 |
+| 工作流 | `/workflows` | CRUD、`PUT /{id}`（画布保存）、`POST /{id}/execute`、`POST /{id}/debug`（节点级轨迹）、`POST /{id}/publish`、`POST /{id}/rollback` |
 | 文件 | `/files` | 上传、下载、列表 |
 | 模型配置 | `/model-config` | `GET /`、`PUT /embedding`、`PUT /chat` |
 | **模型额度** | `/model-balance` | `GET /`（已配置绑定余额）、`GET /vendors`（支持厂商） |
@@ -116,6 +117,7 @@
 | V10 | 平台默认对话模型绑定 + 日志栈与时间索引 |
 | V11 | HTTP 工具注册持久化 |
 | V12 | 会话早期摘要（`session_def.summary / summary_turn`） |
+| V13 | 工作流发布（`workflow_def.published_definition / published_version / published_at`） |
 
 > 当前最新版本 **V12**；新增迁移必须同时提供 `mysql` 与 `h2` 两份。
 
@@ -139,7 +141,7 @@
 ## 六、测试规模
 
 - 测试类：**36** 个（`agent-platform-core/src/test`）
-- 测试方法：**140** 个，`mvn test` 实测 **全绿**（2026-09-10）
+- 测试方法：**143** 个，`mvn test` 实测 **全绿**（2026-09-11）
 - 覆盖重点：Spring AI 通道与原生 tool-role 循环、H2 内置库启动与迁移、RAG 检索事务与 FULLTEXT 失败隔离、
   模型额度查询（含 401 / 不可达 / 不支持厂商）、记忆与摘要、工具与 MCP、插件运行时、DAG 引擎。
 

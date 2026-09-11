@@ -24,6 +24,7 @@ Spring AI 2.0.1，默认关闭、可一键回退自研实现，凭证三级回�
 - 未实现事项、路线决策、契约与踩坑：[docs/backlog.md](docs/backlog.md)
 - 技术设计与可行性结论（含归档的桌面路线对比）：[docs/design.md](docs/design.md)
 - **每个功能用什么技术实现、为什么这样选**：[docs/technology.md](docs/technology.md)
+- 拖拽式工作流画布可行性分析（Coze Studio / FlowGram 选型与后端缺口）：[docs/workflow-canvas-feasibility.md](docs/workflow-canvas-feasibility.md)
 - 扩展指南与部署（K8s/Helm、演示脚本、可观测性运维）：[docs/guides.md](docs/guides.md)
 - 历史阶段验收报告（Phase 1–7，快照留档）：[docs/phase-reports.md](docs/phase-reports.md)
 - 桌面应用（Electron 壳 + jlink 运行时）：[desktop/](desktop/)（启动页、单实例、打包见 [docs/design.md](docs/design.md)）
@@ -144,10 +145,17 @@ Skills 采用 Agent Skills 开放标准布局 `skills/<name>/SKILL.md`（可选 
 
 前端行为也按「一次运行」的语义对齐：对话历史切页不丢，只有主动「新对话」才写入新的会话历史。
 
-### 工作流：自研 DAG 引擎
+### 工作流：拖拽画布 + 自研 DAG 引擎
 
-复杂编排走 `workflow` 的自研 DAG 引擎：条件分支 + 虚拟线程并行，节点带 Schema 校验，
-编排错误在运行前就能暴露，而不是跑到一半才炸。
+编排有两层：**画布**（`/workflows` → 点「画布」）与**引擎**。
+
+画布基于 FlowGram 固定布局（与 Coze 工作流同源的内核），可拖拽/连线/分组/撤销重做，节点覆盖
+**LLM、知识库、代码（Skill）、HTTP、插件、工具、Agent、条件分支、变量转换**；右侧配参数（表单随类型变化），
+底部「试运行」会按节点展示执行轨迹（状态 / 耗时 / 入出参）。「发布」生成已发布快照并递增版本号，
+草稿可继续编辑、支持一键回滚。
+
+引擎侧是自研 `DagEngine`：条件分支 + 虚拟线程并行，节点带 Schema 校验（含"类型必须有执行器"——
+**缺执行器的节点在保存时就被拦下**，不会等到运行时才炸）。
 
 ### 多模态：parts[] 消息模型
 
@@ -432,7 +440,7 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests   # 构建可执行 jar
-mvn test                                              # 140 个单元测试（含 Spring AI 通道、内置库迁移、记忆、工具、模型额度等）
+mvn test                                              # 143 个单元测试（含 Spring AI 通道、内置库迁移、记忆、工具、工作流画布后端等）
 warmup.bat                                            # Windows：依赖预热，"warmup.bat verify" 校验离线构建
 cd agent-platform-ui && npm run build:prod            # 前端构建，产物同步到 core 的 static/
 ```

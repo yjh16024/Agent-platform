@@ -1,19 +1,31 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Table, Space, Button, Modal, Form, Input, Tag, message, Card, Popconfirm } from 'antd';
-import { PlusOutlined, PlayCircleOutlined } from '@ant-design/icons';
+import { PlusOutlined, PlayCircleOutlined, BranchesOutlined } from '@ant-design/icons';
 import { listWorkflows, createWorkflow, executeWorkflow, getWorkflow, deleteWorkflow } from '../../api/workflows';
 import { WorkflowDef } from '../../api/types';
+import WorkflowCanvas from './canvas/WorkflowCanvas';
+import { defaultCanvas, toCanvas } from './canvas/adapter';
+import type { BackendDefinition, FlowDocumentJSON } from './canvas/types';
 
+/**
+ * 示例定义：与后端契约一致 —— 用 `next` 串联（旧示例误用 `edges`，建出来的流程链路是断的）。
+ */
 const EXAMPLE = {
+  name: '示例流程',
   nodes: [
-    { id: 'start', type: 'start' },
-    { id: 'transform', type: 'transform', config: { expression: 'input.name' } },
-    { id: 'end', type: 'end' },
+    { id: 'start', type: 'Start', name: '开始', next: 'transform', outputVar: null, config: { inputKey: 'input' } },
+    {
+      id: 'transform',
+      type: 'Transform',
+      name: '变量转换',
+      next: 'end',
+      outputVar: 'result',
+      inputMapping: { name: '${input}' },
+      config: {},
+    },
+    { id: 'end', type: 'End', name: '结束', next: null, outputVar: null, config: {} },
   ],
-  edges: [
-    { from: 'start', to: 'transform' },
-    { from: 'transform', to: 'end' },
-  ],
+  entryNode: 'start',
 };
 
 export default function WorkflowsPage() {
@@ -24,6 +36,14 @@ export default function WorkflowsPage() {
   const [execInput, setExecInput] = useState('{}');
   const [execResult, setExecResult] = useState<Record<string, unknown> | null>(null);
   const [form] = Form.useForm();
+
+  /** 画布态：有值时整页切换到画布 */
+  const [canvas, setCanvas] = useState<{
+    id: string;
+    name: string;
+    data: FlowDocumentJSON;
+    publishedVersion?: string;
+  } | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -40,6 +60,19 @@ export default function WorkflowsPage() {
     load();
   }, [load]);
 
+  /** 打开画布：加载后端定义 → 转画布图（空定义给一个「开始→LLM→结束」的最小可用图） */
+  const openCanvas = useCallback(async (id: string, name: string, publishedVersion?: string) => {
+    try {
+      const def = (await getWorkflow(id)) as unknown as BackendDefinition;
+      const data = def && Array.isArray(def.nodes) && def.nodes.length > 0
+        ? toCanvas(def)
+        : defaultCanvas(name);
+      setCanvas({ id, name, data, publishedVersion });
+    } catch (e) {
+      message.error(`加载工作流失败：${(e as Error).message}`);
+    }
+  }, []);
+
   const submitCreate = async () => {
     const v = await form.validateFields();
     let definition: Record<string, unknown>;
@@ -50,11 +83,14 @@ export default function WorkflowsPage() {
       return;
     }
     try {
-      await createWorkflow(v.name, definition, v.description);
-      message.success('工作流已创建');
+      const created = await createWorkflow(v.name, definition, v.description);
+      message.success('工作流已创建，可直接进入画布拖拽编辑');
       setCreateOpen(false);
       form.resetFields();
       load();
+      if (created?.workflowId) {
+        void openCanvas(created.workflowId, created.name ?? v.name);
+      }
     } catch (e) {
       message.error((e as Error).message);
     }
@@ -89,16 +125,24 @@ export default function WorkflowsPage() {
     { title: '名称', dataIndex: 'name', width: 200 },
     { title: '描述', dataIndex: 'description', ellipsis: true },
     {
-      title: '状态', dataIndex: 'status', width: 100,
-      render: (v: string) => <Tag color={v === 'published' ? 'green' : 'default'}>{v}</Tag>,
+      title: '状态', dataIndex: 'status', width: 150,
+      render: (v: string, r: WorkflowDef) => (
+        <Space size={4}>
+          <Tag color={v === 'published' ? 'green' : 'default'}>{v}</Tag>
+          {r.publishedVersion ? <Tag color="blue">{r.publishedVersion}</Tag> : null}
+        </Space>
+      ),
     },
     {
-      title: '操作', width: 260,
+      title: '操作', width: 340,
       render: (_: unknown, r: WorkflowDef) => (
         <Space>
+          <Button size="small" type="primary" ghost icon={<BranchesOutlined />} onClick={() => openCanvas(r.workflowId!, r.name ?? '未命名', r.publishedVersion)}>
+            画布
+          </Button>
           <Button size="small" onClick={() => viewDef(r.workflowId!)}>查看</Button>
           <Button size="small" icon={<PlayCircleOutlined />} onClick={() => { setExecId(r.workflowId!); setExecResult(null); }}>执行</Button>
-          <Popconfirm title="归档该工作流？" onConfirm={async () => { await deleteWorkflow(r.workflowId!); load(); }}>
+          <Popconfirm title="删除该工作流？" onConfirm={async () => { await deleteWorkflow(r.workflowId!); load(); }}>
             <Button size="small" danger>删除</Button>
           </Popconfirm>
         </Space>
@@ -106,10 +150,31 @@ export default function WorkflowsPage() {
     },
   ];
 
+  // ---- 画布态：整页切换为拖拽式编排 ----
+  if (canvas) {
+    return (
+      <div style={{ height: 'calc(100vh - 112px)', display: 'flex', flexDirection: 'column' }}>
+        <WorkflowCanvas
+          workflowId={canvas.id}
+          workflowName={canvas.name}
+          initialData={canvas.data}
+          publishedVersion={canvas.publishedVersion}
+          onClose={() => {
+            setCanvas(null);
+            load();
+          }}
+        />
+      </div>
+    );
+  }
+
   return (
     <div>
       <Space style={{ marginBottom: 16 }}>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setCreateOpen(true)}>创建工作流</Button>
+        <span style={{ color: '#8a9099', fontSize: 12 }}>
+          点「画布」进入拖拽式编排（LLM / 知识库 / 代码 / HTTP / 插件 / Agent / 条件分支）
+        </span>
       </Space>
       <Table rowKey="workflowId" loading={loading} columns={columns} dataSource={items} pagination={false} />
 
@@ -117,7 +182,7 @@ export default function WorkflowsPage() {
         <Form form={form} layout="vertical" initialValues={{ definition: JSON.stringify(EXAMPLE, null, 2) }}>
           <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="description" label="描述"><Input /></Form.Item>
-          <Form.Item name="definition" label="DAG 定义（JSON）" rules={[{ required: true }]}>
+          <Form.Item name="definition" label="DAG 定义（JSON，可先用默认示例，创建后进画布拖拽）" rules={[{ required: true }]}>
             <Input.TextArea rows={10} style={{ fontFamily: 'monospace' }} />
           </Form.Item>
         </Form>

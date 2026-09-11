@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -31,6 +32,8 @@ import java.util.concurrent.Executors;
  *   <li>策略分发：NodeExecutor 按类型分发（Spring 自动收集）</li>
  *   <li>变量作用域：节点 output_var 写入 WorkflowContext，下游 ${var.path} 引用</li>
  *   <li>并行：虚拟线程 Executor 执行多下游，结果按序归并</li>
+ *   <li><b>执行轨迹</b>：{@link #executeWithTrace} 额外产出每个节点的状态 / 耗时 / 输出，
+ *       供画布「调试面板」按节点展示（普通执行零开销：不传轨迹容器即不记录）</li>
  * </ul>
  * </p>
  */
@@ -53,14 +56,43 @@ public class DagEngine {
         }
     }
 
+    /** 单个节点的执行轨迹（画布调试面板用）。 */
+    public record NodeStep(
+            String nodeId,
+            String type,
+            String name,
+            String status,
+            long durationMs,
+            Object output,
+            String error) {
+    }
+
+    /** 带轨迹的执行结果。 */
+    public record TracedResult(WorkflowContext context, List<NodeStep> steps) {
+    }
+
     /**
-     * 执行工作流。
+     * 执行工作流（无轨迹，行为与历史保持一致）。
      *
      * @param definition 工作流 DAG 定义
      * @param input      初始输入变量
      * @return 执行结束后的上下文快照（含各节点 output_var）
      */
     public WorkflowContext execute(WorkflowDefinition definition, Map<String, Object> input) {
+        return executeInternal(definition, input, null);
+    }
+
+    /**
+     * 执行工作流并返回每个节点的执行轨迹（画布调试用）。
+     */
+    public TracedResult executeWithTrace(WorkflowDefinition definition, Map<String, Object> input) {
+        List<NodeStep> steps = Collections.synchronizedList(new ArrayList<>());
+        WorkflowContext ctx = executeInternal(definition, input, steps);
+        return new TracedResult(ctx, steps);
+    }
+
+    private WorkflowContext executeInternal(WorkflowDefinition definition, Map<String, Object> input,
+                                            List<NodeStep> steps) {
         validator.validate(definition);
         WorkflowContext ctx = new WorkflowContext(input);
 
@@ -71,15 +103,17 @@ public class DagEngine {
 
         long start = System.currentTimeMillis();
         Set<String> executed = new HashSet<>();
-        executeNode(entry, definition, ctx, executed);
-        log.info("Workflow '{}' executed in {}ms", definition.name(), System.currentTimeMillis() - start);
+        executeNode(entry, definition, ctx, executed, steps);
+        log.info("Workflow '{}' executed in {}ms{}", definition.name(), System.currentTimeMillis() - start,
+                steps == null ? "" : (" (" + steps.size() + " steps traced)"));
         return ctx;
     }
 
     /**
      * 递归执行节点（含条件分支与并行多下游）。
      */
-    private Object executeNode(WorkflowNode node, WorkflowDefinition def, WorkflowContext ctx, Set<String> executed) {
+    private Object executeNode(WorkflowNode node, WorkflowDefinition def, WorkflowContext ctx,
+                               Set<String> executed, List<NodeStep> steps) {
         if (node == null) {
             return null;
         }
@@ -88,17 +122,26 @@ public class DagEngine {
             return ctx.get(node.outputVar());
         }
 
-        NodeExecutor executor = executors.get(node.type());
-        if (executor == null) {
+        NodeExecutor executorBean = executors.get(node.type());
+        if (executorBean == null) {
             throw BizException.internal("No executor for node type: " + node.type());
         }
 
-        Object result = executor.execute(node, ctx);
-        executor.storeOutput(node, result, ctx);
+        long t0 = System.currentTimeMillis();
+        Object result;
+        try {
+            result = executorBean.execute(node, ctx);
+            executorBean.storeOutput(node, result, ctx);
+            record(steps, node, "success", System.currentTimeMillis() - t0, result, null);
+        } catch (RuntimeException e) {
+            record(steps, node, "failed", System.currentTimeMillis() - t0, null,
+                    e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+            throw e;
+        }
 
         // ① 条件分支：按求值结果跳转
         if (node.type() == NodeType.Condition && result instanceof String target && target != null) {
-            executeNode(def.node(target), def, ctx, executed);
+            executeNode(def.node(target), def, ctx, executed, steps);
             return result;
         }
 
@@ -108,22 +151,59 @@ public class DagEngine {
             return result;
         }
         if (nextIds.size() == 1) {
-            return executeNode(def.node(nextIds.get(0)), def, ctx, executed);
+            return executeNode(def.node(nextIds.get(0)), def, ctx, executed, steps);
         }
         // 并行执行多下游
-        executeParallel(nextIds, def, ctx, executed);
+        executeParallel(nextIds, def, ctx, executed, steps);
         return result;
+    }
+
+    private void record(List<NodeStep> steps, WorkflowNode node, String status, long durationMs,
+                        Object output, String error) {
+        if (steps == null) {
+            return;
+        }
+        steps.add(new NodeStep(
+                node.id(),
+                node.type() == null ? null : node.type().name(),
+                node.name(),
+                status,
+                durationMs,
+                summarise(output),
+                error));
+    }
+
+    /** 轨迹里的输出只保留可读摘要，避免把大对象灌进响应。 */
+    private Object summarise(Object output) {
+        if (output == null) {
+            return null;
+        }
+        if (output instanceof Map<?, ?> map) {
+            if (map.size() <= 8) {
+                return output;
+            }
+            return Map.of("_truncated", true, "_size", map.size());
+        }
+        if (output instanceof String s) {
+            return s.length() > 2000 ? s.substring(0, 2000) + "…" : s;
+        }
+        if (output instanceof Number || output instanceof Boolean) {
+            return output;
+        }
+        String text = String.valueOf(output);
+        return text.length() > 2000 ? text.substring(0, 2000) + "…" : text;
     }
 
     /**
      * 并行执行多下游（虚拟线程）。
      */
-    private void executeParallel(List<String> nextIds, WorkflowDefinition def, WorkflowContext ctx, Set<String> executed) {
+    private void executeParallel(List<String> nextIds, WorkflowDefinition def, WorkflowContext ctx,
+                                 Set<String> executed, List<NodeStep> steps) {
         List<CompletableFuture<Void>> futures = nextIds.stream()
                 .map(id -> CompletableFuture.runAsync(() -> {
                     // 每个并行分支用独立的 executed 副本，避免不同分支间误判环
                     Set<String> branchExecuted = new HashSet<>(executed);
-                    executeNode(def.node(id), def, ctx, branchExecuted);
+                    executeNode(def.node(id), def, ctx, branchExecuted, steps);
                 }, executor))
                 .toList();
         CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();

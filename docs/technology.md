@@ -33,6 +33,7 @@
 | 鉴权 | JJWT | 0.12.6 | JWT 签发与校验 |
 | 映射/工具 | Lombok 1.18.34、MapStruct 1.5.5、Guava 33.3、Commons | — | 样板代码与工具 |
 | 前端 | **React 18.3** + **TypeScript 5.6** + **Vite 5.4** + **antd 5.21** + zustand 4.5 + react-router 6.28 | — | 仪表盘 SPA |
+| 工作流画布 | **FlowGram**（`@flowgram.ai/fixed-layout-editor`，MIT） | 1.0.15 | 拖拽式工作流编排画布（与 Coze 工作流同源内核） |
 | 桌面壳 | **Electron** | 33.3.1 | 桌面窗口与生命周期 |
 | 桌面运行时 | **jlink** 精简 JRE + **electron-builder** | — | 免装 Java、portable/zip 打包 |
 | 观测 | Micrometer + Prometheus + Loki + Tempo + Grafana | — | 指标 / 日志 / 链路 |
@@ -168,10 +169,25 @@ Skills 采用 Agent Skills 开放标准目录 `skills/<name>/SKILL.md`，执行�
 - **三种执行器（prompt / script / http）**：覆盖"纯提示词""本地脚本""远程接口"三类技能形态，
   新增形态只需实现 `SkillExecutor`。
 
-### 2.9 工作流：自研 DAG 引擎（运行时递归遍历）
+### 2.9 工作流：拖拽画布（FlowGram）+ 自研 DAG 引擎
 
-**用什么**：`WorkflowSchemaValidator`（ID 唯一、环检测）+ `DagEngine`（运行时递归遍历、条件分支、
-虚拟线程并行）+ `EnumMap<NodeType, NodeExecutor>` 策略分发。
+**用什么**：
+
+- **前端画布**：**FlowGram 固定布局**（`@flowgram.ai/fixed-layout-editor` **1.0.15**，**MIT**）——
+  拖拽/连线/分组/撤销重做/小地图/快捷键开箱可用；节点外观与配置表单**用本平台 antd 自绘**
+  （只引 `fixed-layout-editor`，不引其 Semi 物料包 `fixed-semi-materials`，避免与 antd 混用两套 UI 库）。
+- **后端引擎**：`WorkflowSchemaValidator`（ID 唯一 / 环检测 / **类型必须有执行器**）+ `DagEngine`
+  （运行时递归遍历、条件分支、虚拟线程并行、**节点级执行轨迹**）+
+  `EnumMap<NodeType, NodeExecutor>` 策略分发（画布可拖出的 11 类节点都有对应执行器）。
+
+**为什么这样选**（画布不 fork Coze、也不自研）：
+
+- **不 fork Coze Studio 前端**：它是 Rush+PNPM monorepo + Rsbuild + 自研设计系统，且强耦合其 Golang 后端契约。
+- **不自己画**：FlowGram 官方说明其存在理由就是"用 ReactFlow 这类通用图库解决不了**节点数据管理、动态表单、
+  数据校验、变量作用域链**"——恰好是自研画布最耗时的部分。
+- **取 FlowGram 而非 React Flow**：FlowGram 是"开箱的流程编辑方案"（含表单引擎 / 变量引擎 / 分支复合节点），
+  React Flow 只是渲染引擎，用它等于把前者已做的工作重做一遍。
+- 完整方案对比（含 iframe 嵌入 Coze 的否决理由）见 [workflow-canvas-feasibility.md](workflow-canvas-feasibility.md)。
 
 **为什么**：
 

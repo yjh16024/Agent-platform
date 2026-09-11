@@ -58,6 +58,19 @@ public class WorkflowDef {
     @Column(name = "version", length = 32)
     private String version;
 
+    /** 已发布快照（发布时写入，回滚时覆盖 definition）。 */
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "published_definition", columnDefinition = "json")
+    private Map<String, Object> publishedDefinition;
+
+    /** 已发布的版本号（如 v1.0.0）。 */
+    @Column(name = "published_version", length = 32)
+    private String publishedVersion;
+
+    /** 最近一次发布时间。 */
+    @Column(name = "published_at")
+    private LocalDateTime publishedAt;
+
     @Column(name = "created_at", insertable = false, updatable = false)
     private LocalDateTime createdAt;
 

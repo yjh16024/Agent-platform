@@ -12,10 +12,16 @@
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.1",
+    "@flowgram.ai/export-plugin": "^1.0.15",
+    "@flowgram.ai/fixed-layout-editor": "^1.0.15",
+    "@flowgram.ai/form-materials": "^1.0.15",
+    "@flowgram.ai/minimap-plugin": "^1.0.15",
+    "@flowgram.ai/panel-manager-plugin": "^1.0.15",
     "antd": "^5.21.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.28.0",
+    "styled-components": "^5.3.11",
     "zustand": "^4.5.5"
   },
   "devDependencies": {
