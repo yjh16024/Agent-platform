@@ -11,18 +11,22 @@
  * 试运行：先保存（保证跑的是当前画布）→ POST /workflows/{id}/debug（带节点级轨迹）
  */
 import { useCallback, useMemo, useState } from 'react';
-import { Alert, Button, Empty, Input, Modal, Popconfirm, Space, Tag, Typography, message } from 'antd';
+import { Alert, Button, Dropdown, Empty, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Tag, Typography, message } from 'antd';
 import {
   ArrowLeftOutlined,
   CloudUploadOutlined,
+  DeleteOutlined,
   PlayCircleOutlined,
+  PlusOutlined,
   SaveOutlined,
 } from '@ant-design/icons';
 import {
   EditorRenderer,
   FixedLayoutEditorProvider,
   useClientContext,
+  useNodeRender,
   type FixedLayoutPluginContext,
+  type FlowNodeEntity,
 } from '@flowgram.ai/fixed-layout-editor';
 import '@flowgram.ai/fixed-layout-editor/index.css';
 
@@ -34,6 +38,8 @@ import {
   type WorkflowStep,
 } from '../../../api/workflows';
 import { toBackend } from './adapter';
+import { NODE_FIELDS, NODE_METAS, NODE_META_MAP, type CanvasFieldSpec } from './node-metas';
+import { buildNodeJson } from './materials';
 import { CanvasSelectionContext, type CanvasSelection } from './selection';
 import { useEditorProps } from './use-editor-props';
 import type { FlowDocumentJSON } from './types';
@@ -55,7 +61,7 @@ export default function WorkflowCanvas(props: WorkflowCanvasProps) {
 
   return (
     <FixedLayoutEditorProvider {...editorProps}>
-      <CanvasShell {...props} dirty={dirty} onSaved={() => setDirty(false)} />
+      <CanvasShell {...props} dirty={dirty} onSaved={() => setDirty(false)} onDirty={onDirty} />
     </FixedLayoutEditorProvider>
   );
 }
@@ -63,9 +69,18 @@ export default function WorkflowCanvas(props: WorkflowCanvasProps) {
 interface ShellProps extends WorkflowCanvasProps {
   dirty: boolean;
   onSaved: () => void;
+  onDirty: () => void;
 }
 
-function CanvasShell({ workflowId, workflowName, publishedVersion, onClose, dirty, onSaved }: ShellProps) {
+function CanvasShell({
+  workflowId,
+  workflowName,
+  publishedVersion,
+  onClose,
+  dirty,
+  onSaved,
+  onDirty,
+}: ShellProps) {
   const ctx = useClientContext();
   const [selectedId, setSelectedId] = useState<string | undefined>();
   const [saving, setSaving] = useState(false);
@@ -151,6 +166,50 @@ function CanvasShell({ workflowId, workflowName, publishedVersion, onClose, dirt
     }
   }, [workflowId]);
 
+  /**
+   * 添加节点：以「当前选中节点」为锚点插入；未选中时插到 End 之前（保持 End 收尾）。
+   *
+   * FlowGram 画布是 headless 的 —— 内联「加号」需要自研一整套 UI（官方 demo 亦如此），
+   * 这里统一由工具栏驱动，功能等价且实现可控。
+   */
+  const addNode = useCallback(
+    (type: string) => {
+      const json = buildNodeJson(type);
+      const doc = ctx.document.toJSON() as unknown as FlowDocumentJSON;
+      const nodes = doc.nodes ?? [];
+      const endIdx = nodes.findIndex((n) => n.type === 'end');
+      const anchorId = selectedId ?? (endIdx > 0 ? nodes[endIdx - 1]?.id : nodes[nodes.length - 1]?.id);
+      try {
+        if (anchorId) {
+          ctx.operation.addFromNode(anchorId, json as never);
+        } else {
+          ctx.operation.addBlock(ctx.document.root.id, json as never);
+        }
+        setSelectedId(json.id);
+        onDirty();
+        message.success(`已添加「${NODE_META_MAP[type]?.label ?? type}」节点`);
+      } catch (e) {
+        message.error(`添加节点失败：${(e as Error).message}`);
+      }
+    },
+    [ctx, selectedId, onDirty]
+  );
+
+  /** 删除节点（走 operation，支持撤销重做）。 */
+  const removeNode = useCallback(
+    (id: string) => {
+      try {
+        ctx.operation.deleteNode(id);
+        setSelectedId(undefined);
+        onDirty();
+        message.success('已删除节点');
+      } catch (e) {
+        message.error(`删除失败：${(e as Error).message}`);
+      }
+    },
+    [ctx, onDirty]
+  );
+
   const selection = useMemo<CanvasSelection>(
     () => ({ selectedId, select: setSelectedId }),
     [selectedId]
@@ -169,6 +228,24 @@ function CanvasShell({ workflowId, workflowName, publishedVersion, onClose, dirt
             {published ? <Tag color="blue">线上 {published}</Tag> : <Tag>未发布</Tag>}
           </div>
           <div className="wf-toolbar__right">
+            <Dropdown
+              menu={{
+                items: NODE_METAS.map((m) => ({
+                  key: m.type,
+                  label: (
+                    <div>
+                      <div style={{ fontWeight: 600 }}>{m.label}</div>
+                      <div style={{ fontSize: 12, color: '#8a9099' }}>{m.description}</div>
+                    </div>
+                  ),
+                })),
+                onClick: ({ key }) => addNode(key),
+              }}
+              trigger={['click']}
+              placement="bottomRight"
+            >
+              <Button icon={<PlusOutlined />}>添加节点</Button>
+            </Dropdown>
             <Button icon={<SaveOutlined />} loading={saving} onClick={() => save()}>
               保存
             </Button>
@@ -202,7 +279,7 @@ function CanvasShell({ workflowId, workflowName, publishedVersion, onClose, dirt
           <div className="wf-canvas-main">
             <EditorRenderer />
           </div>
-          <NodeConfigPanel ctx={ctx} nodeId={selectedId} />
+          <NodeConfigPanel ctx={ctx} nodeId={selectedId} onDelete={removeNode} />
         </div>
 
         {runSteps ? (
@@ -240,16 +317,27 @@ function CanvasShell({ workflowId, workflowName, publishedVersion, onClose, dirt
   );
 }
 
-/** 右侧：选中节点的配置表单。 */
-function NodeConfigPanel({ ctx, nodeId }: { ctx: FixedLayoutPluginContext; nodeId?: string }) {
-  const node = nodeId ? (ctx.document.getNode(nodeId) as unknown as {
-    id: string;
-    flowNodeType?: string;
-    data?: Record<string, unknown>;
-    form?: { render: () => React.ReactNode };
-  }) : undefined;
+/**
+ * 右侧：选中节点的配置面板。
+ *
+ * 拆成两层是必须的：`useNodeRender` 在节点为 undefined 时会抛
+ * `Cannot read properties of undefined (reading 'getData')`，
+ * 而 hook 不能条件调用 —— 故外层判空、内层（NodeFormPanel）在确有节点时才调用。
+ */
+function NodeConfigPanel({
+  ctx,
+  nodeId,
+  onDelete,
+}: {
+  ctx: FixedLayoutPluginContext;
+  nodeId?: string;
+  onDelete?: (id: string) => void;
+}) {
+  const entity = nodeId
+    ? (ctx.document.getNode(nodeId) as unknown as FlowNodeEntity | undefined)
+    : undefined;
 
-  if (!node) {
+  if (!entity) {
     return (
       <div className="wf-panel">
         <Empty
@@ -259,20 +347,126 @@ function NodeConfigPanel({ ctx, nodeId }: { ctx: FixedLayoutPluginContext; nodeI
       </div>
     );
   }
+  return <NodeFormPanel entity={entity} onDelete={onDelete} />;
+}
+
+/**
+ * 节点配置表单。
+ *
+ * 走自研受控表单：FlowGram 的 `nodeRender.form` 需要额外装配表单引擎插件，
+ * 当前 preset 下恒为空（渲染出来就是「暂无配置表单」）。
+ * 字段规格直接复用 `NODE_FIELDS`，写回经 `nodeRender.updateData`（与画布、撤销栈联动）。
+ */
+function NodeFormPanel({
+  entity,
+  onDelete,
+}: {
+  entity: FlowNodeEntity;
+  onDelete?: (id: string) => void;
+}) {
+  const nodeRender = useNodeRender(entity);
+  const type = (entity as unknown as { flowNodeType?: string }).flowNodeType ?? 'unknown';
+  const data = (nodeRender.data ?? {}) as Record<string, unknown>;
+  const specs = NODE_FIELDS[type] ?? [];
+
+  /** 读取 `node.data` 上的相对路径（如 `config.model`）。 */
+  const getValue = (path: string): unknown =>
+    path
+      .split('.')
+      .reduce<unknown>(
+        (acc, k) => (acc && typeof acc === 'object' ? (acc as Record<string, unknown>)[k] : undefined),
+        data
+      );
+
+  /** 写回 `node.data` 上的相对路径（深拷贝后整体更新，保证撤销栈可识别）。 */
+  const setValue = (path: string, value: unknown) => {
+    const next = JSON.parse(JSON.stringify(data)) as Record<string, unknown>;
+    const keys = path.split('.');
+    let cursor = next;
+    for (let i = 0; i < keys.length - 1; i += 1) {
+      const k = keys[i];
+      if (!cursor[k] || typeof cursor[k] !== 'object') cursor[k] = {};
+      cursor = cursor[k] as Record<string, unknown>;
+    }
+    cursor[keys[keys.length - 1]] = value;
+    nodeRender.updateData(next);
+  };
 
   return (
     <div className="wf-panel">
-      <div className="wf-panel__title">{(node.data?.title as string) ?? node.flowNodeType}</div>
-      <div className="wf-panel__hint">
-        类型 {node.flowNodeType} · {node.id}
+      <div
+        className="wf-panel__title"
+        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
+      >
+        <span>{(data.title as string) ?? type}</span>
+        {onDelete ? (
+          <Button size="small" danger icon={<DeleteOutlined />} onClick={() => onDelete(entity.id)}>
+            删除
+          </Button>
+        ) : null}
       </div>
-      {node.form ? (
-        node.form.render()
+      <div className="wf-panel__hint">
+        类型 {type} · {entity.id}
+      </div>
+      {specs.length === 0 ? (
+        <Alert type="info" showIcon message="该节点无需配置" />
       ) : (
-        <Alert type="warning" showIcon message="该节点暂无配置表单" />
+        <div className="wf-form">
+          {specs.map((spec) => (
+            <div className="wf-field" key={spec.name}>
+              <div className="wf-field__label">{spec.label}</div>
+              {renderField(spec, getValue(spec.name), (v) => setValue(spec.name, v))}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );
+}
+
+/** 按字段规格渲染控件（规格与节点卡片摘要同源）。 */
+function renderField(spec: CanvasFieldSpec, value: unknown, onChange: (v: unknown) => void) {
+  switch (spec.kind) {
+    case 'textarea':
+      return (
+        <Input.TextArea
+          rows={3}
+          value={(value as string) ?? ''}
+          placeholder={spec.placeholder}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      );
+    case 'number':
+      return (
+        <InputNumber
+          style={{ width: '100%' }}
+          value={value as number}
+          placeholder={spec.placeholder}
+          onChange={(v) => onChange(v)}
+        />
+      );
+    case 'select':
+      return (
+        <Select
+          style={{ width: '100%' }}
+          allowClear
+          value={value as string}
+          placeholder={spec.placeholder ?? '请选择'}
+          options={spec.options as { label: string; value: string }[]}
+          onChange={(v) => onChange(v)}
+        />
+      );
+    case 'switch':
+      return <Switch checked={!!value} onChange={(v) => onChange(v)} />;
+    default:
+      return (
+        <Input
+          value={(value as string) ?? ''}
+          placeholder={spec.placeholder}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      );
+  }
 }
 
 /** 底部：调试面板（逐节点执行轨迹 + 变量快照）。 */

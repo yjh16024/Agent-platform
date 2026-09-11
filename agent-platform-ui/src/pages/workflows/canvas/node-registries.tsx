@@ -4,7 +4,7 @@
  * Field 的 `name` 相对 `node.data`，因此 `config.model` 会直接写进 `node.data.config.model`，
  * 与后端 `WorkflowNode.config` 同构 —— 保存时无需额外转换。
  */
-import { Field, ValidateTrigger, type FieldRenderProps, type FormMeta } from '@flowgram.ai/fixed-layout-editor';
+import { Field, ValidateTrigger, type FormMeta } from '@flowgram.ai/fixed-layout-editor';
 import { Input, InputNumber, Select, Switch, Typography } from 'antd';
 
 import { NODE_FIELDS, NODE_METAS, NODE_META_MAP, type CanvasFieldSpec } from './node-metas';
@@ -16,10 +16,10 @@ function genId(prefix: string): string {
   return `${prefix}_${Date.now().toString(36)}${seq.toString(36)}`;
 }
 
-/** 单个字段的控件（值由 Field 注入）。 */
-function control(spec: CanvasFieldSpec, field: FieldRenderProps<unknown>['field']) {
-  const value = field.value as never;
-  const onChange = field.onChange as (v: unknown) => void;
+/** 单个字段的控件（值由 Field 注入；FlowGram 直接把 field 本体作为 render 参数）。 */
+function control(spec: CanvasFieldSpec, field: { value?: unknown; onChange?: (v: unknown) => void }) {
+  const value = field?.value as never;
+  const onChange = field?.onChange as (v: unknown) => void;
 
   switch (spec.kind) {
     case 'textarea':
@@ -77,10 +77,10 @@ function makeFormMeta(type: string): FormMeta<Record<string, unknown>> {
             <Field
               key={spec.name}
               name={spec.name}
-              render={({ field }: FieldRenderProps<unknown>) => (
+              render={(field) => (
                 <div className="wf-field">
                   <div className="wf-field__label">{spec.label}</div>
-                  {control(spec, field.field)}
+                  {control(spec, field as { value?: unknown; onChange?: (v: unknown) => void })}
                 </div>
               )}
             />
