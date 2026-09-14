@@ -1,7 +1,7 @@
 # 功能与实现现状（Status）
 
 > **单一事实来源**：本文件是「已经实现了什么」的权威清单，其它文档不再重复描述现状。
-> 最后核实：**2026-09-10**（逐项对照代码；测试数为 `mvn test` 实测结果）。
+> 最后核实：**2026-09-14**（逐项对照代码；测试数为 `mvn test` 实测结果）。
 >
 > | 你想看什么 | 去哪 |
 > |---|---|
@@ -35,13 +35,13 @@
 | 插件 | SPI + ClassLoader 隔离 + before/after Hook + 市场 + 热插拔 | ✅ 已实现 | `AgentPipeline`、`PluginRuntime` |
 | Skills | Agent Skills 标准目录、扫描同步、导入、三种执行器 | ✅ 已实现 | `SkillService`、`SkillExecutorRegistry` |
 | 工作流 | 自研 DAG（条件分支 + 虚拟线程并行 + Schema 校验） | ✅ 已实现 | `DagEngine`、`WorkflowController` |
-| 工作流画布 | **拖拽式编排画布**（FlowGram 固定布局：拖拽/连线/分支/撤销重做）+ 11 类节点（LLM/知识库/代码/HTTP/插件/工具/Agent/条件/转换）+ 节点级调试轨迹 + 发布/回滚 | ✅ 已实现（2026-09-11） | `pages/workflows/canvas/`、`node/executor/*` |
+| 工作流画布 | **拖拽式编排画布**（FlowGram 固定布局，**Coze 式交互**：画布左键拖拽平移 / 滚轮缩放、节点整卡拖拽重排、内联「+」精确插入、分支折叠、撤销重做）+ 11 类节点（LLM/知识库/代码/HTTP/插件/工具/Agent/条件/转换）+ 节点级调试轨迹 + 发布/回滚；**创建工作流即直接进画布** | ✅ 已实现（2026-09-11，交互完善 09-12） | `pages/workflows/canvas/`、`node/executor/*` |
 | 多模态 | `parts[]`（text / file / image），图片走视觉模型 | ✅ 已实现 | `MultimodalResolver`、`FileUploadService` |
 | 日志与诊断 | 结构化运行日志 + 三级诊断（规则/向量/LLM）+ 6 维提示词评分 | ✅ 已实现 | `LogService`、`DiagnosisEngine`、`PromptOptimizer` |
 | 可观测 | Micrometer 指标 + Loki 日志 + Tempo Span + Grafana 看板与告警 | ✅ 已实现 | `LogEventSink`、`docker-compose.observability.yml` |
 | 租户配额 | 调用次数 / tokens / 文件 / 插件限额（Redis INCR+TTL，内存兜底） | ✅ 已实现 | `QuotaService`、`GET /api/v1/quotas` |
 | 内置库 | 免装 MySQL：H2 file（MySQL 兼容模式）+ Flyway 双迁移目录 | ✅ 已实现 | `--spring.profiles.active=embedded` |
-| 桌面应用 | Electron 33 + jlink 精简 JRE + electron-builder（portable / zip）+ 启动页 + 单实例 + 后端回收 | ✅ 已实现 | `desktop/`、`desktop/main.js` |
+| 桌面应用 | Electron 33 + jlink 精简 JRE + electron-builder（**绿色版 zip / dir，portable 已弃用**）+ 启动页 + 单实例 + 后端回收 + **启动优化**（界面 ~1–2s 弹出、后端 ~13s 就绪） | ✅ 已实现（分发形态与启动优化 09-12） | `desktop/`、`desktop/main.js` |
 | 鉴权 | core 内 JWT 过滤器（登录/静态账号）、生产密钥守卫 | ✅ 已实现 | `AuthController`、`SECURITY_ENABLED` |
 | 独立网关 | 路由 / 限流 / 熔断 | ⚠️ 占位（仅 `JwtAuthFilter`） | `agent-platform-gateway` |
 | 日志高阶存储 | ES / ClickHouse | ❌ 未实现（MySQL `log_index` 替代） | 见 backlog.md |
@@ -119,7 +119,7 @@
 | V12 | 会话早期摘要（`session_def.summary / summary_turn`） |
 | V13 | 工作流发布（`workflow_def.published_definition / published_version / published_at`） |
 
-> 当前最新版本 **V12**；新增迁移必须同时提供 `mysql` 与 `h2` 两份。
+> 当前最新版本 **V13**；新增迁移必须同时提供 `mysql` 与 `h2` 两份。
 
 ---
 
@@ -140,8 +140,8 @@
 
 ## 六、测试规模
 
-- 测试类：**36** 个（`agent-platform-core/src/test`）
-- 测试方法：**143** 个，`mvn test` 实测 **全绿**（2026-09-11）
+- 测试类：**37** 个（`agent-platform-core/src/test`）
+- 测试方法：**143** 个，`mvn test` 实测 **全绿**（2026-09-14）
 - 覆盖重点：Spring AI 通道与原生 tool-role 循环、H2 内置库启动与迁移、RAG 检索事务与 FULLTEXT 失败隔离、
   模型额度查询（含 401 / 不可达 / 不支持厂商）、记忆与摘要、工具与 MCP、插件运行时、DAG 引擎。
 
@@ -158,5 +158,5 @@
 | 未开启 `SECURITY_ENABLED` | 所有接口无鉴权，仅适合本地/内网 |
 | 默认 `JWT_SECRET` / `MODEL_KEY_ENC_KEY` 为占位 | 开启鉴权但仍用默认密钥时启动守卫拒绝启动 |
 | 图片视觉 | 依赖 `SPRING_AI_ENABLED=true` 且模型支持视觉；未开启时图片不发送、文本对话正常 |
-| 桌面 portable 单文件 | 每次运行需解压到临时目录（约 30–60s）；**建议用 zip 绿色版**，启动约 20s |
+| 桌面分发形态 | **只用绿色版**（portable 已弃用）：解压一次后直接运行 `dist/green/Agent Platform.exe`；界面 1–2s 弹出、后端约 13s 就绪 |
 | ASR / TTS / OCR | 接口与插件链路在，默认 mock，未接真实服务 |

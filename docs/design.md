@@ -83,7 +83,7 @@ agent-platform-<ver>/
 | 交互细节 | 先出**浅色启动页**（"正在启动本地服务…约 10–25 秒"）→ 健康检查通过后跳转首页 |
 | 稳定性 | 单实例锁；窗口关闭 / 退出时回收后端子进程；日志写 `userData/app.log` 便于排查 |
 | 数据目录 | `userData/data`（H2 数据文件、skills、files 等） |
-| 打包 | electron-builder 产出 **portable 单文件 exe** 与 **zip 绿色版** |
+| 打包 | electron-builder 产出 **zip 绿色版**（**portable 单文件已弃用**）；构建脚本把 `win-unpacked` 镜像到 `dist/green` |
 
 **改造点（原设计预判 → 实际处理）**：
 
@@ -94,8 +94,11 @@ agent-platform-<ver>/
 4. **首次启动向导**：本版未做独立 `/api/v1/setup`，改为「模型设置」页填写平台默认绑定。
 5. **签名**：未做代码签名（需 `signtool` 证书），企业分发前需补。
 
-**已知代价**：portable 单文件每次运行都要解压（约 30–60s），**推荐分发 zip 绿色版**（解压一次，
-之后每次启动约 20s，其中 Spring Boot 自身约 17s）。
+**启动耗时（2026-09-12 实测）**：绿色版**界面 1–2s 弹出**、后端 `Started in ~12.8s` 就绪（合计约 14s）。
+优化手段：JVM `-XX:TieredStopAtLevel=1` / `-XX:+UseSerialGC` / `-Dspring.main.lazy-initialization=true`；
+embedded profile 排除 Kafka / Redis 自动配置；健康探测间隔 1500ms → 300ms；桌面日志降为 INFO。
+（优化前：界面 20–30s、后端 15–26s。）**portable 单文件已弃用** —— 它每次运行都要把约 640MB
+解压到临时目录，此期间无窗口，冷启动要多等 20–30s，且 Temp 有残留。
 
 **风险（实际遇到）**：Windows 上运行中的 jar 被占用会导致 `mvn package` 的 repackage 失败
 （先停进程）；`--enable-preview` 必须显式传给运行时。

@@ -10,12 +10,13 @@
  * 保存路径：ctx.document.toJSON() → adapter.toBackend() → PUT /workflows/{id}
  * 试运行：先保存（保证跑的是当前画布）→ POST /workflows/{id}/debug（带节点级轨迹）
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Alert, Button, Dropdown, Empty, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Tag, Typography, message } from 'antd';
 import {
   ArrowLeftOutlined,
   CloudUploadOutlined,
   DeleteOutlined,
+  ExpandOutlined,
   PlayCircleOutlined,
   PlusOutlined,
   SaveOutlined,
@@ -25,10 +26,13 @@ import {
   FixedLayoutEditorProvider,
   useClientContext,
   useNodeRender,
+  usePlaygroundTools,
   type FixedLayoutPluginContext,
   type FlowNodeEntity,
 } from '@flowgram.ai/fixed-layout-editor';
 import '@flowgram.ai/fixed-layout-editor/index.css';
+// 官方物料包（defaultFixedSemiMaterials）基于 Semi UI 实现，需要引入其样式
+import '@douyinfe/semi-ui/dist/css/semi.min.css';
 
 import {
   debugWorkflow,
@@ -39,7 +43,7 @@ import {
 } from '../../../api/workflows';
 import { toBackend } from './adapter';
 import { NODE_FIELDS, NODE_METAS, NODE_META_MAP, type CanvasFieldSpec } from './node-metas';
-import { buildNodeJson } from './materials';
+import { buildNodeJson, insertAfterNode } from './materials';
 import { CanvasSelectionContext, type CanvasSelection } from './selection';
 import { useEditorProps } from './use-editor-props';
 import type { FlowDocumentJSON } from './types';
@@ -82,7 +86,23 @@ function CanvasShell({
   onDirty,
 }: ShellProps) {
   const ctx = useClientContext();
+  const playgroundTools = usePlaygroundTools();
   const [selectedId, setSelectedId] = useState<string | undefined>();
+
+  /**
+   * 画布手势：切到「鼠标友好」模式 —— **左键拖拽平移画布 + 滚轮缩放**（与 Coze 一致）。
+   *
+   * 为什么必须运行时设置：`playground.ineractiveType` 这个配置字段在 FlowGram 里是出了名的
+   * 拼写笔误，且 preset 走浅合并（`{...DEFAULT, ...opts}`）容易被默认值顶掉（默认是 `PAD`，
+   * 即触控板的双指滚动）。官方 demo 同样是调用 `tools.setInteractiveType()` 来切换的。
+   */
+  useEffect(() => {
+    try {
+      playgroundTools.setInteractiveType('MOUSE');
+    } catch {
+      /* 旧版本无此 API 时忽略 */
+    }
+  }, [playgroundTools]);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [published, setPublished] = useState<string | undefined>(publishedVersion);
@@ -181,9 +201,9 @@ function CanvasShell({
       const anchorId = selectedId ?? (endIdx > 0 ? nodes[endIdx - 1]?.id : nodes[nodes.length - 1]?.id);
       try {
         if (anchorId) {
-          ctx.operation.addFromNode(anchorId, json as never);
+          insertAfterNode(ctx, anchorId, json);
         } else {
-          ctx.operation.addBlock(ctx.document.root.id, json as never);
+          insertAfterNode(ctx, ctx.document.root.id, json);
         }
         setSelectedId(json.id);
         onDirty();
@@ -228,6 +248,13 @@ function CanvasShell({
             {published ? <Tag color="blue">线上 {published}</Tag> : <Tag>未发布</Tag>}
           </div>
           <div className="wf-toolbar__right">
+            <Space size={4}>
+              <Button size="small" onClick={() => playgroundTools.zoomout()} title="缩小">−</Button>
+              <Button size="small" onClick={() => playgroundTools.zoomin()} title="放大">+</Button>
+              <Button size="small" icon={<ExpandOutlined />} onClick={() => void playgroundTools.fitView()} title="适应视图">
+                适应
+              </Button>
+            </Space>
             <Dropdown
               menu={{
                 items: NODE_METAS.map((m) => ({

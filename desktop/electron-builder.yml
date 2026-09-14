@@ -16,10 +16,12 @@ extraResources:
     to: backend/app.jar
 win:
   target:
-    - portable
     - zip
   artifactName: Agent-Platform-${version}-${arch}.${ext}
-# 说明：portable 每次运行需解压到临时目录（此期间无窗口），首次体验建议用 zip 绿色版：
-# 解压一次后直接运行目录下的 Agent Platform.exe，启动不再有解压开销。
+# 分发形态定案（2026-09-12）：
+#   portable（单文件 exe）已**弃用** —— 它每次运行都要把 ~640MB（electron + jlink runtime + jar）
+#   解压到 %TEMP% 再启动，此期间无窗口、实测冷启动要多等 20–30 秒，且 Temp 有残留。
+#   改用 zip / 绿色版：解压一次后直接运行目录内的 `Agent Platform.exe`，零解压开销、功能完全一致。
+#   构建脚本（build.bat / build.sh）会把 win-unpacked 镜像到 dist/green，保证绿色版始终是最新产物。
 electronVersion: 33.3.1
 npmRebuild: false

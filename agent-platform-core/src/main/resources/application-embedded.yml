@@ -21,6 +21,18 @@ spring:
     hibernate:
       ddl-auto: none          # schema 由 Flyway 管理
     open-in-view: false
+  # ---- 启动优化：桌面单机模式排除用不到的外部中间件自动配置 ----
+  # Kafka：agent-platform.events.enabled 默认 false，KafkaEventBus / KafkaTopicConfig 均条件装配不生效，
+  #        排除其自动配置可省掉启动期创建 KafkaAdmin / KafkaTemplate 的连接与元数据初始化。
+  # Redis：SessionRecentCache / QuotaService 均为 @Autowired(required=false) 可选注入，
+  #        排除后相关字段为 null、自动走降级路径（本地桌面本就不部署 Redis）。
+  # 注意：若在 embedded 下显式开启 events.enabled=true，会因缺少 KafkaTemplate 启动失败，
+  #       此时需删掉下面的 KafkaAutoConfiguration 排除项。
+  autoconfigure:
+    exclude:
+      - org.springframework.boot.kafka.autoconfigure.KafkaAutoConfiguration
+      - org.springframework.boot.data.redis.autoconfigure.DataRedisAutoConfiguration
+      - org.springframework.boot.data.redis.autoconfigure.DataRedisRepositoriesAutoConfiguration
 
 # 桌面/单机模式下不部署 Redis：不把它计入健康检查（否则 /actuator/health 会因 redis DOWN 显示 503）
 # H2 不支持 MySQL 的 MATCH(c.content) AGAINST(...)（native FULLTEXT），执行必然失败；
@@ -38,3 +50,8 @@ management:
   endpoint:
     health:
       show-details: always
+# 启动优化：桌面模式下降级本应用包日志（DEBUG → INFO），减少启动期日志格式化与写盘开销。
+# 需要排查问题时把这里改回 DEBUG（或删掉本段，回落 application.yml 的 DEBUG）。
+logging:
+  level:
+    com.agentplatform: INFO

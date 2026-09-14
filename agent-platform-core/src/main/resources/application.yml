@@ -20,6 +20,15 @@ spring:
       max-request-size: 55MB
       file-size-threshold: 2MB
       resolve-lazily: true
+  # ---- 静态资源（前端产物，同源托管）----
+  # 统一 no-store：单机/桌面场景下缓存收益极低，但 Electron 会长期保留 HTTP 缓存，
+  # 曾导致「后端产物已更新，桌面版仍加载旧 bundle → 工作流画布整页空白」。
+  # 关掉后改前端无需 Ctrl+F5、桌面版重启即生效。
+  web:
+    resources:
+      cache:
+        cachecontrol:
+          no-store: true
   # ---- 数据源（MySQL 8.4）----
   datasource:
     url: ${MYSQL_URL:jdbc:mysql://localhost:3306/agent_platform?useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8&rewriteBatchedStatements=true&allowPublicKeyRetrieval=true}

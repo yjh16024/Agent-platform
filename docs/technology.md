@@ -10,7 +10,7 @@
 > | [backlog.md](backlog.md) | 还没做什么、契约与踩坑 |
 > | [guides.md](guides.md) | 怎么扩展、部署、观测 |
 >
-> 最后核实：**2026-09-10**（版本号取自根 `pom.xml` 与 `agent-platform-ui/package.json`）。
+> 最后核实：**2026-09-14**（版本号取自根 `pom.xml` 与 `agent-platform-ui/package.json`）。
 
 ---
 
@@ -33,12 +33,12 @@
 | 鉴权 | JJWT | 0.12.6 | JWT 签发与校验 |
 | 映射/工具 | Lombok 1.18.34、MapStruct 1.5.5、Guava 33.3、Commons | — | 样板代码与工具 |
 | 前端 | **React 18.3** + **TypeScript 5.6** + **Vite 5.4** + **antd 5.21** + zustand 4.5 + react-router 6.28 | — | 仪表盘 SPA |
-| 工作流画布 | **FlowGram**（`@flowgram.ai/fixed-layout-editor`，MIT） | 1.0.15 | 拖拽式工作流编排画布（与 Coze 工作流同源内核） |
+| 工作流画布 | **FlowGram**（`@flowgram.ai/fixed-layout-editor`，MIT）+ 官方内联物料包 `fixed-semi-materials` | 1.0.15 | 拖拽式工作流编排画布（与 Coze 工作流同源内核） |
 | 桌面壳 | **Electron** | 33.3.1 | 桌面窗口与生命周期 |
-| 桌面运行时 | **jlink** 精简 JRE + **electron-builder** | — | 免装 Java、portable/zip 打包 |
+| 桌面运行时 | **jlink** 精简 JRE + **electron-builder** | — | 免装 Java、**绿色版（zip / dir）** 打包 |
 | 观测 | Micrometer + Prometheus + Loki + Tempo + Grafana | — | 指标 / 日志 / 链路 |
 | 部署 | Docker 多阶段 + K8s（Kustomize/Helm）+ HPA/KEDA | Spring Cloud 2025.1.3 | 生产化 |
-| 测试 | JUnit 5 + Mockito 5.12 + Spring Boot Test + 本地 `HttpServer` | — | 140 个测试 |
+| 测试 | JUnit 5 + Mockito 5.12 + Spring Boot Test + 本地 `HttpServer` | — | 143 个测试 |
 
 ---
 
@@ -173,9 +173,20 @@ Skills 采用 Agent Skills 开放标准目录 `skills/<name>/SKILL.md`，执行�
 
 **用什么**：
 
-- **前端画布**：**FlowGram 固定布局**（`@flowgram.ai/fixed-layout-editor` **1.0.15**，**MIT**）——
-  拖拽/连线/分组/撤销重做/小地图/快捷键开箱可用；节点外观与配置表单**用本平台 antd 自绘**
-  （只引 `fixed-layout-editor`，不引其 Semi 物料包 `fixed-semi-materials`，避免与 antd 混用两套 UI 库）。
+- **前端画布**：**FlowGram 固定布局**（`@flowgram.ai/fixed-layout-editor` **1.0.15**，**MIT**，与 Coze 工作流同源内核）。
+  固定布局的含义是**「顺序即执行顺序」**，所以交互形态是「节点排队 + 拖拽重排 + 内联加号插入」，
+  **没有连线**（这是与自由画布的本质区别，也正是 Coze 的形态）。
+- **内联交互直接用官方物料包**：`@flowgram.ai/fixed-semi-materials` 的 `defaultFixedSemiMaterials`
+  （含 collapse / branch-adder / drag-node / draggable-adder / 拖拽高亮等 **10 个 render key**）。
+  **为什么必须这样**：FlowGram 画布是 **headless** 的 —— 内核只注册 `node-render`，而渲染服务会无兜底地
+  索取其它 key，缺任何一个就抛 `Unknown render key` 打崩整页；自研整套内联 UI 成本极高，官方这套最全最稳。
+  只把「+」加号覆盖成平台自研（要弹自己的 11 类节点库）。代价是多带一套 Semi UI 依赖
+  （`@douyinfe/semi-ui` + `semi-icons`；其 CSS 经 `vite.config.ts` 的 `resolve.alias` 引入，
+  因为 semi 的 `exports` 未暴露 `dist/css/*`）；**节点卡片与配置表单仍用 antd 自绘**，视觉风格统一。
+- **拖拽交互的两个关键点**（详见 [backlog.md](backlog.md) 第 19–21 条）：**节点拖拽必须由节点组件显式调用**
+  `useStartDragNode().startDrag(e, { dragStartEntity: node })`（FlowGram 内核**不会自动绑定**）；
+  **画布平移/缩放**用 `ineractiveType: 'MOUSE'`（左键拖空白平移 + 滚轮缩放），可靠入口是运行时
+  `usePlaygroundTools().setInteractiveType('MOUSE')`。
 - **后端引擎**：`WorkflowSchemaValidator`（ID 唯一 / 环检测 / **类型必须有执行器**）+ `DagEngine`
   （运行时递归遍历、条件分支、虚拟线程并行、**节点级执行轨迹**）+
   `EnumMap<NodeType, NodeExecutor>` 策略分发（画布可拖出的 11 类节点都有对应执行器）。
@@ -248,15 +259,19 @@ Jackson `@JsonTypeInfo` 反序列化 `parts[]`；`MultimodalResolver` 做模型�
 ### 2.14 内置库与桌面分发：H2 + jlink + Electron
 
 **用什么**：`--spring.profiles.active=embedded` 切 H2 file（MySQL 兼容模式）；`desktop/main.js`
-用 Electron 拉起后端并托管窗口；jlink 生成精简 JRE；electron-builder 出 portable/zip。
+用 Electron 拉起后端并托管窗口；jlink 生成精简 JRE；electron-builder 出 **zip 绿色版**
+（dir target 再镜像到 `dist/green`）。
 
 **为什么**：
 
 - **H2 而非 SQLite**：项目已用 Flyway + JPA，H2 的 MySQL 兼容模式让大部分既有 DDL 与 SQL 可复用，
   只需补一份 h2 迁移目录；SQLite 则要重写方言与部分 SQL。
 - **Electron 而非 jpackage**：窗口、生命周期、托盘、打包与更新生态成熟，且前端已有完整 Web UI 可**直接复用**；
-  jpackage 需自行解决窗口与启动页体验。代价是体积与"每次运行解压"（portable）——
-  因此**推荐分发 zip 绿色版**（解压一次）。
+  jpackage 需自行解决窗口与启动页体验。代价是体积（含 Electron 与内嵌 JRE）。
+- **弃用 portable 单文件、只出绿色版（2026-09-12）**：portable 每次运行都要把约 640MB 解压到 `%TEMP%`，
+  且解压期间无窗口（冷启动多等 20–30s）。绿色版解压一次后 **界面 1–2s 弹出、后端 `Started in ~12.8s`**；
+  优化手段：JVM `-XX:TieredStopAtLevel=1` / `-XX:+UseSerialGC` / `-Dspring.main.lazy-initialization=true`、
+  embedded 排除 Kafka/Redis 自动配置、健康探测间隔 1500ms→300ms、桌面日志降 INFO。
 - **jlink 而非要求用户装 JRE**：桌面分发的底线是"双击就能用"，内嵌精简 JRE 是唯一可靠做法；
   同时保留 `--enable-preview`（与后端预览特性配套）。
 
@@ -321,12 +336,13 @@ Lombok          1.18.34        MapStruct 1.5.5 Guava 33.3.0-jre
 Mockito         5.12.0         Testcontainers 1.20.1
 React           18.3.1         TypeScript 5.6.3  Vite 5.4.11  antd 5.21.6
 zustand         4.5.5          react-router-dom 6.28.0
+FlowGram        1.0.15         Semi UI       2.103
 Electron        33.3.1
 ```
 
 > **版本策略（2026-09-10 已升级到最新线）**：本项目的框架已从 Spring Boot 3.4 + Spring AI 1.1.8 一次性升级到
-> **Spring Boot 4.1.1 + Spring Cloud 2025.1.3 + Spring AI 2.0.1 + Jackson 3.1.5**（实测：140 个测试全绿、端到端检索与
-> 额度查询正常、桌面版启动 15.2s）。这次跨代变更的要点：
+> **Spring Boot 4.1.1 + Spring Cloud 2025.1.3 + Spring AI 2.0.1 + Jackson 3.1.5**（实测：143 个测试全绿、端到端检索与
+> 额度查询正常、桌面版启动优化后约 13s）。这次跨代变更的要点：
 >
 > - **Jackson 2→3**：databind/core 坐标与包名迁至 `tools.jackson.*`（注解包 `com.fasterxml.jackson.annotation.*` 保留）；
 >   `TextNode`→`StringNode`、`JsonNode#fields()`→`properties()`、异常变 unchecked、

@@ -64,7 +64,8 @@ function waitHttp(port, timeoutMs) {
       });
       req.on('error', () => {
         if (Date.now() > deadline) reject(new Error(`backend not ready within ${timeoutMs}ms`));
-        else setTimeout(probe, 1500);
+        // 轮询间隔 300ms（原 1500ms）：后端一旦就绪就尽快切到真实页面，平均可省 ~0.7s。
+        else setTimeout(probe, 300);
       });
       req.setTimeout(3000, () => req.destroy());
     };
@@ -87,8 +88,17 @@ async function startBackend() {
   if (!fs.existsSync(exe)) throw new Error(`runtime java not found: ${exe}`);
   if (!fs.existsSync(jar)) throw new Error(`backend jar not found: ${jar}`);
   logLine(`starting backend: ${exe} ... jar=${jar} port=${port} cwd=${dataDir()}`);
+  // 启动优化（桌面为单用户场景，以「启动快」优先、峰值吞吐让位）：
+  //  - TieredStopAtLevel=1：即时编译只到 C1、跳过 C2，启动阶段显著更快；
+  //  - UseSerialGC：小堆用串行 GC，省掉并行 GC 线程的初始化开销；
+  //  - lazy-initialization：bean 延迟初始化，缩短启动阻塞（代价：某功能首次点击时才初始化）。
   backend = spawn(exe, [
-    '--enable-preview', '-Xms128m', '-Xmx1g',
+    '--enable-preview',
+    '-Xms128m', '-Xmx1g',
+    '-XX:TieredStopAtLevel=1',
+    '-XX:+UseSerialGC',
+    '-Dspring.main.lazy-initialization=true',
+    '-Djava.awt.headless=true',
     '-jar', jar,
     '--spring.profiles.active=embedded',
     `--server.port=${port}`,
@@ -143,6 +153,14 @@ if (!gotLock) {
     try {
       const port = await startBackend();
       logLine(`backend ready on ${port}; loading UI`);
+      // 清掉 Electron 自身的 HTTP 缓存：否则升级后仍可能复用上一次的前端产物
+      // （表现为「后端已更新，但桌面版工作流画布依旧整页空白」）。
+      try {
+        await win.webContents.session.clearCache();
+        logLine('cleared electron http cache');
+      } catch (e) {
+        logLine(`clearCache failed: ${e.message}`);
+      }
       await win.loadURL(`http://127.0.0.1:${port}`);
       logLine('ui loaded');
     } catch (e) {

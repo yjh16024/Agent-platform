@@ -3,7 +3,7 @@
 > **职责**：怎么扩展、怎么部署、怎么演示、怎么观测。**不重复**已实现功能清单
 > （见 [status.md](status.md)）与技术设计（见 [design.md](design.md)）。
 > 环境变量的**完整权威清单**在 [../README.md](../README.md) 的「配置」一节，本文只列部署相关补充。
-> 最后核实：**2026-09-10**。
+> 最后核实：**2026-09-14**。
 
 ---
 
@@ -133,6 +133,19 @@ helm install agent-platform agent-platform-deploy/helm/agent-platform \
 |---|---|---|
 | agent-core | CPU / 内存 / Kafka 堆积 | HPA + KEDA（堆积 >1000 扩容） |
 | 诊断/优化 Worker | 队列长度 | KEDA 自定义指标 |
+
+### 2.7 桌面分发（Windows 绿色版）
+
+```bat
+desktop\build.bat    REM 一键：jlink JRE → 后端 jar → electron-builder zip → 同步 dist\green
+```
+
+- **分发形态只有绿色版**：把 `desktop\dist\green\` 整个目录（或 `dist\Agent-Platform-1.0.0-x64.zip`）
+  交给用户，解压后运行里面的 `Agent Platform.exe` 即可。
+- **不要用 portable 单文件**：它每次运行都要把约 640MB 解压到临时目录，冷启动要多等 20–30s（期间无窗口）。
+- 运行时表现：**界面 1–2s 弹出**、后端约 13s 就绪；数据落在 `%APPDATA%\Agent Platform\data`，
+  日志在 `%APPDATA%\Agent Platform\app.log`。
+- 桌面包以 `embedded`（H2）profile 运行，**免装 MySQL / Redis**。
 
 ---
 

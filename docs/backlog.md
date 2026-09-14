@@ -5,7 +5,7 @@
 > 设计意图与可行性依据见 [design.md](design.md)。
 >
 > 合并来源：原 `docs/TODO.md`（空文件，已删除）+ `TECH_GAP_ROADMAP.md` + `FEASIBILITY_ANALYSES.md`（待实施部分）。
-> 最后核实：**2026-09-10**。
+> 最后核实：**2026-09-14**。
 
 ---
 
@@ -23,6 +23,8 @@
 | 桌面自动更新 | ❌ | 无 updater，升级需重新分发 zip / exe |
 > 已完成项不在此列出，例如 **框架大版本升级（Spring Boot 4.1.1 + Spring AI 2.0.1 + Jackson 3，2026-09-10 完成）**、
 > **工作流拖拽画布（FlowGram + 11 类节点 + 节点级调试 + 发布/回滚，2026-09-11 完成）**、
+> **画布交互完善（Coze 式内联加号 / 节点整卡拖拽重排 / 画布平移缩放 / 创建即进画布，2026-09-12 完成）**、
+> **桌面绿色版分发 + 启动优化（弃用 portable；界面 1–2s、后端 ~13s，2026-09-12 完成）**、
 > Spring AI 通道集成、H2 内置库、对话早期摘要（中期记忆）、
 > 图片视觉、HTTP 工具持久化、内置天气工具、**Electron 桌面应用**、**模型账户额度查询**
 > —— 全部见 [status.md](status.md)；升级过程中的踩坑见本文第四节。
@@ -54,7 +56,7 @@
 1. **Bean 多构造必须标 `@Autowired`**：给 @Service 加测试用重载构造后若忘标注，Spring 报
    "No default constructor found"（`LogService` 曾踩）。
 2. **前端必须重建**：core 托管 `static/` 旧产物，改前端后要 `npm run build:prod` 同步再启动；浏览器 Ctrl+F5。
-3. **新增迁移要写两份**：Flyway 目前到 **V12**，`db/migration/mysql` 与 `db/migration/h2` 必须同名同序；H2 不支持 MySQL 的
+3. **新增迁移要写两份**：Flyway 目前到 **V13**，`db/migration/mysql` 与 `db/migration/h2` 必须同名同序；H2 不支持 MySQL 的
    `MATCH..AGAINST`（由 `agent-platform.rag.fulltext.enabled=false` 在 embedded 下跳过）。
 4. **`.env` 只被 docker-compose/LiteLLM 消费**；core（宿主机 java）不读 `.env`，需手动 export 或改造 `start-core.bat`。
    核心开关默认关：`security/events/vector-store/storage/springai`。
@@ -88,3 +90,28 @@
 18. **桌面精简 JRE 必须含 `jdk.net`**：Boot 4 带来的 Lettuce 7.x 在初始化时引用
     `jdk.net.ExtendedSocketOptions`，jlink runtime 缺该模块会导致后端启动即失败
     （`NoClassDefFoundError`）——`desktop/build.bat|sh` 的模块列表已补上。
+19. **FlowGram 拖拽必须显式发起（2026-09-12）**：内核**不会自动绑定**节点拖拽，`fixed-drag-plugin`
+    全库**没有任何自动调用点** —— 节点组件必须自己调
+    `useStartDragNode().startDrag(e, { dragStartEntity: node })`。两个坑：
+    `dragStartEntity` 要传**单个节点实体**（传数组抛 `d.getData is not a function`）；
+    `nodeRender.startDrag(e)` 在 `FlowDragLayer` 未注册时会**静默退化成空函数**（按下没反应也不报错）。
+20. **画布 `mousedown` 要在捕获阶段拦（2026-09-12）**：FlowGram 在画布图层上监听原生 `mousedown`，
+    比 React 挂在 root 容器的合成事件**更早**执行 —— 只在 `onMouseDown` 里 `stopPropagation` 拦不住它，
+    画布平移会先启动，而 `FlowDragLayer.startDrag` 开头有 `if (this.isGrab()) return`，节点拖拽被顶掉。
+    节点 / 加号等交互元素要用 **`onMouseDownCapture`**。
+21. **FlowGram 画布是 headless 的（2026-09-11）**：内核只注册 `node-render`，渲染服务会无兜底地索取其它
+    render key，缺任何一个（如 `drag-node` / `adder`）就抛 `Unknown render key` **打崩整页**（画布全白）。
+    解法：直接用官方物料包 `@flowgram.ai/fixed-semi-materials` 的 `defaultFixedSemiMaterials`（10 个 key）。
+    其 CSS 依赖 semi-ui，而 semi 的 `exports` 未暴露 `dist/css/*`，Vite 严格解析会报 Missing specifier
+    —— 需在 `vite.config.ts` 用 `resolve.alias` 映射到真实文件。
+22. **画布手势模式的正确写法（2026-09-12）**：`playground.ineractiveType` 是库内的**拼写笔误**（类型定义也这个错名），
+    且 preset 是浅合并；可靠入口是运行时 `usePlaygroundTools().setInteractiveType('MOUSE')`
+    （`MOUSE` = 左键拖空白平移 + 滚轮缩放，即 Coze 手势）。注意 `ctx.tools` 的 `FixedLayoutPluginTools`
+    **只有 `fitView`**，没有该方法。
+23. **桌面分发只用绿色版（2026-09-12）**：`electron-builder` 的 portable 单文件每次运行要解压约 640MB
+    到 `%TEMP%`（无窗口 20–30s）；改用 zip/dir 绿色版（解压一次，之后界面 1–2s、后端 ~13s）。
+    `desktop/build.bat|sh` 会把 `win-unpacked` 镜像到 `dist/green`。
+24. **embedded 模式可排除中间件自动配置（2026-09-12）**：桌面启动优化在 `application-embedded.yml` 排除了
+    `KafkaAutoConfiguration` / `DataRedisAutoConfiguration` / `DataRedisRepositoriesAutoConfiguration`
+    —— 前提是 Kafka 相关 Bean 均 `@ConditionalOnProperty(events.enabled=true)`、Redis 均 `@Autowired(required=false)`。
+    **若在 embedded 下显式开 `events.enabled=true`，必须先删掉 Kafka 排除项**，否则缺 `KafkaTemplate` 启动失败。

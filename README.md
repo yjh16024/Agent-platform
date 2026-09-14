@@ -27,7 +27,7 @@ Spring AI 2.0.1，默认关闭、可一键回退自研实现，凭证三级回�
 - 拖拽式工作流画布可行性分析（Coze Studio / FlowGram 选型与后端缺口）：[docs/workflow-canvas-feasibility.md](docs/workflow-canvas-feasibility.md)
 - 扩展指南与部署（K8s/Helm、演示脚本、可观测性运维）：[docs/guides.md](docs/guides.md)
 - 历史阶段验收报告（Phase 1–7，快照留档）：[docs/phase-reports.md](docs/phase-reports.md)
-- 桌面应用（Electron 壳 + jlink 运行时）：[desktop/](desktop/)（启动页、单实例、打包见 [docs/design.md](docs/design.md)）
+- 桌面应用（Electron 壳 + jlink 运行时，**绿色版免安装**）：[desktop/](desktop/)（启动页、单实例、打包见 [docs/design.md](docs/design.md)；构建与分发见 [docs/guides.md](docs/guides.md) §2.7）
 - 可观测栈（Loki / Tempo / Prometheus / Grafana）：[docker-compose.observability.yml](docker-compose.observability.yml)
 
 ## 它解决什么问题
@@ -149,10 +149,18 @@ Skills 采用 Agent Skills 开放标准布局 `skills/<name>/SKILL.md`（可选 
 
 编排有两层：**画布**（`/workflows` → 点「画布」）与**引擎**。
 
-画布基于 FlowGram 固定布局（与 Coze 工作流同源的内核），可拖拽/连线/分组/撤销重做，节点覆盖
-**LLM、知识库、代码（Skill）、HTTP、插件、工具、Agent、条件分支、变量转换**；右侧配参数（表单随类型变化），
-底部「试运行」会按节点展示执行轨迹（状态 / 耗时 / 入出参）。「发布」生成已发布快照并递增版本号，
-草稿可继续编辑、支持一键回滚。
+**创建工作流即直接进画布**（弹窗只填名称/描述，定义由画布自动生成，无需手写 JSON）。
+
+画布基于 **FlowGram 固定布局**（与 Coze 工作流同源的内核），交互形态与 Coze 一致：
+
+- **画布拖拽平移 + 滚轮缩放**（左键拖空白处即平移）；
+- **节点整卡拖拽重排**，拖到两节点之间松手即插入到该处；
+- 节点之间 / 分支内的**内联「+」**：点击弹出节点库，新节点**精确插在加号所在位置**；
+- 分支可折叠展开，全程支持撤销 / 重做。
+
+节点覆盖 **LLM、知识库、代码（Skill）、HTTP、插件、工具、Agent、条件分支、变量转换**；右侧配参数
+（表单随类型变化），底部「试运行」会按节点展示执行轨迹（状态 / 耗时 / 入出参）。「发布」生成已发布
+快照并递增版本号，草稿可继续编辑、支持一键回滚。
 
 引擎侧是自研 `DagEngine`：条件分支 + 虚拟线程并行，节点带 Schema 校验（含"类型必须有执行器"——
 **缺执行器的节点在保存时就被拦下**，不会等到运行时才炸）。
@@ -375,8 +383,9 @@ agent-platform-ui\build-ui.bat            # 或: cd agent-platform-ui && npm ins
 cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5173/
 ```
 
-> 改动后端后需重启 core；改动前端后需重新 `npm run build:prod` 再重启（或直接访问 5173）；
-> 查看效果前记得浏览器 `Ctrl+F5`（core 托管的是旧产物）。
+> 改动后端后需重启 core；改动前端后需重新 `npm run build:prod` 再重启（或直接访问 5173）。
+> 静态资源已设 `cache-control: no-store`，一般无需 `Ctrl+F5`；桌面版启动时会主动清 HTTP 缓存，
+> 重启即生效。
 
 ## 数据目录（运行时自动创建，无需预先存在）
 
@@ -452,4 +461,4 @@ cd agent-platform-ui && npm run build:prod            # 前端构建，产物同
 
 技术栈：Java 21（虚拟线程 + ScopedValue）、Spring Boot 4.1、Spring Data JPA + Flyway、
 MySQL 8（或内置 H2，`DB_MODE=embedded`）、Redis（可选）、Milvus（可选）、Spring AI 2.0.1（可选通道）、
-React + Vite + antd。
+React + Vite + antd、**FlowGram**（拖拽式工作流画布，与 Coze 同源内核）、**Electron + jlink**（桌面绿色版）。
