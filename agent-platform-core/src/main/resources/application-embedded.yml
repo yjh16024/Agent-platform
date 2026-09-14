@@ -22,12 +22,12 @@ spring:
       ddl-auto: none          # schema 由 Flyway 管理
     open-in-view: false
   # ---- 启动优化：桌面单机模式排除用不到的外部中间件自动配置 ----
-  # Kafka：agent-platform.events.enabled 默认 false，KafkaEventBus / KafkaTopicConfig 均条件装配不生效，
-  #        排除其自动配置可省掉启动期创建 KafkaAdmin / KafkaTemplate 的连接与元数据初始化。
+  # Kafka：桌面单机没有 broker，本文件下方已把 agent-platform.events.enabled 显式覆盖为 false，
+  #        KafkaEventBus / KafkaTopicConfig 条件装配不生效；再排除其自动配置，可省掉启动期
+  #        创建 KafkaAdmin / KafkaTemplate 的连接与元数据初始化。
+  #        （两者必须配套：要么都保留、要么都去掉 —— 只开 events 而不删排除项会因缺 KafkaTemplate 启动失败。）
   # Redis：SessionRecentCache / QuotaService 均为 @Autowired(required=false) 可选注入，
   #        排除后相关字段为 null、自动走降级路径（本地桌面本就不部署 Redis）。
-  # 注意：若在 embedded 下显式开启 events.enabled=true，会因缺少 KafkaTemplate 启动失败，
-  #       此时需删掉下面的 KafkaAutoConfiguration 排除项。
   autoconfigure:
     exclude:
       - org.springframework.boot.kafka.autoconfigure.KafkaAutoConfiguration
@@ -38,6 +38,10 @@ spring:
 # H2 不支持 MySQL 的 MATCH(c.content) AGAINST(...)（native FULLTEXT），执行必然失败；
 # 关闭后稀疏检索直接走顺序扫描兜底，同时避免那条失败 SQL 把查询事务标记为 rollback-only。
 agent-platform:
+  # 桌面单机不接 Kafka（也没有 broker）：显式关闭事件总线，与上方 autoconfigure 排除项配套。
+  # 若要在桌面接 Kafka：删掉本项，同时删掉上方 KafkaAutoConfiguration 排除项。
+  events:
+    enabled: false
   rag:
     fulltext:
       enabled: false

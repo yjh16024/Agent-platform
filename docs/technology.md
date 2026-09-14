@@ -81,8 +81,8 @@
 - 自研四个适配器：`OpenAiCompatibleAdapter`（OpenAI/DeepSeek/通义/混元/文心 + LiteLLM 中转）、
   `AnthropicAdapter`（Messages API）、`RuleEngineModelAdapter`（规则确定性应答）、`MockModelAdapter`（本地兜底）；
 - `ModelRouter` 按 `provider` 选择，`ModelBindingService` 决定最终凭证（三级回退）；
-- **可选通道**：`SPRING_AI_ENABLED=true` 时协议层换成 Spring AI 2.0.1 的 `ChatModel`，工具循环换成原生
-  tool-role，可观测换成 `ChatModel` 自动 Observation。
+- **Spring AI 通道（默认开启）**：协议层走 Spring AI 2.0.1 的 `ChatModel`（底层为官方厂商 SDK），
+  工具循环走原生 tool-role，可观测走 `ChatModel` 自动 Observation；`SPRING_AI_ENABLED=false` 一键回退自研。
 
 **为什么自研为主**：
 
@@ -93,9 +93,9 @@
 3. **OkHttp 而非 WebClient**：调用是阻塞式（与虚拟线程配合）、需要精细的连接/读超时与自定义 UA；
    不需要完整响应式栈。SSE 手写按行解析，帧结构简单可控。
 
-**为什么还要保留 Spring AI 通道**：把"厂商协议实现"这件易变的事交给官方维护（新厂商、协议变更、
-重试与退避），同时保留**一键回退**（默认关闭）。两条链路都有测试守护，凭证层（AES-GCM / 掩码 / 三级回退）
-**一行未改**。
+**为什么用 Spring AI 通道（默认开启）**：把"厂商协议实现"这件易变的事交给官方维护（新厂商、协议变更、
+重试与退避）；同时保留**一键回退**（`SPRING_AI_ENABLED=false`）。两条链路都有测试守护，
+凭证层（AES-GCM / 掩码 / 三级回退）**一行未改**。
 
 ### 2.4 凭证安全：AES-GCM + 掩码 + 三级回退
 

@@ -59,7 +59,8 @@
 3. **新增迁移要写两份**：Flyway 目前到 **V13**，`db/migration/mysql` 与 `db/migration/h2` 必须同名同序；H2 不支持 MySQL 的
    `MATCH..AGAINST`（由 `agent-platform.rag.fulltext.enabled=false` 在 embedded 下跳过）。
 4. **`.env` 只被 docker-compose/LiteLLM 消费**；core（宿主机 java）不读 `.env`，需手动 export 或改造 `start-core.bat`。
-   核心开关默认关：`security/events/vector-store/storage/springai`。
+   默认开关（**2026-09-14 起**）：`springai` / `events` **默认开**；`security` / `vector-store` / `storage` 默认关、按需开。
+   桌面（embedded）是唯一例外 —— 它显式覆盖 `events.enabled=false`（单机无 broker，且已排除 Kafka 自动配置）。
 5. **默认密钥**：`JWT_SECRET`、`MODEL_KEY_ENC_KEY` 有 `change-me-*` 默认值；生产必须覆盖，且
    `SECURITY_ENABLED=true` + 默认 JWT 密钥会被启动守卫拒绝启动。
 6. **数据库不可用时日志降级内存**：`LogService` 静默切到有界队列并打印一次告警；日志页空且服务正常时先查 DB 连接。
@@ -111,7 +112,8 @@
 23. **桌面分发只用绿色版（2026-09-12）**：`electron-builder` 的 portable 单文件每次运行要解压约 640MB
     到 `%TEMP%`（无窗口 20–30s）；改用 zip/dir 绿色版（解压一次，之后界面 1–2s、后端 ~13s）。
     `desktop/build.bat|sh` 会把 `win-unpacked` 镜像到 `dist/green`。
-24. **embedded 模式可排除中间件自动配置（2026-09-12）**：桌面启动优化在 `application-embedded.yml` 排除了
-    `KafkaAutoConfiguration` / `DataRedisAutoConfiguration` / `DataRedisRepositoriesAutoConfiguration`
-    —— 前提是 Kafka 相关 Bean 均 `@ConditionalOnProperty(events.enabled=true)`、Redis 均 `@Autowired(required=false)`。
-    **若在 embedded 下显式开 `events.enabled=true`，必须先删掉 Kafka 排除项**，否则缺 `KafkaTemplate` 启动失败。
+24. **Kafka 开关与 embedded 排除项必须配套（2026-09-12 引入，2026-09-14 调整）**：`events` 已改为**默认开启**，
+    而 `KafkaEventBus` 构造器**强依赖 `KafkaTemplate`**；桌面（embedded）profile 既排除了 `KafkaAutoConfiguration`、
+    又显式把 `events.enabled` 覆盖为 `false` —— **这两处必须同进同出**：只开 `events` 而不删排除项会因缺
+    `KafkaTemplate` 启动失败；只删排除项而不关 `events`，桌面启动会去连不存在的 broker。
+    （Redis 侧的排除是安全的：`SessionRecentCache` / `QuotaService` 均为 `@Autowired(required=false)`。）

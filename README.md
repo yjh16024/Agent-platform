@@ -15,8 +15,8 @@ Agent Platform 是一个面向多租户场景的 AI 智能体运行平台。它�
 Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉）、运行日志与三级诊断。
 
 工程层：**可选内置库**（`DB_MODE=embedded` 用 H2 免装 MySQL 直接跑）、**Spring AI 通道**
-（`SPRING_AI_ENABLED=true` 时模型调用 / 原生 tool-role 工具循环 / RAG 解析切分 / 可观测走
-Spring AI 2.0.1，默认关闭、可一键回退自研实现，凭证三级回退与加密始终不变）。
+（**默认开启**：模型调用 / 原生 tool-role 工具循环 / RAG 解析切分 / 可观测走 Spring AI 2.0.1；
+用 `SPRING_AI_ENABLED=false` 可一键回退自研实现，凭证三级回退与加密始终不变）。
 
 ## 文档导航
 
@@ -71,10 +71,10 @@ Spring AI 2.0.1，默认关闭、可一键回退自研实现，凭证三级回�
 智能体自定义绑定 → 平台默认模型 → 配置项兜底，逐级回退。凭证以 AES-GCM 加密落库，接口只回
 掩码，不会把明文 Key 送到前端。
 
-> **可选 Spring AI 通道**：`SPRING_AI_ENABLED=true` 时，OpenAI 兼容与 Anthropic 的协议层由
-> Spring AI 2.0.1 的 `ChatModel` 实现（底层为官方厂商 SDK：`openai-java` / `anthropic-java`，
-> 自定义 UA 经请求头透传、429/5xx 由 SDK `maxRetries` 重试）；**上层的凭证解析、
-> 加密/掩码、三级回退一行未动**，只是适配器换实现。默认关闭时回到自研适配器，两条链路都有测试守护。
+> **Spring AI 通道（默认开启）**：OpenAI 兼容与 Anthropic 的协议层由 Spring AI 2.0.1 的 `ChatModel`
+> 实现（底层为官方厂商 SDK：`openai-java` / `anthropic-java`，自定义 UA 经请求头透传、
+> 429/5xx 由 SDK `maxRetries` 重试）；**上层的凭证解析、加密/掩码、三级回退一行未动**，
+> 只是适配器换实现。设 `SPRING_AI_ENABLED=false` 回到自研适配器，两条链路都有测试守护。
 
 ### 提示词：人格 → 模板 → 变量 → Skill
 
@@ -322,7 +322,7 @@ curl http://localhost:8081/actuator/health
 4. **建一个知识库**：上传文档 → 等待摄取完成 → 在智能体 `capabilities` 绑定 → 对话验证引用溯源。
 5. **挂 Skill / 插件**：把 Skill 放进 `data/skills/` 后「扫描同步」；插件在市场导入后 Attach 到智能体。
 6. **按需开工具**：请求里带 `tools.enabled` 与白名单，验证工具循环；需要外部能力再接 MCP。
-7. **可选设施**：`VECTOR_STORE=milvus`、`STORAGE_TYPE=minio`、`EVENTS_ENABLED=true`。
+7. **可选设施**：`VECTOR_STORE=milvus`、`STORAGE_TYPE=minio`（Kafka 事件总线已默认开启，无需额外配置；要关设 `EVENTS_ENABLED=false`）。
 8. **生产加固**：开启鉴权、覆盖密钥、配置静态账号（见「从演示到生产」）。
 
 单个智能体也可覆盖平台默认：编辑智能体时勾选「为该智能体自定义模型 / API Key」。
@@ -338,14 +338,14 @@ curl http://localhost:8081/actuator/health
 | `SKILLS_OPEN_FOLDER` | 是否允许仪表盘打开系统文件管理器 | `false`（本地桌面可设 `true`） |
 | `STORAGE_TYPE` | 文件存储：`local` / `minio` | `local`（本地磁盘 `./data/files`） |
 | `VECTOR_STORE` | 向量库：`in-memory` / `milvus` | `in-memory` |
-| `EVENTS_ENABLED` | Kafka 事件总线开关 | `false` |
+| `EVENTS_ENABLED` | Kafka 事件总线开关（broker 不可用时静默降级；桌面 embedded 强制关） | `true` |
 | `SECURITY_ENABLED` | core 侧 JWT 鉴权开关 | `false` |
 | `JWT_SECRET` / `MODEL_KEY_ENC_KEY` | JWT 密钥 / 模型 Key 加密主密钥 | `change-me-*`（**生产务必覆盖**） |
 | `AUTH_USERNAME` / `AUTH_PASSWORD` | 登录静态账号（配置后登录需校验） | 空（演示模式签发） |
 | `DEFAULT_PROVIDER` / `DEFAULT_MODEL` | 未配置时的模型厂商/型号 | `deepseek` / `deepseek-chat` |
 | `embedded`（`--spring.profiles.active=embedded`） | 内置 H2 库模式（免 MySQL，数据 `./data/agent-platform.mv.db`）；脚本用 `start-core.bat embedded` | 默认 mysql |
-| `SPRING_AI_ENABLED` | 模型调用 / 工具循环 / 可观测走 Spring AI 2.0.1（默认关闭 = 自研实现，可回退） | `false` |
-| `SPRING_AI_RAG_ENABLED` | RAG 解析 / 切分走 Spring AI（TikaDocumentReader + TokenTextSplitter） | `false` |
+| `SPRING_AI_ENABLED` | 模型调用 / 工具循环 / 可观测走 Spring AI 2.0.1（`false` = 回退自研实现） | `true` |
+| `SPRING_AI_RAG_ENABLED` | RAG 解析 / 切分走 Spring AI（TikaDocumentReader + TokenTextSplitter） | `true` |
 
 > 说明：`data/` 下目录运行期自动生成；所有外部能力默认关闭、本地 Mock/内存/磁盘兜底，
 > 保证「克隆即可跑」。
@@ -353,8 +353,8 @@ curl http://localhost:8081/actuator/health
 ### 可选能力接线（Docker）
 
 ```bash
-docker compose up -d                      # 全部可选设施
-export VECTOR_STORE=milvus STORAGE_TYPE=minio EVENTS_ENABLED=true SECURITY_ENABLED=true
+docker compose up -d                      # 全部可选设施（含 Kafka broker）
+export VECTOR_STORE=milvus STORAGE_TYPE=minio SECURITY_ENABLED=true
 start-core.sh rebuild                     # 或手动 java --enable-preview -jar ...
 ```
 
@@ -363,7 +363,7 @@ start-core.sh rebuild                     # 或手动 java --enable-preview -jar
 | 真实对话/嵌入 | 仪表盘「模型设置」填 Key（直连，不经 LiteLLM）；或起 LiteLLM + `.env` 填 `DEEPSEEK_API_KEY` 等 |
 | Milvus 向量 | `VECTOR_STORE=milvus`（维度变化自动重建 collection，旧文档需重新上传） |
 | MinIO 文件 | `STORAGE_TYPE=minio`（默认 `MINIO_ENDPOINT/ACCESS/SECRET` 见 `application.yml`） |
-| Kafka 事件 | `EVENTS_ENABLED=true` |
+| Kafka 事件 | **默认开启**；`docker compose up -d kafka` 提供 broker（无 broker 时发送失败静默降级，不阻断业务） |
 | 生产鉴权 | `SECURITY_ENABLED=true` + 覆盖 `JWT_SECRET` + 配置 `AUTH_USERNAME/AUTH_PASSWORD` |
 
 ## 前端（仪表盘）

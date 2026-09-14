@@ -22,7 +22,7 @@
 | 智能体 | 定义/CRUD/克隆/版本快照/发布/回滚/版本对比 | ✅ 已实现 | `AgentController`、`AgentDefinition` |
 | 运行入口 | 一次运行按需装配模型/知识/工具/记忆，支持 JSON 与 SSE | ✅ 已实现 | `POST /api/v1/agent/run`、`AgentRuntimeService` |
 | 模型 | 多厂商路由、四种适配器、三级凭证回退、AES-GCM 加密与掩码 | ✅ 已实现 | `ModelAdapter`/`ModelRouter`/`ModelBindingService`/`ModelKeyCrypto` |
-| 模型（可选通道） | Spring AI 2.0.1 协议层 + 原生 tool-role 工具循环 + RAG 解析切分 + 可观测桥接 | ✅ 已实现（默认关闭，可回退） | `agent-platform.springai.enabled` |
+| 模型（Spring AI 通道） | Spring AI 2.0.1 协议层（底层官方厂商 SDK）+ 原生 tool-role 工具循环 + RAG 解析切分 + 可观测桥接 | ✅ 已实现（**默认开启**，`SPRING_AI_ENABLED=false` 可回退自研） | `agent-platform.springai.enabled` |
 | 模型额度 | **读取厂商开放平台剩余额度**（DeepSeek / 硅基流动 / Moonshot） | ✅ 已实现（2026-09-10 新增） | `GET /api/v1/model-balance`、`ModelBalanceService` |
 | 提示词 | 人格 → 模板变量 → Skill 正文 → RAG 附文四层组装 | ✅ 已实现 | `PromptParser`、`AgentRuntimeService` |
 | 记忆 | 短期（Redis 近期缓存） | ✅ 已实现 | `SessionRecentCache`（25 轮/50 条/24h，缺失降级 DB） |
@@ -130,9 +130,9 @@
 | `agent-platform.storage.type` | `local`（默认）/ `minio` | 文件存储实现 |
 | `agent-platform.rag.vector-store` | `in-memory`（默认）/ `milvus` | 向量库实现 |
 | `agent-platform.rag.fulltext.enabled` | `true`（默认）；**embedded profile 覆盖为 `false`** | 稀疏检索是否走 MySQL FULLTEXT（H2 不支持） |
-| `agent-platform.springai.enabled` | `false` | 模型调用/工具循环/可观测走 Spring AI |
-| `agent-platform.springai.rag.enabled` | `false` | RAG 解析与切分走 Spring AI |
-| `agent-platform.events.enabled` | `false` | Kafka 事件总线 |
+| `agent-platform.springai.enabled` | `true`（**默认开启**） | 模型调用/工具循环/可观测走 Spring AI（底层官方 SDK） |
+| `agent-platform.springai.rag.enabled` | `true`（**默认开启**） | RAG 解析与切分走 Spring AI |
+| `agent-platform.events.enabled` | `true`（**默认开启**；embedded 覆盖为 `false`） | Kafka 事件总线 |
 | `agent-platform.skills.open-folder-enabled` | `false` | 是否允许服务端打开文件管理器 |
 | `SECURITY_ENABLED` | `false` | core 侧 JWT 鉴权 |
 
@@ -154,7 +154,7 @@
 | 内置向量库为 8 维伪向量 | 无真实嵌入模型时相似度不具参考性，仅供链路演示 |
 | H2 无 FULLTEXT 全文索引 | 稀疏检索退化为顺序扫描：功能可用，文档量大时变慢 |
 | Redis 缺失 | 会话缓存与配额计数回落内存，重启丢计数（预期行为） |
-| Milvus / Kafka / MinIO / LiteLLM 缺失 | 各自降级或跳过，不阻断启动 |
+| Milvus / Kafka / MinIO / LiteLLM 缺失 | 各自降级或跳过，不阻断启动（Kafka 发送失败仅记 debug；桌面 embedded 直接关闭事件总线） |
 | 未开启 `SECURITY_ENABLED` | 所有接口无鉴权，仅适合本地/内网 |
 | 默认 `JWT_SECRET` / `MODEL_KEY_ENC_KEY` 为占位 | 开启鉴权但仍用默认密钥时启动守卫拒绝启动 |
 | 图片视觉 | 依赖 `SPRING_AI_ENABLED=true` 且模型支持视觉；未开启时图片不发送、文本对话正常 |

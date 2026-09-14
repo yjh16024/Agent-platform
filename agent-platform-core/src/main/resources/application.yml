@@ -92,15 +92,15 @@ agent-platform:
     expire-seconds: 86400            # 24h
   tenant:
     default-id: "default"
-  # ---- Spring AI 通道开关（默认关闭）----
-  # true：OpenAI 兼容 / Anthropic 的模型调用改走 Spring AI 1.1.x 的 ChatModel；
+  # ---- Spring AI 通道开关（默认开启）----
+  # true：OpenAI 兼容 / Anthropic 的模型调用改走 Spring AI 2.0.x 的 ChatModel（底层为官方厂商 SDK）；
   #       凭证三级回退、AES-GCM 加密与掩码逻辑不变（仍由 ModelBindingService / ModelKeyCrypto 负责）。
-  # false（默认）：走原有自研 OkHttp 适配器，行为与历史版本完全一致。
+  # false：走自研 OkHttp 适配器（rule / mock 无论开关如何都走自研）。
   springai:
-    enabled: ${SPRING_AI_ENABLED:false}
-    # RAG 摄取走 Spring AI（解析 TikaDocumentReader + 切分 TokenTextSplitter）；默认关闭回退自研。
+    enabled: ${SPRING_AI_ENABLED:true}
+    # RAG 摄取走 Spring AI（解析 TikaDocumentReader + 切分 TokenTextSplitter）；设为 false 回退自研。
     rag:
-      enabled: ${SPRING_AI_RAG_ENABLED:false}
+      enabled: ${SPRING_AI_RAG_ENABLED:true}
   model:
     default-provider: ${DEFAULT_PROVIDER:deepseek}    # 智能体未配置 provider 时的默认模型厂商
     default-name: ${DEFAULT_MODEL:deepseek-chat}      # 智能体未配置 model 时的默认模型名
@@ -149,8 +149,10 @@ agent-platform:
   security:
     enabled: ${SECURITY_ENABLED:false}
   # Kafka 事件总线（配置变更广播 / 日志事件流）
+  # 默认开启；broker 暂不可用时 KafkaEventBus 异步发送失败仅记 debug、不阻断主流程。
+  # 桌面（embedded）profile 会显式覆盖为 false（单机无 broker，且已排除 Kafka 自动配置）。
   events:
-    enabled: ${EVENTS_ENABLED:false}
+    enabled: ${EVENTS_ENABLED:true}
     topics:
       config: agent-config-events
       log: log-events
