@@ -1,12 +1,14 @@
 package com.agentplatform.core.plugin.controller;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.core.plugin.marketplace.PluginArtifactStore;
 import com.agentplatform.core.plugin.marketplace.PluginService;
 import com.agentplatform.core.plugin.runtime.PluginManifestLoader;
 import com.agentplatform.model.entity.AgentPlugin;
 import com.agentplatform.model.entity.PluginDef;
 import com.agentplatform.plugin.sdk.model.PluginManifest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -15,8 +17,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RequestPart;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 
@@ -31,23 +36,45 @@ public class PluginController {
 
     private final PluginService pluginService;
     private final PluginManifestLoader manifestLoader;
+    private final PluginArtifactStore artifactStore;
 
-    /** 注册插件（manifest 文本，YAML 或 JSON）。 */
+    /**
+     * 注册插件（manifest 文本，YAML 或 JSON）。
+     * <p>可选 {@code artifactUri}：外部插件的 jar 地址，支持 {@code file:/绝对路径} 或 {@code http(s)://}。
+     * 不传则只登记元数据（此时 attach 会提示"未配置制品"）。</p>
+     */
     @PostMapping("/register")
     public ApiResponse<PluginDef> register(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @RequestParam(required = false) String artifactUri,
             @RequestBody String manifestText) {
         PluginManifest manifest = manifestLoader.parse(manifestText);
-        return ApiResponse.ok(pluginService.register(tenantId, manifest, null), "registered");
+        return ApiResponse.ok(pluginService.register(tenantId, manifest, artifactUri), "registered");
     }
 
-    /** 导入插件（与 register 等价，语义更贴近「从文件/文本导入」）。 */
+    /** 导入插件（与 register 等价，语义更贴近「从文件/文本导入」；同样支持可选 artifactUri）。 */
     @PostMapping("/import")
     public ApiResponse<PluginDef> importPlugin(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @RequestParam(required = false) String artifactUri,
             @RequestBody String manifestText) {
         PluginManifest manifest = manifestLoader.parse(manifestText);
-        return ApiResponse.ok(pluginService.register(tenantId, manifest, null), "imported");
+        return ApiResponse.ok(pluginService.register(tenantId, manifest, artifactUri), "imported");
+    }
+
+    /**
+     * 上传插件包：{@code multipart/form-data}，字段 {@code manifest}（YAML/JSON 文本）+ {@code jar}（插件制品）。
+     * <p>jar 落到 {@code agent-platform.plugin.artifact-dir}（默认 {@code ./data/plugins}），并写入
+     * {@code artifact_uri}，随后即可 attach 热加载 —— 这是外部插件「装得上」的完整链路。</p>
+     */
+    @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ApiResponse<PluginDef> upload(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @RequestParam("manifest") String manifestText,
+            @RequestParam("jar") MultipartFile jar) throws IOException {
+        PluginManifest manifest = manifestLoader.parse(manifestText);
+        String artifactUri = artifactStore.save(manifest.id(), manifest.version(), jar.getInputStream());
+        return ApiResponse.ok(pluginService.register(tenantId, manifest, artifactUri), "uploaded");
     }
 
     /** 插件市场列表（当前租户 ∪ 平台内置）。 */

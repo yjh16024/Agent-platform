@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import {
   Table, Space, Button, Input, Select, Modal, Form, message, Card, Typography, Tag, Popconfirm,
 } from 'antd';
-import { PlayCircleOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, EditOutlined, DeleteOutlined, CloudDownloadOutlined, AppstoreOutlined } from '@ant-design/icons';
 import { listTools, invokeTool, registerTool, updateTool, unregisterTool } from '../../api/tools';
 import { ToolInfo } from '../../api/types';
+import McpMarketModal from './McpMarketModal';
+import ToolMarketModal from './ToolMarketModal';
 
 const SOURCE_COLOR: Record<string, string> = {
   builtin: 'blue',
@@ -22,6 +24,10 @@ export default function ToolsPage() {
   const [editorOpen, setEditorOpen] = useState(false);
   const [editing, setEditing] = useState<ToolInfo | null>(null);
   const [editorForm] = Form.useForm();
+  /** MCP 市场弹窗 */
+  const [mcpOpen, setMcpOpen] = useState(false);
+  /** HTTP 工具市场弹窗 */
+  const [toolMarketOpen, setToolMarketOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -166,6 +172,8 @@ export default function ToolsPage() {
     <div>
       <Space style={{ marginBottom: 16 }} wrap>
         <Button type="primary" icon={<PlayCircleOutlined />} onClick={openCreate}>注册 HTTP 工具</Button>
+        <Button icon={<AppstoreOutlined />} onClick={() => setToolMarketOpen(true)}>工具市场</Button>
+        <Button icon={<CloudDownloadOutlined />} onClick={() => setMcpOpen(true)}>MCP 市场</Button>
         <Select
           placeholder="选择要调试的工具"
           style={{ width: 200 }}
@@ -176,6 +184,16 @@ export default function ToolsPage() {
         <Input placeholder='参数 JSON，如 {"expression":"1+1"}' style={{ width: 300 }} value={args} onChange={(e) => setArgs(e.target.value)} />
         <Button icon={<PlayCircleOutlined />} onClick={doInvoke}>执行</Button>
       </Space>
+
+      {/* MCP 市场：从官方 Registry 一键注册远程 HTTP 型 MCP 服务器 */}
+      <McpMarketModal open={mcpOpen} onClose={() => setMcpOpen(false)} onRegistered={load} />
+
+      {/* HTTP 工具市场：内置精选免 Key 公开 API，一键注册为 HTTP 工具 */}
+      <ToolMarketModal
+        open={toolMarketOpen}
+        onClose={() => setToolMarketOpen(false)}
+        onInstalled={load}
+      />
 
       <Table
         rowKey="name"

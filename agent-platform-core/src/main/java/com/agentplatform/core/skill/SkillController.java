@@ -3,6 +3,7 @@ package com.agentplatform.core.skill;
 import com.agentplatform.common.dto.ApiResponse;
 import com.agentplatform.core.skill.executor.SkillExecutionResult;
 import com.agentplatform.core.skill.executor.SkillExecutionService;
+import com.agentplatform.core.skill.market.SkillMarketService;
 import com.agentplatform.model.entity.SkillDef;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -35,6 +36,26 @@ public class SkillController {
 
     private final SkillService skillService;
     private final SkillExecutionService executionService;
+    private final SkillMarketService skillMarketService;
+
+    /**
+     * 技能市场：列出 Anthropic 官方 Agent Skills 仓库（`github.com/anthropics/skills`）的技能。
+     * <p>返回项含 name / title / description / installed（是否已装到本地 skills 目录）。</p>
+     */
+    @GetMapping("/market")
+    public ApiResponse<List<Map<String, Object>>> market() {
+        return ApiResponse.ok(skillMarketService.list());
+    }
+
+    /**
+     * 技能市场：一键安装某个技能 —— 递归下载到本地 skills 目录，随后自动同步入库。
+     */
+    @PostMapping("/market/{name}/install")
+    public ApiResponse<Map<String, Object>> installFromMarket(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @PathVariable String name) {
+        return ApiResponse.ok(skillMarketService.install(tenantId, name), "installed");
+    }
 
     /** skills 根目录绝对路径（前端展示/复制用）。 */
     @GetMapping("/dir")

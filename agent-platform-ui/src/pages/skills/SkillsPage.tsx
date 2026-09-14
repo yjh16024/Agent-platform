@@ -5,12 +5,14 @@ import {
 } from 'antd';
 import {
   PlusOutlined, UploadOutlined, FolderOpenOutlined, SyncOutlined, CopyOutlined, FileTextOutlined,
+  CloudDownloadOutlined,
 } from '@ant-design/icons';
 import {
   listSkills, getSkill, createSkill, updateSkill, importSkill, deleteSkill, SkillBody,
   getSkillsDir, openSkillsFolder, syncSkills, uploadSkill, skillFiles, readSkillFile,
 } from '../../api/skills';
 import { SkillDef } from '../../api/types';
+import SkillMarketModal from './SkillMarketModal';
 
 const EXAMPLE = `name: 客服话术助手
 description: 提供客服标准话术
@@ -55,6 +57,8 @@ export default function SkillsPage() {
   const [filesLoading, setFilesLoading] = useState(false);
   const [fileContent, setFileContent] = useState<{ path: string; content: string } | null>(null);
   const [fileLoading, setFileLoading] = useState(false);
+  /** 技能市场弹窗 */
+  const [marketOpen, setMarketOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -293,11 +297,15 @@ export default function SkillsPage() {
         >
           <Button icon={<UploadOutlined />}>上传 Skill（.zip / SKILL.md）</Button>
         </Upload>
+        <Button type="primary" icon={<CloudDownloadOutlined />} onClick={() => setMarketOpen(true)}>技能市场</Button>
         <Button type="primary" icon={<PlusOutlined />} onClick={() => setOpen(true)}>新建 Skill</Button>
         <Button onClick={() => setImportOpen(true)}>导入 YAML Manifest</Button>
       </Space>
 
       <Table rowKey="skillId" loading={loading} columns={columns} dataSource={items} pagination={false} />
+
+      {/* 技能市场：从 Anthropic 官方 Agent Skills 仓库一键安装 */}
+      <SkillMarketModal open={marketOpen} onClose={() => setMarketOpen(false)} onInstalled={load} />
 
       {/* 新建 Skill */}
       <Modal title="新建 Skill" open={open} onOk={submitCreate} onCancel={() => setOpen(false)} destroyOnClose width={620}>

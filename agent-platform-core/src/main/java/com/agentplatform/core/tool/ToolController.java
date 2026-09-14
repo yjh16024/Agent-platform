@@ -4,6 +4,8 @@ import com.agentplatform.common.dto.ApiResponse;
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.tool.executor.HttpApiTool;
 import com.agentplatform.core.tool.executor.ToolExecutor;
+import com.agentplatform.core.tool.market.ToolMarketService;
+import com.agentplatform.core.tool.mcp.McpMarketService;
 import com.agentplatform.core.tool.mcp.McpToolRegistry;
 import com.agentplatform.core.tool.registry.ToolRegistrationService;
 import com.agentplatform.core.tool.registry.ToolRegistry;
@@ -17,6 +19,7 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.nio.file.Path;
@@ -37,6 +40,39 @@ public class ToolController {
     private final ToolExecutor executor;
     private final McpToolRegistry mcpToolRegistry;
     private final ToolRegistrationService registrationService;
+    private final McpMarketService mcpMarketService;
+    private final ToolMarketService toolMarketService;
+
+    /**
+     * HTTP 工具市场：内置精选的**免 Key 公开 API**（天气/汇率/IP/二维码等），可一键注册为 HTTP 工具。
+     */
+    @GetMapping("/market")
+    public ApiResponse<List<Map<String, Object>>> toolMarket() {
+        return ApiResponse.ok(toolMarketService.list());
+    }
+
+    /** HTTP 工具市场：一键注册某个条目。 */
+    @PostMapping("/market/{id}/install")
+    public ApiResponse<Map<String, Object>> installFromToolMarket(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @PathVariable String id) {
+        return ApiResponse.ok(toolMarketService.install(tenantId, id), "installed");
+    }
+
+    /**
+     * MCP 市场：从官方 MCP Registry（registry.modelcontextprotocol.io）列出**支持远程 HTTP**的服务器。
+     * <p>返回项含 name / title / description / version / server_url / remotes，
+     * 可直接调 {@code POST /tools/mcp} 用 {@code server_url} 一键注册。</p>
+     *
+     * @param q     关键词（可选）
+     * @param limit 条数上限（可选，最大 100）
+     */
+    @GetMapping("/mcp/market")
+    public ApiResponse<List<Map<String, Object>>> mcpMarket(
+            @RequestParam(required = false) String q,
+            @RequestParam(required = false) Integer limit) {
+        return ApiResponse.ok(mcpMarketService.list(q, limit));
+    }
 
     /**
      * 列出全部已注册工具（含来源与 HTTP 工具的 endpoint/method，供前端编辑回显）。

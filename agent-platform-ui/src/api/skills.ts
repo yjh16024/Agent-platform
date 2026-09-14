@@ -97,3 +97,29 @@ export async function importSkill(manifestText: string, source = 'local') {
 export function deleteSkill(skillId: string) {
   return http.delete<void>(`/api/v1/skills/${skillId}`);
 }
+
+/** 技能市场里的一个技能（来自官方 Agent Skills 仓库）。 */
+export interface MarketSkill {
+  name: string;
+  title?: string;
+  description?: string;
+  /** 是否已装到本地 skills 目录 */
+  installed?: boolean;
+  source?: string;
+  dir?: string;
+}
+
+/** 技能市场：列出官方仓库（github.com/anthropics/skills）的可安装技能。 */
+export function marketSkills() {
+  return http.get<MarketSkill[]>('/api/v1/skills/market');
+}
+
+/** 技能市场：一键安装 —— 下载到本地 skills 目录并自动同步入库。 */
+export function installMarketSkill(name: string) {
+  return http.post<{
+    skill: string;
+    dir: string;
+    files: number;
+    sync: Record<string, unknown>;
+  }>(`/api/v1/skills/market/${encodeURIComponent(name)}/install`, {});
+}
