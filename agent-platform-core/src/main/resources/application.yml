@@ -125,6 +125,21 @@ agent-platform:
     # 默认关闭：无桌面环境（服务器/容器/SSH）调用会失败，且存在在服务端启动文件管理器的安全隐患；
     # 需要时显式设置 SKILLS_OPEN_FOLDER=true 开启。
     open-folder-enabled: ${SKILLS_OPEN_FOLDER:false}
+    # ---- 技能市场取件通道（多通道失败切换，见 SkillMarketService）----
+    # sources 是通道**分组**的优先级顺序，可取值 jsdelivr / ghproxy / github，逗号分隔。
+    # 默认 ghproxy,jsdelivr,github：代理优先（GitHub Trees API 目录完整准确），
+    # jsDelivr 兜底（免代理、国内一般可达，但分支目录有缓存滞后，实测会少列部分技能）。
+    # 某条通道不通时会自动切下一条，并把最近成功的通道记住优先复用。
+    market:
+      sources: ${SKILL_MARKET_SOURCES:ghproxy,jsdelivr,github}
+      # jsDelivr 数据接口主机（列文件用，按顺序尝试）
+      jsdelivr-api: ${SKILL_MARKET_JSDELIVR_API:data.jsdelivr.com}
+      # jsDelivr CDN 主机（读文件用，按顺序失败切换）
+      jsdelivr-cdns: ${SKILL_MARKET_JSDELIVR_CDNS:cdn.jsdelivr.net,gcore.jsdelivr.net,fastly.jsdelivr.net}
+      # GitHub 加速代理（拼在目标地址前，需能同时代理 api.github.com 与 raw.githubusercontent.com）
+      gh-proxies: ${SKILL_MARKET_GH_PROXIES:gh-proxy.com,ghfast.top,ghproxy.net}
+      # 单次请求读超时（秒）
+      timeout-seconds: ${SKILL_MARKET_TIMEOUT:25}
   log:
     kafka-topic: log-events
   # ---- 可观测性外推（阶段 B/C）----

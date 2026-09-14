@@ -107,6 +107,12 @@ export interface MarketSkill {
   installed?: boolean;
   source?: string;
   dir?: string;
+  /** 该技能在仓库中的目录（安装 / 预览时要用） */
+  path?: string;
+  /** 所属分支 */
+  branch?: string;
+  /** SKILL.md 的仓库内路径 */
+  skillFile?: string;
 }
 
 /** 技能市场：列出官方仓库（github.com/anthropics/skills）的可安装技能。 */
@@ -122,4 +128,58 @@ export function installMarketSkill(name: string) {
     files: number;
     sync: Record<string, unknown>;
   }>(`/api/v1/skills/market/${encodeURIComponent(name)}/install`, {});
+}
+
+/** 一条取件通道的探测结果。 */
+export interface ChannelProbe {
+  id: string;
+  group?: string;
+  label: string;
+  ok: boolean;
+  preferred?: boolean;
+  ms?: number;
+  error?: string;
+}
+
+/** 网络诊断：并行探测 jsDelivr / 各加速代理 / 直连哪条通。 */
+export function diagnoseSkillChannels() {
+  return http.get<ChannelProbe[]>('/api/v1/skills/market/diagnose');
+}
+
+/** 读取任意仓库地址下的技能清单（只扫描，不安装）。 */
+export function scanSkillRepo(url: string, refresh = false) {
+  return http.post<{
+    repo: string;
+    branch: string;
+    subPath?: string;
+    count: number;
+    skills: MarketSkill[];
+    channel?: string;
+  }>('/api/v1/skills/market/repo/scan', { url, refresh });
+}
+
+/** 从任意仓库安装其中一个技能。 */
+export function installSkillFromRepo(url: string, path: string, name?: string) {
+  return http.post<{
+    skill: string;
+    dir: string;
+    files: number;
+    source: string;
+    branch: string;
+    path: string;
+    sync: Record<string, unknown>;
+  }>('/api/v1/skills/market/repo/install', { url, path, name });
+}
+
+/** 预览任意仓库里的文件内容（通常用来先看 SKILL.md）。 */
+export function readSkillRepoFile(url: string, path: string) {
+  return http.post<{
+    repo: string;
+    branch: string;
+    path: string;
+    size: number;
+    binary: boolean;
+    truncated: boolean;
+    content: string;
+  }>('/api/v1/skills/market/repo/file', { url, path });
 }

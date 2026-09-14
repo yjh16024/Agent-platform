@@ -57,6 +57,63 @@ public class SkillController {
         return ApiResponse.ok(skillMarketService.install(tenantId, name), "installed");
     }
 
+    /** 取件通道清单与当前生效的通道（哪些镜像可用一眼可见）。 */
+    @GetMapping("/market/status")
+    public ApiResponse<Map<String, Object>> marketStatus() {
+        return ApiResponse.ok(skillMarketService.status());
+    }
+
+    /**
+     * 网络诊断：并行探测每条取件通道（jsDelivr / 各加速代理 / 直连）。
+     * <p>市场列表空白时先调它，就能看到到底是哪条路不通、慢在哪。</p>
+     */
+    @GetMapping("/market/diagnose")
+    public ApiResponse<List<Map<String, Object>>> marketDiagnose() {
+        return ApiResponse.ok(skillMarketService.diagnose());
+    }
+
+    /**
+     * 读取**任意仓库地址**下的技能清单（只扫描不安装）。
+     * <p>body：{@code url} 必填，支持 {@code owner/repo}、GitHub 仓库/子目录/文件链接、
+     * 以及套了加速前缀的地址；{@code refresh=true} 可绕过文件树缓存。</p>
+     */
+    @PostMapping("/market/repo/scan")
+    public ApiResponse<Map<String, Object>> scanRepo(@RequestBody Map<String, Object> body) {
+        String url = str(body, "url");
+        boolean refresh = Boolean.parseBoolean(String.valueOf(body == null ? "false" : body.get("refresh")));
+        return ApiResponse.ok(skillMarketService.scan(url, refresh));
+    }
+
+    /**
+     * 从任意仓库安装其中一个技能。
+     * <p>body：{@code url} 必填；{@code path} 为该技能在仓库中的目录（留空表示整个仓库就是一个技能）；
+     * {@code name} 可选，缺省取目录末段。</p>
+     */
+    @PostMapping("/market/repo/install")
+    public ApiResponse<Map<String, Object>> installFromRepo(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(skillMarketService.installFrom(
+                tenantId, str(body, "url"), str(body, "path"), str(body, "name")), "installed");
+    }
+
+    /**
+     * 预览任意仓库里的文件内容（通常用来先看 {@code SKILL.md} 再决定装不装）。
+     * <p>body：{@code url} 必填；{@code path} 为仓库内相对路径。</p>
+     */
+    @PostMapping("/market/repo/file")
+    public ApiResponse<Map<String, Object>> readRepoFile(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(skillMarketService.readRemoteFile(str(body, "url"), str(body, "path")));
+    }
+
+    private static String str(Map<String, Object> body, String key) {
+        if (body == null) {
+            return null;
+        }
+        Object v = body.get(key);
+        return v == null ? null : String.valueOf(v);
+    }
+
     /** skills 根目录绝对路径（前端展示/复制用）。 */
     @GetMapping("/dir")
     public ApiResponse<Map<String, Object>> dir() {
