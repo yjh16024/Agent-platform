@@ -15,13 +15,27 @@ extraResources:
   - from: ../agent-platform-core/target/agent-platform-core-1.0.0-SNAPSHOT.jar
     to: backend/app.jar
 win:
+  # dir = 只产出解包目录，不归档。见下方说明（2026-09-15 由 zip 改为 dir）。
   target:
-    - zip
+    - dir
+  # artifactName 仅对归档型 target（zip / 7z / tar.*）生效，dir 目标下不产出该文件。
   artifactName: Agent-Platform-${version}-${arch}.${ext}
-# 分发形态定案（2026-09-12）：
+# 分发形态定案（2026-09-12，2026-09-15 修订）：
 #   portable（单文件 exe）已**弃用** —— 它每次运行都要把 ~640MB（electron + jlink runtime + jar）
 #   解压到 %TEMP% 再启动，此期间无窗口、实测冷启动要多等 20–30 秒，且 Temp 有残留。
-#   改用 zip / 绿色版：解压一次后直接运行目录内的 `Agent Platform.exe`，零解压开销、功能完全一致。
-#   构建脚本（build.bat / build.sh）会把 win-unpacked 镜像到 dist/green，保证绿色版始终是最新产物。
+#   绿色版：解压一次后直接运行目录内的 `Agent Platform.exe`，零解压开销、功能完全一致。
+#
+# 为什么 target 是 dir 而不是 zip（读 app-builder-lib 源码后定案）：
+#   electron-builder 的 pack() 是「先铺出 <outDir>/win-unpacked，再对该目录归档」两步走
+#   （platformPackager.js），且解包目录名是代码拼死的、配置无法改（`${platformKey}-unpacked`）。
+#   所以任何归档型 target 都必然留下一个 win-unpacked 副本；归档本身还要用 7za 以 -mx=7
+#   压 ~600MB（archive.js），是整条构建链里最慢的一步。
+#   改用 dir 目标后（targetFactory.js 里 dir === NoOpTarget，build() 是空实现，完全不归档）：
+#     1) 不再产出 zip → 省掉最慢的压缩步骤；
+#     2) 构建脚本把 win-unpacked **改名**（同盘 rename，瞬间）为 dist/green，
+#        替代原先的 robocopy 全量复制 600MB；
+#     3) dist 下不再有 win-unpacked 与 green 两份重复内容。
+#   需要对外分发压缩包时手动压一次即可：Compress-Archive dist\green dist\green.zip
+#   （若要把 zip 找回来，把 target 改回 zip 即可 —— 脚本里的 move 改名逻辑依然成立。）
 electronVersion: 33.3.1
 npmRebuild: false

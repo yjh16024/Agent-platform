@@ -2,7 +2,7 @@
 REM ============================================================
 REM Agent Platform - desktop build (Windows)
 REM Flow: 1) jlink JRE runtime  2) backend fat jar
-REM       3) electron-builder green zip  4) sync dist\green
+REM       3) electron-builder dir, no archive  4) rename win-unpacked -> dist\green
 REM Output: dist\green\Agent Platform.exe  (run directly, no self-extract)
 REM First-time only: cd desktop && npm install --include=dev
 REM   (npm 11 needs: npm install-scripts approve electron electron-builder electron-winstaller)
@@ -35,10 +35,16 @@ if not exist "runtime\bin\java.exe" (
 
 echo [2/5] build backend jar (from repo root)...
 cd /d "%~dp0\.."
+REM Clean only the staged static dir, not the whole target: Maven's resources plugin never
+REM removes stale bundles from target\classes\static (they end up inside the jar), while a full
+REM "clean" would throw away incremental compilation and make every build a cold one.
+REM NOTE: because we skip "clean", a DELETED/RENAMED java source can leave a stale .class behind.
+REM After such a change run once: mvn -pl agent-platform-core -am clean package -DskipTests
+if exist "agent-platform-core\target\classes\static" rmdir /s /q "agent-platform-core\target\classes\static"
 call "%MVN%" -q -pl agent-platform-core -am package -DskipTests
 if errorlevel 1 goto :fail
 
-echo [3/5] electron-builder green zip...
+echo [3/5] electron-builder unpacked dir, no archive...
 cd /d "%~dp0"
 if not exist "node_modules\electron\dist\electron.exe" (
     echo [ERROR] electron not installed. Run: npm install --include=dev then approve install-scripts
@@ -46,17 +52,23 @@ if not exist "node_modules\electron\dist\electron.exe" (
 )
 set "ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/"
 set "ELECTRON_BUILDER_BINARIES_MIRROR=https://npmmirror.com/mirrors/electron-builder-binaries/"
-call npx electron-builder --win zip
+call npx electron-builder --win dir
 if errorlevel 1 goto :fail
 
-echo [4/5] sync green dir: dist\green ...
+echo [4/5] rename dist\win-unpacked to dist\green - same volume, instant ...
+if not exist "dist\win-unpacked" (
+    echo [ERROR] electron-builder did not produce dist\win-unpacked
+    goto :fail
+)
 if exist "dist\green" rmdir /s /q "dist\green"
-robocopy "dist\win-unpacked" "dist\green" /E /NFL /NDL /NJH /NJS /NP >nul
-if errorlevel 8 goto :fail
+move "dist\win-unpacked" "dist\green" >nul
+if errorlevel 1 goto :fail
 
 echo [5/5] done. Artifacts:
 echo   dist\green\Agent Platform.exe   run this directly, green build, no self-extract
-for %%f in (dist\*.zip) do echo   %%~ff
+echo.
+echo   no zip by design - pack one manually only when you need to ship it:
+echo   powershell -c "Compress-Archive -Path dist\green -DestinationPath dist\green.zip"
 goto :eof
 
 ::fail
