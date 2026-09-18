@@ -1,7 +1,7 @@
 $ErrorActionPreference = 'Continue'
 $env:JAVA_HOME = 'C:\Program Files\Java\jdk-21.0.12'
 $root = 'c:\Users\16024\Desktop\agent-platform'
-$jar = "$root\agent-platform-core\target\agent-platform-core-1.0.0-SNAPSHOT.jar"
+$jar = "$root\agent-platform-core\target\agent-platform-core-1.1.0.jar"
 $port = 18105
 # 装到临时目录：不污染用户真实的 data/skins
 $surveyDir = "$env:TEMP\skin-survey\skins"

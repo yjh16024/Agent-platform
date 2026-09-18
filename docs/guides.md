@@ -3,7 +3,7 @@
 > **职责**：怎么扩展、怎么部署、怎么演示、怎么观测。**不重复**已实现功能清单
 > （见 [status.md](status.md)）与技术设计（见 [design.md](design.md)）。
 > 环境变量的**完整权威清单**在 [../README.md](../README.md) 的「配置」一节，本文只列部署相关补充。
-> 最后核实：**2026-09-14**。
+> 最后核实：**2026-09-18**。
 
 ---
 
@@ -80,8 +80,8 @@ public class WeatherTool implements Tool {
 ### 2.1 构建镜像
 
 ```bash
-docker build -f agent-platform-deploy/docker/Dockerfile -t agent-platform/agent-platform-core:1.0.0 .
-docker push agent-platform/agent-platform-core:1.0.0
+docker build -f agent-platform-deploy/docker/Dockerfile -t agent-platform/agent-platform-core:1.1.0 .
+docker push agent-platform/agent-platform-core:1.1.0
 ```
 
 ### 2.2 K8s / Helm
@@ -94,7 +94,7 @@ helm template agent-platform agent-platform-deploy/helm/agent-platform --debug
 helm install agent-platform agent-platform-deploy/helm/agent-platform \
   --set services.mysql.host=mysql.prod.svc.cluster.local \
   --set secrets.jwtSecret="$(openssl rand -hex 32)" \
-  --set core.image.tag=1.0.0
+  --set core.image.tag=1.1.0
 ```
 
 ### 2.3 环境变量（core）

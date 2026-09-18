@@ -55,7 +55,7 @@ set "MYSQL_USER=agent"
 set "MYSQL_PASSWORD=agent123456"
 
 REM ---- 5. Parse args & decide build; DB mode: mysql (default) / embedded (H2, no MySQL) ----
-set "JAR_FILE=agent-platform-core\target\agent-platform-core-1.0.0-SNAPSHOT.jar"
+set "JAR_FILE=agent-platform-core\target\agent-platform-core-1.1.0.jar"
 set "DB_MODE=mysql"
 set "NEED_BUILD="
 for %%a in (%*) do (

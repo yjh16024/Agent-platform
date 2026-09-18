@@ -305,6 +305,30 @@ Jackson `@JsonTypeInfo` 反序列化 `parts[]`；`MultimodalResolver` 做模型�
 
 ---
 
+### 2.17 皮肤（换肤）：第三方 JS + 契约钩子 + 层叠让位
+
+**用什么**：宿主侧 `ModuleLoader` + `ctx` 代理注入皮肤 bundle（Cordis 语义 —— `ctx.effect(fn)`
+把 `fn` 的**返回值**当 disposer）；DOM 契约钩子（`data-slot` / `data-pane` / `data-phase` /
+`data-composer-seat` 等，见 `skin/contract.ts`）；`CONTRACT_VERSION` 作为钩子集合的版本；
+DSH 自定义协议 v1/v2 事件（`dsh:skin-customization-{register,unregister,ready}-v*`）驱动设置面板；
+样式上**宿主只写低特异性默认外观**，让皮肤自然胜出。
+
+**为什么**：
+- **用契约而不是适配层**：皮肤作者自己把 `data-*` 当首选、把 class/结构标成"漂移风险"，
+  所以宿主只挂**语义真的对应**的属性钩子（宁缺勿滥）就能覆盖绝大多数引用，且不需要认识任何具体皮肤；
+- **设置面板不能 portal**：皮肤按 `[data-slot='sidebar.settings'] > [role='presentation'] > [role='dialog']`
+  与 `[data-slot='sidebar'] > :first-child > :has([role='dialog'])` 定位，用 antd Drawer 会 portal 到 body，
+  这些规则全部失配（面板永远不出现）；
+- **内联样式只能被 `!important` 覆盖、不能"让位"**：让位机制（`installSkinYieldStyles`）用 `!important`
+  把宿主的 background / border 清成 transparent 是有效的 —— 因为皮肤靠 `::before` / `::after` 伪元素画框和底板。
+  但 `padding` 这类**语义布局属性**写 `!important` 属于"覆盖"而非"让位"，会把皮肤给装饰边框预留的空间
+  一起压掉，所以它必须待在内联之外的低特异性样式表里；
+- **层叠顺序不可争**：皮肤运行时注入自己的样式表，位置**永远在宿主之后**，同特异性下后来者胜 ——
+  因此不要跟皮肤拼 `!important`，正解是结构分层 + 让特异性自己决定胜负。
+
+**放弃了什么**：不做皮肤代码沙箱（皮肤与宿主同上下文执行，靠"只有用户显式启用过的皮肤才自动加载"约束）；
+也不给皮肤承诺稳定的 class 名契约（class 片段只作为补充钩子，`_row` / `trigger` 这类不保证存在）。
+
 ## 三、关键技术取舍一览
 
 | 决策点 | 采用 | 放弃 | 主要原因 |

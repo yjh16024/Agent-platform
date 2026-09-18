@@ -1,7 +1,7 @@
 {
   "name": "agent-platform-desktop",
   "productName": "Agent Platform",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Agent Platform desktop shell (Electron + embedded H2 backend)",
   "main": "main.js",
   "private": true,

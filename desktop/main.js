@@ -85,7 +85,7 @@ function backendJar() {
     const jar = path.join(process.resourcesPath, 'backend', 'app.jar');
     if (fs.existsSync(jar)) return jar;
   }
-  return path.join(__dirname, '..', 'agent-platform-core', 'target', 'agent-platform-core-1.0.0-SNAPSHOT.jar');
+  return path.join(__dirname, '..', 'agent-platform-core', 'target', 'agent-platform-core-1.1.0.jar');
 }
 
 function dataDir() {

@@ -10,9 +10,10 @@ Agent Platform 是一个面向多租户场景的 AI 智能体运行平台。它�
 都有开关与降级，缺谁都能跑，接上才算数。因此它可以从「克隆 → 启动 → 发一条消息拿到 Mock 回复」
 开始，逐步长成一套生产可用的智能体服务。
 
-当前版本：`1.0.0-SNAPSHOT`。提供统一运行入口（JSON / SSE）、多模型路由与凭证分层、
+当前版本：`1.1.0`。提供统一运行入口（JSON / SSE）、多模型路由与凭证分层、
 会话记忆（短期缓存 + 中期早期摘要）、RAG 知识库、工具与 MCP、自研 DAG 工作流、
-Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉）、运行日志与三级诊断。
+Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉）、运行日志与三级诊断，
+以及**皮肤（换肤）体系** —— 第三方皮肤可以在不改平台代码的前提下接管界面外观。
 
 工程层：**可选内置库**（`DB_MODE=embedded` 用 H2 免装 MySQL 直接跑）、**Spring AI 通道**
 （**默认开启**：模型调用 / 原生 tool-role 工具循环 / RAG 解析切分 / 可观测走 Spring AI 2.0.1；
@@ -119,6 +120,11 @@ Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉�
 内置**天气工具**开箱即用：城市名自动做 URL 编码后查询 `wttr.in`。运行入口按请求里的
 `tools.enabled` 与 `allowed` 白名单决定本轮暴露哪些工具声明。
 
+工具与 MCP 各自带**市场**，不必手写注册 JSON：HTTP 工具市场（`GET /api/v1/tools/market`）
+提供一份免 Key 的公开 API 清单，清单位于 `resources/tool-market.json`，**新增条目不用改代码**；
+MCP 市场（`GET /api/v1/tools/mcp/market`）直连官方 `registry.modelcontextprotocol.io`，
+**只保留 `streamable-http` 型** —— stdio 型靠 npx/uvx 本地拉起，平台目前挂不了（见 [backlog.md](docs/backlog.md)）。
+
 工具调用默认走「结果文本回灌」的轻量闭环：模型返回 `tool_calls` → `ToolExecutor` 逐个执行 →
 结果拼进下一轮输入 → 直到模型不再要工具，最多 `MAX_TOOL_ROUNDS = 5` 轮，防止死循环。
 启用 Spring AI 通道后改为**原生 tool-role 循环**（assistant(tool_calls) → tool(result)），上限一致。
@@ -132,11 +138,19 @@ Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉�
 内置插件属于平台租户 `__platform__`（不可删除、对所有租户可见）；外部插件以独立
 `PluginClassLoader` 加载 jar，Attach / Detach 热插拔，卸载即反注册钩子与工具。
 
+外部插件有两条进入路径：**从插件市场取**（`/plugins/marketplace`），或**从仪表盘直接上传**
+（`POST /plugins/upload`，multipart 提交 manifest + jar；也支持 `/import?artifactUri=`）。
+jar 落在 `agent-platform.plugin.artifact-dir`（默认 `./data/plugins`）后由 `ExternalPluginLoader` 装载。
+
 ### Skills：开放标准目录，挂载即生效
 
 Skills 采用 Agent Skills 开放标准布局 `skills/<name>/SKILL.md`（可选 `scripts/`、`references/`、
 `assets/`）。把下载的技能包放进目录 → 仪表盘点「扫描同步」→ 智能体在 `capabilities.skillIds`
 引用 → 运行时正文自动拼进系统提示词。不需要打包、不需要改代码。
+
+目录里没技能也不要紧 —— 有**技能市场**（`GET /api/v1/skills/market`）可以直接列举并一键安装。
+取件按 `ghproxy → jsDelivr → GitHub 直连` 的顺序**失败切换**（国内直连 `api.github.com` 常被拒，
+代理通道因此是首选），也支持粘贴任意仓库或文件地址直接读取。
 
 ### 智能体：可版本化的配置
 
@@ -176,6 +190,24 @@ Skills 采用 Agent Skills 开放标准布局 `skills/<name>/SKILL.md`（可选 
 运行日志统一经 `LogService` 落 MySQL，并通过 `LogEventSink` 出口外推：Micrometer 指标、
 Loki 日志、Tempo / Jaeger Span。故障排查有三级诊断（规则 → 向量 → LLM），提示词另有 6 维评分
 与优化建议。
+
+### 皮肤：把界面交给第三方
+
+界面不是做死的。**皮肤是一份第三方 JS bundle**：用户显式启用后由宿主注入执行，它自带样式与资源，
+通过宿主挂在 DOM 上的**契约钩子**（`data-slot` / `data-pane` / `data-phase` / `data-composer-seat` …）
+认领自己关心的区域，从而在不改平台代码的前提下接管界面外观。
+
+- **皮肤市场**：列出可安装皮肤并一键装到 `data/skins/<id>/`，同时支持卸载、资源代理与 bundle 读取。
+- **契约版本**：钩子集合有任何增删改都要让 `CONTRACT_VERSION` 递增 —— 它同时是「某皮肤支持度结论」
+  缓存的 key，改了钩子就必须重测。
+- **设置面板**：皮肤通过 DSH 自定义协议**声明自己的设置项**，宿主负责持久化、渲染面板并把改动回调给皮肤。
+  **属性名是皮肤自己的事，宿主不需要认识任何一个** —— 所以任何遵守协议的皮肤都能被同一个面板管理。
+- **窗口标题归宿主所有**：皮肤可能写死它原宿主的产品名，因此标题由宿主持有、不接受改写
+  （`skin/titleGuard.ts`）。
+- **DOM 层级必须照皮肤期望摆**：皮肤大量使用 `>` 子选择器与结构定位，把两层语义合并到一个元素上会让
+  规则静默失效（设置面板与输入卡片都踩过，详见 [backlog.md](docs/backlog.md)）。
+
+皮肤是**在页面里执行的第三方代码**，因此只有用户明确启用过的皮肤，才会在下次启动时自动加载。
 
 ## 一次运行如何被处理
 
@@ -309,14 +341,14 @@ chmod +x start-core.sh
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests
-java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.0.0-SNAPSHOT.jar
+java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.1.0.jar
 ```
 
 启动成功日志含 `Tomcat started on port 8081`，随后浏览器打开 **http://localhost:8081/**。
 
 > - 若 **8081 被占用**，脚本会自动杀掉旧进程（Windows）或提示（Linux/macOS）。
 > - Redis 没有也不影响核心功能（日志会提示 redis DOWN）。
-> - 手动方式启动内置库：`java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.0.0-SNAPSHOT.jar --spring.profiles.active=embedded`
+> - 手动方式启动内置库：`java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.1.0.jar --spring.profiles.active=embedded`
 
 #### 4. 验证
 
@@ -402,6 +434,14 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 > 改动后端后需重启 core；改动前端后需重新 `npm run build:prod` 再重启（或直接访问 5173）。
 > 静态资源已设 `cache-control: no-store`，一般无需 `Ctrl+F5`；桌面版启动时会主动清 HTTP 缓存，
 > 重启即生效。
+
+界面上有三个刻意的取舍，先说清楚省得被当成缺失：
+
+- **顶部 Header 与侧栏底部的租户/登录入口已撤掉** —— 前者挡住皮肤铺满整页、信息又与侧栏重复；
+  后者的账户体系尚未落地，点下去没有后果。**接口全部保留**，需要时接回来即可。
+- **弹窗可拖拽** —— 所有 antd Modal 与皮肤设置面板都能拖标题栏移动，双击标题栏复位。
+  它是**全局安装**的（扫描 DOM 自动挂），所以以后新增的弹窗也自动具备，不需要每个调用点记得加。
+- **窗口标题固定由宿主持有**，不受皮肤影响（原因见「皮肤」一节）。
 
 ## 数据目录（运行时自动创建，无需预先存在）
 

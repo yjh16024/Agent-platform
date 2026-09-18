@@ -5,7 +5,7 @@
 > 设计意图与可行性依据见 [design.md](design.md)。
 >
 > 合并来源：原 `docs/TODO.md`（空文件，已删除）+ `TECH_GAP_ROADMAP.md` + `FEASIBILITY_ANALYSES.md`（待实施部分）。
-> 最后核实：**2026-09-14**。
+> 最后核实：**2026-09-18**。
 
 ---
 
@@ -21,6 +21,11 @@
 | 向量记忆（历史对话向量召回） | ❌ | 技术栈已具备（in-memory/Milvus），风险是无关历史污染上下文 |
 | 桌面应用代码签名 | ❌ | 当前未签名（需 `signtool` / `codesign` 证书），企业分发前需补 |
 | 桌面自动更新 | ❌ | 无 updater，升级需重新分发 zip / exe |
+| **让智能体直接改文件 / 写代码** | ❌ | 现在只能聊天与调工具，不能读写用户的工作目录。需要**一起做**的几件事：会话级工作区根约束、`fs` 工具组（read/glob/grep/edit/write）、命令执行、**审批**、**改前快照回滚**。只做工具不做后两者 = 一个能删任何文件的黑盒 |
+| **MCP stdio transport** | ❌ | 目前只有 streamable-http；补 stdio 才能挂 `npx` / `uvx` 拉起的 server（含官方 filesystem / git），否则 npm 生态整个用不上 |
+| 流式通道的工具调用 | ⚠️ | `AgentRuntimeService.runStream()` 未接 `runToolLoop`，工具目前只在非流式 `run()` 里生效 |
+| 工具调用可视化与审批 UI | ❌ | 前端只渲染最终文本，工具调用过程与结果不可见；聊天链路没有审批组件 |
+| 工具责任链的其余环节 | ⚠️ | 注释写的是"鉴权 → 校验 → 限流 → 审计"，实际只有 `AuditToolFilter` 一环；也没有统一超时，超时分散在各工具实现内部 |
 > 已完成项不在此列出，例如 **框架大版本升级（Spring Boot 4.1.1 + Spring AI 2.0.1 + Jackson 3，2026-09-10 完成）**、
 > **工作流拖拽画布（FlowGram + 11 类节点 + 节点级调试 + 发布/回滚，2026-09-11 完成）**、
 > **画布交互完善（Coze 式内联加号 / 节点整卡拖拽重排 / 画布平移缩放 / 创建即进画布，2026-09-12 完成）**、
@@ -117,3 +122,54 @@
     又显式把 `events.enabled` 覆盖为 `false` —— **这两处必须同进同出**：只开 `events` 而不删排除项会因缺
     `KafkaTemplate` 启动失败；只删排除项而不关 `events`，桌面启动会去连不存在的 broker。
     （Redis 侧的排除是安全的：`SessionRecentCache` / `QuotaService` 均为 `@Autowired(required=false)`。）
+25. **皮肤的 DOM 层级必须照它期望的摆，两层语义不能合并到一个元素上（2026-09-17）**：
+    皮肤大量用 `>` 子选择器做结构定位。已确认两处都因"合并"而静默失效，且表现都是"皮肤的功能不生效"：
+    输入卡片 `[data-composer-seat] > [data-composer-card]`（合并后皮肤的宽度控制与折叠过渡永不触发，
+    表现为"输入框外面有东西突出来"）、设置面板
+    `[data-slot='sidebar.settings'] > [role='presentation'] > [role='dialog']`
+    （合并后对话框只能吃宿主给的宽度，标签被挤成一字一行的竖排）。
+    **判据：凡是皮肤用 `>` 子选择器的地方，宿主必须真的分成两个元素。**
+26. **设置面板覆盖层的 z-index 有一个很窄的合法区间：`940 < 它 < 1000`（2026-09-18）**：
+    下界是皮肤自己的 chrome / 装饰层（用到 940），上界是 antd v5 的弹出层基准
+    （`zIndexPopupBase = 1000`，Select / Dropdown = 1050、Popconfirm = 1030、Tooltip = 1070，
+    见 `antd/es/select/style/token.js`）。这些控件**都 portal 到 body**，与覆盖层直接比 z-index ——
+    超过上界就表现为"下拉 / 取色器 / 气泡确认展开后什么都看不到"（面板还带皮肤的 `backdrop-filter`，更像没有）。
+27. **内联样式只能被 `!important` 覆盖，不能"让位"（2026-09-18）**：
+    让位机制靠 `!important` 把宿主值**清空**（background / border → transparent / none），这对
+    "皮肤用伪元素画框"的模式有效；但 `padding` 这类语义布局属性写成 `!important` 属于**覆盖**，
+    会把皮肤给装饰边框预留的空间一起压掉。实例：`[data-composer-card]` 的内联
+    `padding: 10px 12px 8px` 顶掉了 maid-atelier 的 `padding-top: 34px`（给它蕾丝缎带预留的），
+    表现为"工具条被顶到缎带上、位置太高"。**判据：皮肤打算用更高特异性规则去改的属性，宿主一律不能写内联。**
+28. **皮肤设置项的持久化键必须归一到 `def.skinId`，不能用市场 id（2026-09-18）**：
+    皮肤自报 id 常是市场 id 的后缀（市场 `small-tailqwq.maid-atelier` ↔ 自报 `maid-atelier`），
+    `resolveDef` 靠 `endsWith` 兜底才找到定义。曾出现**写用市场 id 键、读用自报 id 键**：值正确落盘了，
+    但面板重算时读另一个键 → 受控 `checked` 原样弹回 → **用户看到"开关点了完全没反应"**；
+    而计数器读的恰好是写入键，于是显示"已自定义 N 项"却一个开关都点不动 ——
+    **"计数器说有改动、控件却不动"这个自相矛盾就是该 bug 的指纹**。
+    另：宿主**拿不到"市场 id ↔ 皮肤定义"的映射**（皮肤自己造 token dispatch register 事件，detail 里没有市场 id），
+    所以持久化只能用自报 `skinId`，代号改名会让设置"重置"。
+29. **DSH 系皮肤会写死它原宿主的产品名，包括窗口标题（2026-09-18）**：
+    实测 maid-atelier 里就是 `const SKIN_TITLE = '深海女仆工坊 · DeepSeek Harness'` + `document.title = SKIN_TITLE`，
+    卸载时还会还原（属于**有意接管**，不是它的 bug）。**不要用"别名替换"** —— 别名表永远列不全。
+    定案：窗口标题归宿主所有，`skin/titleGuard.ts` 接管 `document.title` 的 setter 后忽略传入值、一律写产品名。
+
+## 五、"让智能体改文件 / 写代码"的通行做法（2026-09-18 调研，动手前先读）
+
+各家（Claude Code / Cursor / Cline / Aider / OpenAI Codex）做法高度收敛，要点如下：
+
+- **本质**：文件操作就是**普通工具调用**（`tool_call` → 宿主执行 → 结果回灌），没有魔法。
+  标准工具面：`read_file`（**必须带行号**）、`glob`、`grep`（**最主要的导航手段**）、
+  `edit_file`（**精确串替换**，主流流派）、`apply_patch`（统一 diff，多段改动更省 token）、
+  `write_file`、`run_command`（**闭环的关键**：能跑测试/编译才算会写代码）、`todo_write`。
+- **成败在工程细节**：精确匹配而非行号替换；匹配失败要返回"文件已变化 + 相关片段"让模型重试；
+  **原子写**（临时文件 + rename）且保留换行符（**Windows CRLF 是高频坑**）；最小 diff，不顺手格式化；
+  编辑后立刻 lint / 语法校验（SWE-agent 的 ACI 洞见）。
+- **安全四层**：根目录约束（本项目已在 skins/skills/plugins/storage 统一用
+  `resolve + normalize + startsWith(root)`，可直接复用）、分层审批（读自动 / 写与命令确认）、
+  沙箱（容器或 VM）、**快照回滚**（用户敢让它改文件的前提）。
+- **代码库理解**：**不要给代码做 embedding 索引**（会过期、跨语言差）→ 用 grep 的 agentic search；
+  第三条路是 Aider 式 repo map（tree-sitter 抽符号 + PageRank 排序给全局骨架）。
+  **本项目的知识库 RAG 不适合复用做代码检索。**
+- **建议顺序**：① 会话级工作区根 → ② `fs` 工具组 + `shell.run` → ③ 审批 + 快照回滚
+  → ④ 补 stdio MCP transport（一次性解锁 npx 生态）→ ⑤ 流式工具链路 + 前端工具调用卡片。
+  只做 ④ 能最快看到"能改文件"，但没有 ①②③ 就是个能删任何文件的黑盒。

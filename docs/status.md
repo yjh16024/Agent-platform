@@ -1,7 +1,7 @@
 # 功能与实现现状（Status）
 
 > **单一事实来源**：本文件是「已经实现了什么」的权威清单，其它文档不再重复描述现状。
-> 最后核实：**2026-09-14**（逐项对照代码；测试数为 `mvn test` 实测结果）。
+> 最后核实：**2026-09-18**（逐项对照代码；测试数为当日 `mvn test` 实测结果）。
 >
 > | 你想看什么 | 去哪 |
 > |---|---|
@@ -42,6 +42,13 @@
 | 租户配额 | 调用次数 / tokens / 文件 / 插件限额（Redis INCR+TTL，内存兜底） | ✅ 已实现 | `QuotaService`、`GET /api/v1/quotas` |
 | 内置库 | 免装 MySQL：H2 file（MySQL 兼容模式）+ Flyway 双迁移目录 | ✅ 已实现 | `--spring.profiles.active=embedded` |
 | 桌面应用 | Electron 33 + jlink 精简 JRE + electron-builder（**绿色版 zip / dir，portable 已弃用**）+ 启动页 + 单实例 + 后端回收 + **启动优化**（界面 ~1–2s 弹出、后端 ~13s 就绪） | ✅ 已实现（分发形态与启动优化 09-12） | `desktop/`、`desktop/main.js` |
+| **皮肤（换肤）** | 皮肤市场（列表/安装/卸载/资源代理/bundle 读取）+ 运行时（注入第三方 JS + 契约钩子）+ 契约版本 | ✅ 已实现（2026-09-17） | `SkinController`、`SkinMarketService`、`ui/src/skin/` |
+| 皮肤 | 设置面板（**DSH 自定义协议** v1/v2：皮肤声明设置项，宿主持久化 + 渲染面板 + 回调皮肤） | ✅ 已实现 | `skin/customization.ts`、`SkinSettingsPanel` |
+| 皮肤 | 皮肤适配（DOM 层级照皮肤期望分层；覆盖层 z-index 让位于 antd 弹出层；运行时"让位样式"） | ✅ 已实现 | `SidebarSkinSettings`、`styles/global.css` |
+| 界面 | 收敛（撤顶部 Header 与侧栏租户/登录入口，接口保留）+ 弹窗**全局可拖拽** + **窗口标题由宿主持有** | ✅ 已实现（2026-09-18） | `AppLayout`、`components/dialogDrag.ts`、`skin/titleGuard.ts` |
+| 技能市场 | 多通道取件（ghproxy → jsDelivr → GitHub 直连）+ 任意仓库/文件地址直读 | ✅ 已实现 | `skill/market/`、`GET /skills/market` |
+| MCP 市场 | 直连官方 Registry，**仅保留 `streamable-http`** | ✅ 已实现 | `McpMarketService`、`GET /tools/mcp/market` |
+| HTTP 工具市场 | 免 Key 公开 API 清单，一键注册（清单在资源里，**新增条目不改代码**） | ✅ 已实现 | `resources/tool-market.json`、`GET /tools/market` |
 | 鉴权 | core 内 JWT 过滤器（登录/静态账号）、生产密钥守卫 | ✅ 已实现 | `AuthController`、`SECURITY_ENABLED` |
 | 独立网关 | 路由 / 限流 / 熔断 | ⚠️ 占位（仅 `JwtAuthFilter`） | `agent-platform-gateway` |
 | 日志高阶存储 | ES / ClickHouse | ❌ 未实现（MySQL `log_index` 替代） | 见 backlog.md |
@@ -70,6 +77,7 @@
 | 诊断 | `/diagnosis` | `POST /analyze` |
 | 提示词 | `/prompt` | 优化、评分 |
 | 配额 | `/quotas` | `GET /`（限额+用量）、`POST /`（配置限额） |
+| **皮肤** | `/skins` | `/market/read`（市场列表）、`/market/install`、`/installed`、`/uninstall`、`/proxy`（资源代理）、`/bundle`（取皮肤 JS） |
 | 可观测 | `/observability` | 指标/看板数据 |
 
 > 契约：强类型 record 出参 camelCase；自由 Map 入参 snake_case；`POST /agent/run` 返回裸 JSON（不套 `ApiResponse`）。
@@ -96,6 +104,7 @@
 | 运维工具 · 提示词优化 | `/prompt` | `pages/ops/PromptOptimizePage.tsx` |
 | 运维工具 · 工具调试 | `/tools` | `pages/ops/ToolsPage.tsx` |
 | 运维工具 · **用户配额** | `/quota` | `pages/ops/QuotaPage.tsx`（模型账户额度 + 平台用量限额两个 Tab） |
+| **皮肤市场** | `/skins` | `pages/skins/SkinMarketPage.tsx`（市场列表 / 安装 / 卸载 / 运行 JS；设置入口在侧栏底部，面板见「皮肤」一节） |
 
 > 改前端后必须 `npm run build:prod` 同步到 `agent-platform-core/src/main/resources/static/`，否则 core 仍托管旧产物。
 
@@ -141,7 +150,7 @@
 ## 六、测试规模
 
 - 测试类：**37** 个（`agent-platform-core/src/test`）
-- 测试方法：**143** 个，`mvn test` 实测 **全绿**（2026-09-14）
+- 测试方法：**143** 个，`mvn test` 实测 **全绿**（2026-09-18 复核：143 用例全过，6 个模块 BUILD SUCCESS）
 - 覆盖重点：Spring AI 通道与原生 tool-role 循环、H2 内置库启动与迁移、RAG 检索事务与 FULLTEXT 失败隔离、
   模型额度查询（含 401 / 不可达 / 不支持厂商）、记忆与摘要、工具与 MCP、插件运行时、DAG 引擎。
 
@@ -160,3 +169,9 @@
 | 图片视觉 | 依赖 `SPRING_AI_ENABLED=true` 且模型支持视觉；未开启时图片不发送、文本对话正常 |
 | 桌面分发形态 | **只用绿色版**（portable 已弃用）：解压一次后直接运行 `dist/green/Agent Platform.exe`；界面 1–2s 弹出、后端约 13s 就绪 |
 | ASR / TTS / OCR | 接口与插件链路在，默认 mock，未接真实服务 |
+| **皮肤是第三方 JS，无沙箱** | 皮肤代码与宿主同上下文执行；只有用户**显式启用**过的皮肤才会在下次启动时自动加载（记录在 `ap.skin.enabled`） |
+| **工具循环只在非流式路径** | `runStream()` 未接工具链路：需要工具调用时必须走非流式 `POST /agent/run` |
+| **工具责任链只实现了审计** | 注释里写的「鉴权 / 参数校验 / 限流」未实现；也没有统一超时，超时分散在各工具实现内部 |
+| **无工具调用可视化与审批** | 前端只渲染最终文本，工具调用过程与结果对用户不可见；聊天链路没有审批交互 |
+| **MCP 仅支持 streamable-http** | 没有 stdio transport：靠 npx/uvx 拉起的 MCP server（含官方 filesystem / git）目前挂不上 |
+| 弹窗拖拽不含 Drawer | antd Drawer 是贴边全高面板，拖动无语义，未纳入全局拖拽 |

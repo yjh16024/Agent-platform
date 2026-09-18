@@ -15,7 +15,7 @@ extraResources:
   - from: runtime
     to: runtime
   # 后端 fat jar（含前端 static + H2，以 embedded 启动）
-  - from: ../agent-platform-core/target/agent-platform-core-1.0.0-SNAPSHOT.jar
+  - from: ../agent-platform-core/target/agent-platform-core-1.1.0.jar
     to: backend/app.jar
 win:
   # dir = 只产出解包目录，不归档。见下方说明（2026-09-15 由 zip 改为 dir）。

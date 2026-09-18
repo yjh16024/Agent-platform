@@ -6,7 +6,7 @@
 
     <groupId>com.agentplatform</groupId>
     <artifactId>agent-platform</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.1.0</version>
     <packaging>pom</packaging>
     <name>Agent Platform</name>
     <description>智能体交互平台 - 多模型 · 上下文 · RAG · 工作流 · 多模态 · 工具调用 · Skills · 智能体管理 · 插件系统</description>
