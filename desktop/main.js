@@ -3,7 +3,7 @@
 // - 单实例锁；退出/窗口关闭回收后端子进程；日志写入 userData/app.log 便于排查。
 'use strict';
 
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeTheme, Menu } = require('electron');
 const { spawn } = require('child_process');
 const http = require('http');
 const net = require('net');
@@ -14,6 +14,57 @@ const SMOKE = process.env.AP_DESKTOP_SMOKE === '1';
 let backend = null;
 let win = null;
 let bootLogFile = null;
+
+// ---- 主题（换肤）----
+// 网页侧换肤后经 preload 上报，这里落盘成 userData/theme.json；下次启动先读它再建窗口，
+// 这样窗口背景与启动页从第一帧就是对的颜色（否则暗色皮肤下会先闪一下白底）。
+let theme = { mode: 'light', background: '#f7f8fa' };
+
+function themeFile() {
+  return path.join(app.getPath('userData'), 'theme.json');
+}
+
+function readTheme() {
+  try {
+    const t = JSON.parse(fs.readFileSync(themeFile(), 'utf8'));
+    theme = {
+      mode: t.mode === 'dark' ? 'dark' : 'light',
+      background: typeof t.background === 'string' && t.background.trim() ? t.background.trim() : '#f7f8fa',
+    };
+    logLine(`theme loaded: mode=${theme.mode} background=${theme.background}`);
+  } catch {
+    // 首次运行或文件损坏：用默认浅色
+  }
+}
+
+function saveTheme(payload) {
+  if (!payload || typeof payload !== 'object') {
+    return;
+  }
+  const next = {
+    mode: payload.mode === 'dark' ? 'dark' : 'light',
+    background:
+      typeof payload.background === 'string' && payload.background.trim() ? payload.background.trim() : theme.background,
+  };
+  theme = next;
+  try {
+    fs.writeFileSync(themeFile(), JSON.stringify(next));
+  } catch (e) {
+    logLine(`theme persist failed: ${e.message}`);
+  }
+  try {
+    nativeTheme.themeSource = next.mode;
+  } catch {
+    /* ignore */
+  }
+  if (win && !win.isDestroyed()) {
+    try {
+      win.setBackgroundColor(next.background);
+    } catch {
+      /* ignore */
+    }
+  }
+}
 
 function logLine(msg) {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -74,10 +125,16 @@ function waitHttp(port, timeoutMs) {
 }
 
 function loadingHtml(message) {
+  // 启动页配色跟随已保存的主题，避免暗色皮肤下先闪一下白底
+  const dark = theme.mode === 'dark';
+  const bg = theme.background || (dark ? '#141414' : '#f7f8fa');
+  const fg = dark ? '#e6e6e6' : '#333';
+  const tip = dark ? '#9aa0a6' : '#888';
+  const brand = dark ? '#4d91ff' : '#2563eb';
   return `data:text/html;charset=utf-8,${encodeURIComponent(`<!doctype html><html><head><meta charset="utf-8">
-    <style>body{font-family:system-ui,'Segoe UI',sans-serif;background:#f7f8fa;margin:0;display:flex;
-      height:100vh;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:#333}
-      .logo{font-size:26px;font-weight:600;color:#2563eb}.tip{font-size:14px;color:#888}</style></head>
+    <style>body{font-family:system-ui,'Segoe UI',sans-serif;background:${bg};margin:0;display:flex;
+      height:100vh;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:${fg}}
+      .logo{font-size:26px;font-weight:600;color:${brand}}.tip{font-size:14px;color:${tip}}</style></head>
     <body><div class="logo">Agent Platform</div><div class="tip">${message}</div></body></html>`)}`;
 }
 
@@ -118,6 +175,9 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
+  // 换肤上报：渲染层调 window.apTheme.set(...) → 落盘 + 更新窗口背景 + 原生明暗
+  ipcMain.on('ap:theme', (_event, payload) => saveTheme(payload));
+
   app.on('second-instance', () => {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   });
@@ -129,7 +189,20 @@ if (!gotLock) {
   process.on('exit', () => { if (backend) { try { backend.kill(); } catch { /* ignore */ } } });
 
   app.whenReady().then(async () => {
+    /*
+     * 去掉 Electron 默认菜单栏（File / Edit / View / Window / Help）。
+     *
+     * 理由：这是一个产品级界面，原生菜单（尤其是全英文的 Edit/View）对使用者没有意义，
+     * 还横在窗口顶部占掉一条、挡住皮肤的完整覆盖。
+     *
+     * 代价与补偿：菜单自带的默认快捷键（Ctrl+R 刷新、Ctrl+Shift+I 开发者工具…）会一并失效。
+     * 刷新平台自己有入口；**F12 开发者工具单独保留**（见创建窗口处的 before-input-event），
+     * 否则以后排查页面问题只能去改代码，代价太大。
+     */
+    Menu.setApplicationMenu(null);
     bootLogFile = path.join(app.getPath('userData'), 'app.log');
+    // 先读主题：窗口背景与启动页都依赖它，必须在建窗口之前
+    readTheme();
     logLine('app ready; creating window (instant feedback)...');
 
     if (SMOKE) {
@@ -147,8 +220,30 @@ if (!gotLock) {
     // 先出启动页，再后台拉起后端
     win = new BrowserWindow({
       width: 1360, height: 900, title: 'Agent Platform',
-      webPreferences: { contextIsolation: true, nodeIntegration: false },
+      // 跟随已保存的主题：否则加载瞬间是白底，暗色皮肤下会闪一下
+      backgroundColor: theme.background,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        // 换肤上报通道；preload.js 必须打进包，见 electron-builder.yml 的 files
+        preload: path.join(__dirname, 'preload.js'),
+      },
     });
+    /*
+     * 菜单栏被置空后，菜单里的默认快捷键也一起没了。这里只把**开发者工具**接回来：
+     * 没有它，以后排查前端问题只能改代码再加日志。F12 / Ctrl+Shift+I 都能开。
+     * 其余快捷键（刷新、缩放等）平台自己有入口或系统层面可用，不额外补。
+     */
+    win.webContents.on('before-input-event', (event, input) => {
+      const isDevTools =
+        input.type === 'keyDown' &&
+        (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i'));
+      if (isDevTools) {
+        win.webContents.toggleDevTools();
+        event.preventDefault();
+      }
+    });
+
     await win.loadURL(loadingHtml('正在启动本地服务…（约 10–25 秒）'));
     try {
       const port = await startBackend();

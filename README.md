@@ -241,6 +241,22 @@ flowchart TD
 
 ### 快速开始
 
+#### 方式一：桌面版（推荐日常使用，零依赖）
+
+**不需要安装 JDK / Maven / MySQL / Node** —— 应用自带 jlink 精简 JRE 与内嵌 H2 数据库。
+
+1. 构建（Windows）：双击 `desktop\build.bat`（依次 jlink → 打后端 jar → 打包 → 输出绿色版目录，约 15 秒）
+2. 运行：双击 **`desktop\dist\green\Agent Platform.exe`**
+
+- **数据目录**：`%APPDATA%\Agent Platform\data`（**与方式二不通用**，两边各有一套库）
+- **日志**：`%APPDATA%\Agent Platform\app.log`（启动失败先看这里）
+- 绿色版整个目录可直接拷走，免安装、免解压（`portable` 单文件已弃用：每次启动都要解压约 640MB）
+- 改了后端代码后重新跑一次 `build.bat` 再启动即可；**构建前请先关闭应用**
+
+#### 方式二：从源码运行（开发联调 / 服务器部署）
+
+需要 JDK 21（必需）、MySQL 或内置 H2；Node 仅在修改前端源码时需要。
+
 #### 1. 克隆
 
 ```bash

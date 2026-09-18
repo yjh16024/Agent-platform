@@ -3,7 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>智能体交互平台 · 仪表盘</title>
+    <!--
+      窗口标题由宿主统一持有（见 src/skin/titleGuard.ts）。
+      这里的初值只负责"脚本执行前"那一瞬间，装了守卫之后任何写入都会归一到 PRODUCT_TITLE。
+      顺带清掉了模板遗留的 "· 仪表盘"（本应用不是仪表盘）。
+    -->
+    <title>智能体交互平台</title>
   </head>
   <body>
     <div id="root"></div>

@@ -7,6 +7,13 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+# ---- guard: refuse to build while the desktop app is running ----
+# Step 4 replaces dist/green, which is locked while the app runs.
+if pgrep -f "Agent Platform" >/dev/null 2>&1; then
+  echo "[ERROR] Agent Platform is running. Close the desktop app and retry."
+  exit 1
+fi
+
 # ---- 1. JDK 21 ----
 if [ -z "${JAVA_HOME:-}" ]; then
   echo "[ERROR] JAVA_HOME must point to JDK 21"

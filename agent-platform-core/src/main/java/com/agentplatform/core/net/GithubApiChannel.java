@@ -1,4 +1,4 @@
-package com.agentplatform.core.skill.market;
+package com.agentplatform.core.net;
 
 import com.agentplatform.common.util.JsonUtils;
 import lombok.extern.slf4j.Slf4j;
@@ -17,10 +17,13 @@ import java.util.List;
  * {@code api.github.com} 与 {@code raw.githubusercontent.com}）。</p>
  *
  * <p>列文件用 <b>Git Trees API</b>（{@code /git/trees/{ref}?recursive=1}）——一次请求返回整仓库路径树，
- * 比逐层调 Contents API 少很多次往返。</p>
+ * 比逐层调 Contents API 少很多次往返；{@code ref} 既可以是分支名也可以是 commit SHA（皮肤安装要用后者钉版本）。</p>
+ *
+ * <p>按 URL 取件时：带前缀的通道**只能代理 GitHub 域名**（否则会拿回一个 HTML 错误页当成功），
+ * 其余地址一律返回 {@code null} 交给别的通道；不带前缀的直连通道对任何地址都直接取。</p>
  */
 @Slf4j
-public class GithubApiChannel extends SkillChannel {
+public class GithubApiChannel extends FetchChannel {
 
     private static final long MAX_TREE = 16L * 1024 * 1024;
     private static final long MAX_REPO_INFO = 512L * 1024;
@@ -61,7 +64,7 @@ public class GithubApiChannel extends SkillChannel {
             fetch(prefix + "https://api.github.com/rate_limit", 64L * 1024, PROBE_TIMEOUT_SECONDS);
             return true;
         } catch (IOException e) {
-            log.debug("[skill-channel] {} 探测失败: {}", id, e.getMessage());
+            log.debug("[channel] {} 探测失败: {}", id, e.getMessage());
             return false;
         }
     }
@@ -93,7 +96,7 @@ public class GithubApiChannel extends SkillChannel {
         }
         JsonNode truncated = root.get("truncated");
         if (truncated != null && truncated.asBoolean(false)) {
-            log.warn("[skill-channel] 仓库过大，GitHub 目录树被截断，可能漏掉部分技能: {}@{}", repo, branch);
+            log.warn("[channel] 仓库过大，GitHub 目录树被截断，可能漏掉部分文件: {}@{}", repo, branch);
         }
         List<String> out = new ArrayList<>();
         for (JsonNode e : tree) {
@@ -118,5 +121,15 @@ public class GithubApiChannel extends SkillChannel {
         String clean = path.startsWith("/") ? path.substring(1) : path;
         String url = prefix + "https://raw.githubusercontent.com/" + repo + "/" + branch + "/" + encodePath(clean);
         return fetch(url, MAX_FILE);
+    }
+
+    @Override
+    protected String rewrite(String url) {
+        if (prefix.isEmpty()) {
+            // 直连通道：任何地址都能直接取（GitHub Pages、raw、乃至任意 JSON 地址）
+            return url;
+        }
+        // 代理通道只代理 GitHub 域名：否则会拿回一个 HTML 错误页，被当成 200 成功
+        return isGithubUrl(url) ? prefix + url : null;
     }
 }

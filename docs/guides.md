@@ -137,14 +137,22 @@ helm install agent-platform agent-platform-deploy/helm/agent-platform \
 ### 2.7 桌面分发（Windows 绿色版）
 
 ```bat
-desktop\build.bat    REM 一键：jlink JRE → 后端 jar → electron-builder zip → 同步 dist\green
+desktop\build.bat    REM 一键：jlink JRE → 后端 jar → electron-builder（dir，不归档）→ 改名 dist\green
 ```
 
-- **分发形态只有绿色版**：把 `desktop\dist\green\` 整个目录（或 `dist\Agent-Platform-1.0.0-x64.zip`）
-  交给用户，解压后运行里面的 `Agent Platform.exe` 即可。
+> **这是推荐的日常运行方式**：自带 jlink 精简 JRE 与内嵌 H2，免装 JDK / MySQL，双击即用；
+> 从源码启动（`start-core.bat`）仅用于开发联调、跑测试与服务器部署。
+
+- **分发形态只有绿色版**：把 `desktop\dist\green\` 整个目录交给用户，双击其中的 `Agent Platform.exe` 即可。
+- **构建目标用 `dir` 而不是 `zip`**：electron-builder 恒为「先铺出 `win-unpacked` 再归档」，
+  所以任何归档型 target 都会额外留下一个解包副本，且 7za 以 `-mx=7` 压约 600MB 是整条链最慢的一步。
+  改用 `dir` 后由构建脚本把 `win-unpacked` **改名**为 `dist/green`（同盘 rename，瞬间），
+  实测打包阶段 **75.9s → 7.2s**。需要对外压缩包时手工压一次：
+  `Compress-Archive -Path dist\green -DestinationPath dist\green.zip`。
+- **构建前必须先关闭应用**：`dist\green` 在应用运行时被占用，脚本会检测到并直接报错退出。
 - **不要用 portable 单文件**：它每次运行都要把约 640MB 解压到临时目录，冷启动要多等 20–30s（期间无窗口）。
-- 运行时表现：**界面 1–2s 弹出**、后端约 13s 就绪；数据落在 `%APPDATA%\Agent Platform\data`，
-  日志在 `%APPDATA%\Agent Platform\app.log`。
+- 运行时表现：**界面 1–2s 弹出**、后端约 13s 就绪；数据落在 `%APPDATA%\Agent Platform\data`
+  （与源码方式的 `./data` **互相独立**，切换运行方式等于换库），日志在 `%APPDATA%\Agent Platform\app.log`。
 - 桌面包以 `embedded`（H2）profile 运行，**免装 MySQL / Redis**。
 
 ---

@@ -124,6 +124,22 @@ public record GitRepoRef(String owner, String repo, String branch, String subPat
             throw BizException.badRequest("地址里没解析出 owner/repo：" + raw);
         }
 
+        // GitHub Pages 站点（<owner>.github.io/<repo>/...）：owner 在主机名上、repo 在首段路径上。
+        // 皮肤市场常以静态站点形式发布（如 https://kingofsoysauce.github.io/dsh-skin-market/），
+        // 而真正的数据在对应仓库里，所以要能把站点地址还原回 owner/repo。
+        if (host.endsWith(".github.io")) {
+            String owner = host.substring(0, host.length() - ".github.io".length());
+            String[] segs = path.split("/");
+            if (segs.length == 0 || segs[0].isBlank()) {
+                throw BizException.badRequest("GitHub Pages 地址里没解析出仓库名：" + raw);
+            }
+            String repo = validate(stripGit(segs[0]), "repo", raw);
+            String sub = segs.length > 1
+                    ? String.join("/", Arrays.asList(segs).subList(1, segs.length))
+                    : "";
+            return new GitRepoRef(validate(owner, "owner", raw), repo, "", sub);
+        }
+
         String[] seg = path.split("/");
         if (seg.length < 2) {
             throw BizException.badRequest("地址里没解析出 owner/repo：" + raw);

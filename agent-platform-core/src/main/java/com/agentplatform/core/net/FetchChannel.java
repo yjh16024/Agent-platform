@@ -1,4 +1,4 @@
-package com.agentplatform.core.skill.market;
+package com.agentplatform.core.net;
 
 import okhttp3.Call;
 import okhttp3.OkHttpClient;
@@ -13,23 +13,39 @@ import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
- * 一个「取件通道」：负责列仓库文件与读文件内容。
+ * 一条「取件通道」：把远端资源取回来的具体实现（列目录 / 读文件 / 按 URL 取）。
  *
  * <p>之所以抽象成通道而不是写死一个地址，是因为**国内访问 GitHub 的可用路径各不相同**：
  * jsDelivr 数据接口、各类 GitHub 加速代理、直连，各自在不同网络下时通时不通。
- * 服务层按顺序试，谁通用谁，并把结果记下来（见 {@link SkillMarketService}）。</p>
+ * {@link RemoteFetchService} 按顺序试，谁通用谁，并把结果记下来。</p>
+ *
+ * <p>两条取件路线：</p>
+ * <ul>
+ *   <li><b>仓库路线</b>：{@link #listFiles(String, String)} / {@link #read(String, String, String)}
+ *       —— 知道 owner/repo + ref 时用（技能市场、皮肤安装都走这条）。</li>
+ *   <li><b>URL 路线</b>：{@link #readUrl(String)} —— 手上只有一个地址时用
+ *       （技能/皮肤市场的 catalog.json、皮肤预览图）。各通道自行判断这个地址能不能改写，
+ *       不能处理就返回 {@code null} 让上层换通道（例如代理只能代理 GitHub 域名，
+ *       而 GitHub Pages 站点只能直连）。</li>
+ * </ul>
  */
-public abstract class SkillChannel {
+public abstract class FetchChannel {
 
     protected static final String UA = "agent-platform/skill-market";
 
+    /** 单次 URL 取件的体积上限（防手滑拉一个巨大文件把内存撑爆）。 */
+    protected static final long MAX_URL_BYTES = 32L * 1024 * 1024;
+
+    /** 探测用超时（秒）——诊断时不能因为某条通道卡住而拖几十秒。 */
+    protected static final int PROBE_TIMEOUT_SECONDS = 8;
+
     protected final OkHttpClient http;
 
-    protected SkillChannel(OkHttpClient http) {
+    protected FetchChannel(OkHttpClient http) {
         this.http = http;
     }
 
-    /** 分组名：{@code jsdelivr} / {@code ghproxy} / {@code github}，用于配置里按组启停。 */
+    /** 分组名：{@code jsdelivr} / {@code ghproxy} / {@code github}，用于配置里按组启停与排序。 */
     public abstract String group();
 
     /** 唯一标识（诊断信息里展示）。 */
@@ -50,15 +66,32 @@ public abstract class SkillChannel {
     /** 读取文件；文件确定不存在时抛 {@link Miss}（不必再试别的通道）。 */
     public abstract byte[] read(String repo, String branch, String path) throws IOException;
 
+    /**
+     * 把任意 URL 改写成"本通道能取到的等价地址"；不能处理时返回 {@code null}。
+     * <p>例：jsDelivr 通道能把 {@code raw.githubusercontent.com/...} 改写成
+     * {@code cdn.jsdelivr.net/gh/...}；加速代理通道能给 GitHub 域名加前缀；
+     * 直连通道对任何地址都返回原样。</p>
+     */
+    protected abstract String rewrite(String url);
+
+    /**
+     * 按 URL 取字节。通道不支持该地址时抛 {@link IOException}，由 {@link RemoteFetchService} 换下一条。
+     * 资源确定不存在时抛 {@link Miss}。
+     */
+    public byte[] readUrl(String url) throws IOException {
+        String target = rewrite(url);
+        if (target == null) {
+            throw new IOException("本通道不支持该地址");
+        }
+        return fetch(target, MAX_URL_BYTES);
+    }
+
     /** 资源确定不存在（HTTP 404/410）——换通道也没用。 */
     public static class Miss extends IOException {
         public Miss(String message) {
             super(message);
         }
     }
-
-    /** 探测用超时（秒）——诊断时不能因为某条通道卡住而拖几十秒。 */
-    protected static final int PROBE_TIMEOUT_SECONDS = 8;
 
     protected byte[] fetch(String url, long maxBytes) throws IOException {
         return fetch(url, maxBytes, 0);
@@ -104,7 +137,7 @@ public abstract class SkillChannel {
         return new String(fetch(url, maxBytes), StandardCharsets.UTF_8);
     }
 
-    /** 逐段 URL 编码（保留 `/`）——技能文件名里的空格与中文都很常见。 */
+    /** 逐段 URL 编码（保留 `/`）——技能/皮肤文件名里的空格与中文都很常见。 */
     protected static String encodePath(String path) {
         StringBuilder sb = new StringBuilder();
         for (String seg : path.split("/", -1)) {
@@ -114,5 +147,14 @@ public abstract class SkillChannel {
             sb.append(URLEncoder.encode(seg, StandardCharsets.UTF_8).replace("+", "%20"));
         }
         return sb.toString();
+    }
+
+    /** 这个地址是不是 GitHub 域名（代理类通道只能处理这些）。 */
+    protected static boolean isGithubUrl(String url) {
+        return url.startsWith("https://raw.githubusercontent.com/")
+                || url.startsWith("https://github.com/")
+                || url.startsWith("https://api.github.com/")
+                || url.startsWith("https://objects.githubusercontent.com/")
+                || url.startsWith("https://codeload.github.com/");
     }
 }

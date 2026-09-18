@@ -10,6 +10,15 @@ REM ============================================================
 setlocal
 cd /d "%~dp0"
 
+REM ---- guard: refuse to build while the desktop app is running ----
+REM Step 4 replaces dist\green, which is locked while the app runs. Without this
+REM check the rmdir fails silently and "move" would nest win-unpacked inside green.
+tasklist /fi "IMAGENAME eq Agent Platform.exe" 2>nul | findstr /i /c:"Agent Platform.exe" >nul
+if not errorlevel 1 (
+    echo [ERROR] Agent Platform.exe is running. Close the desktop app and retry.
+    goto :fail
+)
+
 set "USER_HOME=%USERPROFILE%"
 
 REM ---- 1. locate JDK 21 ----

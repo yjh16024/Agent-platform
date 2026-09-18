@@ -16,6 +16,7 @@ import SkillsPage from './pages/skills/SkillsPage';
 import WorkflowsPage from './pages/workflows/WorkflowsPage';
 import FilesPage from './pages/files/FilesPage';
 import ModelSettingsPage from './pages/settings/ModelSettingsPage';
+import SkinMarketPage from './pages/skins/SkinMarketPage';
 
 export default function App() {
   return (
@@ -29,6 +30,7 @@ export default function App() {
         <Route path="/knowledge-bases" element={<KnowledgeBasePage />} />
         <Route path="/workflows" element={<WorkflowsPage />} />
         <Route path="/skills" element={<SkillsPage />} />
+        <Route path="/skins" element={<SkinMarketPage />} />
         <Route path="/plugins" element={<PluginMarketplace />} />
         <Route path="/files" element={<FilesPage />} />
         <Route path="/logs" element={<LogsPage />} />

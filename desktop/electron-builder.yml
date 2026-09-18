@@ -5,6 +5,9 @@ directories:
   buildResources: build
 files:
   - main.js
+  # preload 必须打进包，否则 contextBridge 不会生效、换肤无法通知主进程
+  # （表现为：网页版正常、桌面版切换皮肤后窗口背景不跟随）
+  - preload.js
   - package.json
   - "!node_modules/**/*"
 extraResources:

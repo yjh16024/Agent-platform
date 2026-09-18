@@ -1,0 +1,174 @@
+/*
+ * 全局样式。
+ *
+ * 项目此前没有全局样式表（只有工作流画布自己的一份），但有两件事天然属于全局：
+ * ① 滚动条外观；② "侧栏设置面板打开时，侧栏其余内容必须让开"。
+ */
+
+/* ---------------------------------------------------------------- 滚动条 */
+/*
+ * 目标：**不抢眼**。
+ * - 轨道透明（不画那条灰槽），只留一个淡淡的圆角滑块；
+ * - 宽度 8px、带 2px 透明边框 + background-clip，视觉上更细；
+ * - 悬停才稍微加深，给一点可发现性。
+ */
+* {
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(0, 0, 0, 0.16) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: rgba(0, 0, 0, 0.16);
+  border-radius: 8px;
+  /* 透明边框 + content-box 让实际可拖区域比槽窄，看起来更细 */
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(0, 0, 0, 0.32);
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* 暗色（皮肤在跑时靠 body[data-ds-dark-theme] 切换）用浅色滑块 */
+body[data-ds-dark-theme] {
+  scrollbar-color: rgba(255, 255, 255, 0.2) transparent;
+}
+body[data-ds-dark-theme] ::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.2);
+}
+body[data-ds-dark-theme] ::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.36);
+}
+
+/* ------------------------------------------------- 皮肤设置面板 */
+/*
+ * 结构必须与皮肤期望的一致（读 orca 的 CSS 得出，**别改层级**）：
+ *
+ *   [data-slot=sidebar.settings]            ← 纯包裹层（皮肤不给它设样式）
+ *     └── [role=presentation]               ← 覆盖层：皮肤在此设 position:fixed/inset:0/
+ *           │                                  padding/z-index/isolation/pointer-events:auto
+ *           ├── [data-ap-settings-mask]       ← ★ 必须是 presentation 的**第一个**子元素：
+ *           │                                    皮肤给它做遮罩动画（:first-child）
+ *           └── [role=dialog]                 ← 皮肤在此设 width/height/border/shadow/动画
+ *
+ * 早期把 role=presentation 与 data-slot 挂在同一个元素上，导致皮肤那些
+ * `> [role=presentation]` / `> [role=presentation] > [role=dialog]` 规则**全部匹配不到**：
+ * 对话框拿不到 skin 给的宽度，只能吃侧栏宽度（208px）→ 标签被挤成一字一行（竖排），
+ * 覆盖层也拿不到 pointer-events:auto 与全屏几何。
+ *
+ * **这里的样式故意写得"低特异性、不带 !important"**：皮肤的同名规则特异性更高
+ * （`body[data-dsh-*][data-orca-settings-open] [data-slot=…]>[role=dialog]`），
+ * 有皮肤时让皮肤说了算，没皮肤时用下面这套兜底。
+ */
+/*
+ * ★ z-index 必须落在 antd 弹出层之下、皮肤 chrome 层之上，这个区间很窄，别随手改大。
+ *
+ * antd v5 的弹出层基准是 `zIndexPopupBase = 1000`：
+ *   Select / Dropdown / DatePicker / ColorPicker = 1050，Popconfirm = 1030，Tooltip = 1070。
+ * 这些面板里的控件（下拉、取色器、时间段选择、恢复默认的气泡确认）**都 portal 到 body**，
+ * 于是它们的 z-index 与这里的值直接比较 —— 曾经这里写的是 2000，比 1050 大，
+ * 结果下拉展开后**整块被覆盖层压在下面**，面板本身又带皮肤的 `backdrop-filter: blur()`，
+ * 用户看到的就是"下拉框什么都看不到"。
+ *
+ * 皮肤自己的 chrome/装饰层用到 940，所以下界大约在 940 以上；上界必须 < 1000。
+ * 取 1000：既能盖住皮肤，又让所有 antd 弹出层（1030/1050/1070）浮在上面。
+ */
+[data-slot='sidebar.settings'] > [role='presentation'] {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  pointer-events: auto;
+}
+
+/* 遮罩：点击关闭。位置用 absolute 让皮肤接管 presentation 的定位后依然铺满 */
+[data-slot='sidebar.settings'] [data-ap-settings-mask] {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.3);
+}
+
+[data-slot='sidebar.settings'] [role='dialog'] {
+  position: relative;
+  z-index: 1;
+  width: min(760px, 100vw - 48px);
+  max-height: min(680px, 100vh - 48px);
+  overflow: auto;
+  padding: 16px 18px;
+  border: 1px solid var(--ap-border);
+  border-radius: 10px;
+  background: var(--ap-bg-container);
+  box-shadow: 0 12px 48px rgba(0, 0, 0, 0.22);
+}
+
+/*
+ * 这里原来还有一条"面板打开时把侧栏其余内容 opacity:0 隐掉"的规则 —— **已删除**。
+ *
+ * 当时是为了绕开"面板被侧栏内容压住"，但根因其实是结构不对（role=presentation 与 data-slot
+ * 挂在了同一元素上，皮肤的全屏覆盖层规则匹配不到）。结构修对之后：
+ * ① 覆盖层本身就是 position:fixed + inset:0 + 遮罩，天然盖住并挡住侧栏；
+ * ② 那条 `opacity:0 !important` 反而会**压掉皮肤的意图** —— 皮肤明确要求在设置打开时
+ *    `._statusCharacter{opacity:1;visibility:visible}` 把状态小人显示出来。
+ * 绕路的补丁在根因修掉之后就该撤掉，否则它会变成新的 bug 源。
+ */
+
+/* ------------------------------------------------- 可拖拽弹窗 */
+/*
+ * 拖拽逻辑全在 `components/dialogDrag.ts`（全局安装，覆盖皮肤设置面板与所有 antd Modal，
+ * 由 `main.tsx` 在 React 渲染前调用）。这里只管两件纯外观的事：
+ * 把手光标、以及拖动过程中别把文字选中。
+ *
+ * 目标元素上会被打两种标记（由 JS 添加）：
+ *   data-ap-draggable —— 这个弹窗已挂上拖拽
+ *   data-ap-dragging  —— 此刻正在拖
+ */
+.ant-modal-header,
+.ant-modal-confirm-title,
+[data-slot='settings.header'] {
+  cursor: move;
+}
+
+/* 拖动中禁掉选中，否则会把标题、正文一路刷成高亮 */
+[data-ap-draggable][data-ap-dragging],
+[data-ap-draggable][data-ap-dragging] * {
+  user-select: none;
+}
+
+/* ------------------------------------------------- 输入卡片（composer） */
+/*
+ * 卡片的默认外观大部分写在 `ChatPage.tsx` 的内联样式里 —— 那是有意的：
+ * 运行时用 `installSkinYieldStyles()`（skin/runtime.ts）以 `!important` 把它们
+ * 清成 transparent / none，好把外观整个让给皮肤，而**内联值正好需要 !important 才压得住**。
+ *
+ * ★ 但 `padding` 是唯一的例外，**必须留在样式表里**（所以内联样式里故意没有它）。
+ *
+ * 原因：内联声明**没法"让位"** —— 写成 `padding: X !important` 属于**覆盖**而不是让出，
+ * 会把皮肤给装饰边框预留的空间一起压掉。皮肤 maid-atelier 就给卡片写了
+ * `padding-top: 34px` 来避开它那圈蕾丝缎带，而我们原来的内联 `padding: 10px 12px 8px`
+ * 优先级更高，把它整条顶掉 —— 表现就是"工具条被顶到缎带上、位置太高"。
+ *
+ * 放在这里（选择器只有 `[data-composer-card]`，特异性 0-1-0）就对了：
+ *   - 没皮肤时 → 用下面这条兜底；
+ *   - 有皮肤时 → 皮肤那条 `body[data-dsh-*] [data-composer-card]`（0-2-0）只覆盖 padding-top，
+ *     其余三边仍由我们兜底，两边各得其位。
+ */
+[data-composer-card] {
+  padding: 10px 12px 8px;
+}
