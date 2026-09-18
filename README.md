@@ -21,15 +21,13 @@ Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉�
 
 ## 文档导航
 
-- **已实现功能与需求现状（权威清单）**：[docs/status.md](docs/status.md)
-- 未实现事项、路线决策、契约与踩坑：[docs/backlog.md](docs/backlog.md)
-- 技术设计与可行性结论（含归档的桌面路线对比）：[docs/design.md](docs/design.md)
-- **每个功能用什么技术实现、为什么这样选**：[docs/technology.md](docs/technology.md)
-- 拖拽式工作流画布可行性分析（Coze Studio / FlowGram 选型与后端缺口）：[docs/workflow-canvas-feasibility.md](docs/workflow-canvas-feasibility.md)
-- 扩展指南与部署（K8s/Helm、演示脚本、可观测性运维）：[docs/guides.md](docs/guides.md)
-- 历史阶段验收报告（Phase 1–7，快照留档）：[docs/phase-reports.md](docs/phase-reports.md)
-- 桌面应用（Electron 壳 + jlink 运行时，**绿色版免安装**）：[desktop/](desktop/)（启动页、单实例、打包见 [docs/design.md](docs/design.md)；构建与分发见 [docs/guides.md](docs/guides.md) §2.7）
+- **扩展指南与部署（K8s/Helm、演示脚本、可观测性运维）**：[docs/guides.md](docs/guides.md)
+- 端到端演示脚本：[docs/demo-script.sh](docs/demo-script.sh)
+- 桌面应用（Electron 壳 + jlink 运行时，**绿色版免安装**）：[desktop/](desktop/)（构建与分发见 [docs/guides.md](docs/guides.md) §2.7）
 - 可观测栈（Loki / Tempo / Prometheus / Grafana）：[docker-compose.observability.yml](docker-compose.observability.yml)
+
+> 需求现状、技术选型依据、待办与路线决策、阶段验收报告等属于**内部资料**，不随本仓库发布 ——
+> 本仓库只保留这份 README 与扩展/部署指南。
 
 ## 它解决什么问题
 
@@ -123,7 +121,7 @@ Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉�
 工具与 MCP 各自带**市场**，不必手写注册 JSON：HTTP 工具市场（`GET /api/v1/tools/market`）
 提供一份免 Key 的公开 API 清单，清单位于 `resources/tool-market.json`，**新增条目不用改代码**；
 MCP 市场（`GET /api/v1/tools/mcp/market`）直连官方 `registry.modelcontextprotocol.io`，
-**只保留 `streamable-http` 型** —— stdio 型靠 npx/uvx 本地拉起，平台目前挂不了（见 [backlog.md](docs/backlog.md)）。
+**只保留 `streamable-http` 型** —— stdio 型靠 npx/uvx 本地拉起，平台目前挂不了。
 
 工具调用默认走「结果文本回灌」的轻量闭环：模型返回 `tool_calls` → `ToolExecutor` 逐个执行 →
 结果拼进下一轮输入 → 直到模型不再要工具，最多 `MAX_TOOL_ROUNDS = 5` 轮，防止死循环。
@@ -205,7 +203,7 @@ Loki 日志、Tempo / Jaeger Span。故障排查有三级诊断（规则 → 向
 - **窗口标题归宿主所有**：皮肤可能写死它原宿主的产品名，因此标题由宿主持有、不接受改写
   （`skin/titleGuard.ts`）。
 - **DOM 层级必须照皮肤期望摆**：皮肤大量使用 `>` 子选择器与结构定位，把两层语义合并到一个元素上会让
-  规则静默失效（设置面板与输入卡片都踩过，详见 [backlog.md](docs/backlog.md)）。
+  规则静默失效（设置面板与输入卡片都踩过）。
 
 皮肤是**在页面里执行的第三方代码**，因此只有用户明确启用过的皮肤，才会在下次启动时自动加载。
 

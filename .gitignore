@@ -32,6 +32,14 @@ node_modules/
 agent-platform-ui/dist/
 agent-platform-ui/node_modules/
 
+# 内部资料：不随公开仓库发布（文件仍在本地 docs/ 下，只是不进版本库）
+docs/status.md
+docs/backlog.md
+docs/design.md
+docs/technology.md
+docs/phase-reports.md
+docs/workflow-canvas-feasibility.md
+
 # IDE/工具运行时数据
 .codebuddy/
 # Claude Code 的**本地**配置（机器相关：权限白名单、本机路径），按其文件名的 local 语义属机器私有
