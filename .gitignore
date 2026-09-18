@@ -34,3 +34,5 @@ agent-platform-ui/node_modules/
 
 # IDE/工具运行时数据
 .codebuddy/
+# Claude Code 的**本地**配置（机器相关：权限白名单、本机路径），按其文件名的 local 语义属机器私有
+.claude/settings.local.json
