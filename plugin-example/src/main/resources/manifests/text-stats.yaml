@@ -1,0 +1,29 @@
+# 示例插件 3/4 —— 工具（ToolProvider，供 LLM function calling 调用）
+#
+# 上传 / 挂载方式见 keyword-reply.yaml 顶部说明（换掉 id 即可）。
+#
+# 两个前置条件，缺一不可（否则工具不会被调用，且没有任何报错）：
+#   1. 聊天页打开「工具」开关，或请求体带 tools: {"enabled": true, "allowed": []}
+#   2. 关闭「流式」开关 —— 工具循环 runToolLoop 只挂在 AgentRuntimeService.run() 上
+
+id: example_text_stats
+name: 示例·文本统计工具
+version: 1.0.0
+description: 提供 text_stats 工具，统计文本的字符数/行数/词数（演示带完整 JSON Schema 的插件工具）
+
+author: 白雾平台
+entry:
+  type: java
+  main_class: com.example.plugin.TextStatsToolPlugin
+contributes:
+  tools:
+    - name: text_stats
+      description: 统计文本的字符数、行数与词数
+      input_schema:
+        type: object
+        properties:
+          text:
+            type: string
+            description: 要统计的文本内容
+        required: [text]
+permissions: {}

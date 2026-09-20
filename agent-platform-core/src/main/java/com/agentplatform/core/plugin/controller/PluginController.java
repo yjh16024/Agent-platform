@@ -106,14 +106,24 @@ public class PluginController {
         return ApiResponse.ok(pluginService.attach(tenantId, agentId, pluginId, version, config, enabled));
     }
 
-    /** 卸载插件。 */
+    /**
+     * 卸载插件（<b>级联</b>：该插件在所有智能体上的挂载都会被一并取消）。
+     * <p>前端会先调 {@code GET /{pluginId}/attachments} 拿到影响面、让用户确认后再走这里。</p>
+     */
     @PostMapping("/{pluginId}/detach")
-    public ApiResponse<Void> detach(
+    public ApiResponse<Map<String, Object>> detach(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @PathVariable String pluginId,
             @RequestParam String agentId) {
-        pluginService.detach(tenantId, agentId, pluginId);
-        return ApiResponse.ok(null, "detached");
+        return ApiResponse.ok(pluginService.detach(tenantId, agentId, pluginId), "detached");
+    }
+
+    /** 查某插件被哪些智能体挂载（卸载前的影响面提示）。 */
+    @GetMapping("/{pluginId}/attachments")
+    public ApiResponse<List<Map<String, Object>>> attachmentsOfPlugin(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @PathVariable String pluginId) {
+        return ApiResponse.ok(pluginService.attachmentsOfPlugin(tenantId, pluginId));
     }
 
     /** 查询某 Agent 已挂载插件。 */

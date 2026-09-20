@@ -1,0 +1,24 @@
+# 示例插件 4/4 —— 混合插件（同时贡献 after_llm 钩子 + 一个工具）
+#
+# 上传 / 挂载方式见 keyword-reply.yaml 顶部说明（换掉 id 即可）。
+# 一个 jar、一次挂载，同时贡献两类能力。
+#
+# 自检用途：挂载后问一句"调用 example_round_no 看看插件生效没"
+#（记得开「工具」+ 关「流式」），返回的 round 会随每轮钩子递增。
+
+id: example_hook_and_tool
+name: 示例·钩子加工具
+version: 1.0.0
+description: 同时贡献 after_llm 钩子与 example_round_no 工具（演示混合插件与生命周期状态）
+
+author: 白雾平台
+entry:
+  type: java
+  main_class: com.example.plugin.HookAndToolPlugin
+contributes:
+  hooks:
+    - point: after_llm
+  tools:
+    - name: example_round_no
+      description: 返回本插件被触发过的钩子轮次，用于验证插件生效
+permissions: {}

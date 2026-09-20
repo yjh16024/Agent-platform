@@ -35,14 +35,29 @@ AGENT_JSON=$(curl -sf -X POST "$BASE_URL/api/v1/agents" -H "$JSON" -H "$HDR" \
 AGENT_ID=$(echo "$AGENT_JSON" | grep -o '"agentId":"[^"]*"' | cut -d'"' -f4)
 echo "agent_id=$AGENT_ID"
 
-# 3. 配置插件（挂载「自动回复」+「TTS」）
+# 3. 挂载插件
+#    用的是 plugin-example 的「关键词直答」示例插件（前置钩子，命中即短路、不调 LLM）。
+#    前置：先在仓库根构建一次 —— mvn -pl plugin-example -am package -DskipTests
+#    注：内置的自动回复 / TTS / ASR 三个示例插件已移除，改由 plugin-example 提供样板。
 echo -e "\n[3] 挂载插件"
-curl -sf -X POST "$BASE_URL/api/v1/plugins/plugin_auto_reply/attach" -H "$JSON" -H "$HDR" \
-  -d "{\"agent_id\":\"$AGENT_ID\"}" > /dev/null && echo "已挂载 plugin_auto_reply"
-curl -sf -X POST "$BASE_URL/api/v1/plugins/plugin_tts_azure/attach" -H "$JSON" -H "$HDR" \
-  -d "{\"agent_id\":\"$AGENT_ID\",\"config\":{\"voice\":\"zh-CN-Xiaoxiao\"}}" > /dev/null && echo "已挂载 plugin_tts_azure"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PLUGIN_JAR="$REPO_ROOT/plugin-example/target/plugin-example-1.1.0.jar"
+PLUGIN_MANIFEST="$REPO_ROOT/plugin-example/src/main/resources/manifests/keyword-reply.yaml"
+if [ -f "$PLUGIN_JAR" ]; then
+  # 上传（multipart：manifest 文本 + jar 制品）。id 重复会返回 409，属预期，先删再传即可。
+  curl -sf -X POST "$BASE_URL/api/v1/plugins/upload" -H "$HDR" \
+    -F "manifest=<$PLUGIN_MANIFEST" -F "jar=@$PLUGIN_JAR" > /dev/null \
+    && echo "已上传 example_keyword_reply" \
+    || echo "上传跳过（插件可能已存在——先 DELETE /api/v1/plugins/example_keyword_reply）"
+  curl -sf -X POST "$BASE_URL/api/v1/plugins/example_keyword_reply/attach" -H "$JSON" -H "$HDR" \
+    -d "{\"agent_id\":\"$AGENT_ID\",\"config\":{\"rules\":{\"营业时间\":\"我们的营业时间是周一至周五 9:00-18:00。\"}}}" > /dev/null \
+    && echo "已挂载 example_keyword_reply" || echo "挂载失败"
+else
+  echo "未找到 $PLUGIN_JAR —— 请先执行：mvn -pl plugin-example -am package -DskipTests"
+fi
 
-# 4. 运行对话（命中「营业时间」→ 自动回复短路；加 TTS 产出 audio_url）
+# 4. 运行对话（命中「营业时间」→ 前置钩子短路，不调 LLM）
+#    注意：必须是非流式（stream:false）—— 插件钩子只在非流式链路生效。
 echo -e "\n[4] 运行对话"
 RESP=$(curl -sf -X POST "$BASE_URL/api/v1/agent/run" -H "$JSON" \
   -d "{\"agentId\":\"$AGENT_ID\",\"stream\":false,\"messages\":[{\"role\":\"user\",\"content\":\"你们营业时间是几点？\"}],\"metadata\":{\"tenant_id\":\"$TENANT\"}}")

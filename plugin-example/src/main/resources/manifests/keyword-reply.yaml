@@ -1,0 +1,35 @@
+# 示例插件 1/4 —— 前置钩子（before_llm，返回 String 即短路，不调 LLM）
+#
+# 上传（multipart，两个字段都要）：
+#   POST /api/v1/plugins/upload
+#     -F "manifest=<本文件内容>"
+#     -F "jar=@target/plugin-example-1.1.0.jar"
+#   header: X-Tenant-Id: default
+#
+# 挂载到智能体（可选 config：关键词表）：
+#   POST /api/v1/plugins/example_keyword_reply/attach
+#     -H "Content-Type: application/json" -H "X-Tenant-Id: default"
+#     -d '{"agent_id":"<agent_id>","config":{"rules":{"营业时间":"9:00-18:00"}}}'
+#
+# 注意：entry.main_class 指向的类必须 implements Plugin 体系中的一个可用接口
+# （AgentHook / ToolProvider），只实现 Plugin 会 attach 成功但什么都不做。
+
+id: example_keyword_reply
+name: 示例·关键词直答
+version: 1.0.0
+description: 命中配置的关键词时直接返回预设答复，不调用 LLM（演示 before_llm 短路）
+
+author: 白雾平台
+entry:
+  type: java
+  main_class: com.example.plugin.KeywordReplyPlugin
+
+# 这段声明是给市场/审计看的元信息，不影响运行时注册
+# （运行时由宿主按 instanceof 自动识别贡献，见 ExtensionRegistry.registerPlugin）
+contributes:
+  hooks:
+    - point: before_llm
+
+# 当前版本仅在文档层面声明，宿主未执行任何权限校验：
+# 外部插件代码运行在与宿主相同的 JVM 进程里，拥有完整权限，只应加载可信 jar。
+permissions: {}

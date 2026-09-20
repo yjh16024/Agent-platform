@@ -18,6 +18,8 @@
         <module>agent-platform-infra</module>
         <module>agent-platform-gateway</module>
         <module>agent-platform-core</module>
+        <!-- 外部插件示例（不在 core 的依赖链上，`mvn -pl agent-platform-core -am package` 不会构建它） -->
+        <module>plugin-example</module>
     </modules>
 
     <properties>

@@ -53,10 +53,29 @@ public class WeatherTool implements Tool {
 
 ### 1.3 新增插件
 
-实现 `ToolProvider` / `AgentHook` 并注册为 Bean（内置）或提供 `plugin.yaml` + 独立 jar（`POST /api/v1/plugins/register`），挂载 `POST /api/v1/plugins/{id}/attach`（body `{"agent_id":"..."}`）。
+内置插件：实现 `ToolProvider` / `AgentHook`（或两者同时）并标 `@Component`。
+
+- 内置插件启动时会由 `BuiltinPluginRegistrar` **自动同步进插件市场**（写入 `plugin_def`，`tenant_id=__platform__`），
+  因此**能从界面直接挂载到智能体**，不需要 manifest 文件。
+- 想让市场卡片显示得好看，再实现可选的 `PluginDescriptor`（声明 `name` / `description` / `author`）；
+  不实现则展示名退化成插件 id。
+- 该同步是**双向幂等**的：改了插件的名字/版本/贡献，重启即刷新；**删掉插件类则连带数据库记录与挂载绑定一起清理**，
+  不会留下点了必然报错的僵尸条目。
+- 注意 `ToolProvider.provideTools()` 会在启动时被调用以生成贡献清单，应当是**无副作用的纯声明**。
+
+外部插件：改 `plugin-example/` 里的样板 → `mvn -pl plugin-example -am package` → 用
+`plugin-example/src/main/resources/manifests/*.yaml` 作 manifest、`plugin-example-1.1.0.jar` 作制品，
+走 `POST /api/v1/plugins/upload`（multipart：`manifest` 文本 + `jar` 文件），
+再 `POST /api/v1/plugins/{id}/attach`（body `{"agent_id":"..."}`）挂到智能体上。
 
 - Hook 约定：`before_llm` 返回 String = 短路；`after_llm` 返回 Map = 附加产物。
-- 插件经 `PluginClassLoader` 类隔离，`permissions` 白名单限网络/文件。
+  **目前只有这两个钩子点会被触发**（`HookPoint` 里的 `before_output` / `on_error` 等尚未接线，写了不会生效）。
+- **钩子与插件工具只在非流式链路生效**：`AgentPipeline` 仅由非流式的 `/agent/run` 调用，
+  界面上开了「流式」开关时插件会静默不生效。
+- 插件能力**按智能体隔离**：挂到 A 的插件只影响 A，不会波及其它智能体。
+- 卸载是**级联**的：该插件在所有智能体上的挂载会被一并取消（界面会先提示影响面）。
+- 插件经 `PluginClassLoader` 做类隔离，但 **`permissions` / `runtime` 目前仅是 manifest 里的声明字段，
+  宿主未做任何权限校验** —— 外部插件代码与宿主同进程、同权限运行，只应加载可信 jar。
 
 ### 1.4 新增诊断规则
 
@@ -166,8 +185,8 @@ desktop\build.bat    REM 一键：jlink JRE → 后端 jar → electron-builder�
 | 步骤 | 命令要点 | 预期 |
 |---|---|---|
 | ① 创建智能体 | `POST /api/v1/agents`（带 `X-Tenant-Id`） | 返回 `agent_id`、`status=draft` |
-| ② 挂载插件 | `POST /api/v1/plugins/plugin_auto_reply/attach`、`plugin_tts_azure/attach` | `status=attached` |
-| ③ 运行对话 | `POST /api/v1/agent/run`，问「你们营业时间是几点？」 | 命中关键词 → **自动回复短路（不调 LLM）** + `audio_url` |
+| ② 挂载插件 | 按 1.3 节构建并上传 `plugin-example` 的 manifest + jar，再 attach | `status=attached` |
+| ③ 运行对话 | `POST /api/v1/agent/run`，问「你们营业时间是几点？」 | 命中关键词 → **短路回复（不调 LLM）** |
 | ④ 查看日志 | `GET /api/v1/logs?level=INFO` | 结构化日志（`trace_id`/`run_id`/`category`/`fingerprint`），已落 MySQL |
 | ⑤ 触发诊断 | 先 `POST /api/v1/logs` 上报错误，再 `POST /api/v1/diagnosis/analyze` | `source=RULE` + 根因 + 解决方案 |
 | ⑥ 优化提示词 | `POST /api/v1/prompt/optimize` | 补全「## 角色/任务/约束/输出格式/示例」+ 评分提升 + Diff |

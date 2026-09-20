@@ -1,0 +1,21 @@
+# 示例插件 2/4 —— 后置钩子（after_llm，返回 Map 合并进附加产物）
+#
+# 上传 / 挂载方式见 keyword-reply.yaml 顶部说明（换掉 id 即可）。
+# 本插件无配置项，attach 时 config 可以省略。
+#
+# 预期现象：非流式对话后，响应里会多出 extras：
+#   example_reply_chars / example_reply_lines / example_plugin
+
+id: example_output_enrich
+name: 示例·回复统计
+version: 1.0.0
+description: 在 LLM 回复后统计字符数与行数，作为附加产物返回（演示 after_llm 附加产物）
+
+author: 白雾平台
+entry:
+  type: java
+  main_class: com.example.plugin.OutputEnrichPlugin
+contributes:
+  hooks:
+    - point: after_llm
+permissions: {}

@@ -15,12 +15,14 @@ import com.agentplatform.core.rag.ConversationAttachmentService;
 import com.agentplatform.core.rag.retriever.HybridRetriever;
 import com.agentplatform.core.rag.retriever.RetrievalResult;
 import com.agentplatform.model.entity.DocumentEntity;
+import com.agentplatform.model.repository.AgentPluginRepository;
 import com.agentplatform.model.repository.DocumentRepository;
 import com.agentplatform.core.multimodal.FileUploadService;
 import com.agentplatform.core.model.router.ModelRouter;
 import com.agentplatform.core.model.secret.ModelBindingService;
 import com.agentplatform.core.multimodal.QuotaService;
 import com.agentplatform.core.plugin.runtime.AgentPipeline;
+import com.agentplatform.core.plugin.runtime.ExtensionRegistry;
 import com.agentplatform.core.plugin.runtime.PipelineResult;
 import com.agentplatform.core.plugin.runtime.PluginRuntime;
 import com.agentplatform.core.session.SessionService;
@@ -115,6 +117,14 @@ public class AgentRuntimeService {
     @Autowired(required = false)
     private ToolExecutor toolExecutor;
 
+    /** 扩展注册表（可选：用于剔除「其它智能体」的插件工具，实现按智能体隔离）。 */
+    @Autowired(required = false)
+    private ExtensionRegistry extensionRegistry;
+
+    /** 插件绑定仓储（可选：运行时兜底热加载时回填挂载时保存的 config，避免重启后配置丢失）。 */
+    @Autowired(required = false)
+    private AgentPluginRepository agentPluginRepository;
+
     /** 工具调用循环最大轮数（防止模型在 tool_calls 里死循环）。 */
     static final int MAX_TOOL_ROUNDS = 5;
 
@@ -190,7 +200,7 @@ public class AgentRuntimeService {
             final List<ModelAdapter.ToolSpec> toolSpecs = resolveToolSpecs(req);
             PipelineResult pipeline;
             try {
-                pipeline = agentPipeline.run(userMessage, msg -> {
+                pipeline = agentPipeline.run(agent.getAgentId(), runId, userMessage, msg -> {
                     // 工具调用循环：仅当请求显式启用工具且注册中心可用时走工具链路
                     if (!toolSpecs.isEmpty() && toolExecutor != null) {
                         return runToolLoop(provider, model, effectivePrompt, msg, gc, resolved,
@@ -312,9 +322,16 @@ public class AgentRuntimeService {
         }
         List<String> allowed = tc.allowed();
         boolean allowAll = allowed == null || allowed.isEmpty();
+        // 插件工具最终落在全局 ToolRegistry 里，这里必须把「其它智能体」的插件工具剔除，
+        // 否则 agent A 挂的插件工具会出现在 agent B 的可用工具列表里（按智能体隔离）。
+        java.util.Set<String> foreignPluginTools = extensionRegistry == null
+                ? java.util.Set.of()
+                : extensionRegistry.pluginToolNamesExcept(req.agentId());
         List<ModelAdapter.ToolSpec> specs = new ArrayList<>();
         for (Tool tool : toolRegistry.all()) {
-            if (tool == null || (!allowAll && !allowed.contains(tool.name()))) {
+            if (tool == null
+                    || foreignPluginTools.contains(tool.name())
+                    || (!allowAll && !allowed.contains(tool.name()))) {
                 continue;
             }
             // schema 规范化：null / 缺 type 会让厂商直接 400（schema must be 'type: object'）
@@ -603,17 +620,43 @@ public class AgentRuntimeService {
 
     /**
      * 确保智能体挂载的插件已热加载（幂等）。
+     *
+     * <p><b>2026-09-20 修（坑 3：重启后 config 丢失）</b>：此前这里无条件传 {@code Map.of()}，
+     * 不读绑定里保存的 config —— 于是重启后端后第一次运行时，插件是以<b>空配置</b>被装上的，
+     * 挂载时填的 {@code {"rules":{...}}} 之类会静默失效（内置那三个插件规则写死，所以看不出来）。
+     * 现在改为从 {@code agent_plugin} 回填 config，并尊重绑定的 enabled 开关。</p>
+     *
+     * <p>同时按 {@code (agentId, pluginId)} 判断是否已挂载 —— 同一插件挂到多台智能体时，
+     * 每台都要各自 attach 一次（旧实现按 pluginId 幂等，第二台会被跳过）。</p>
      */
     private void ensurePluginsAttached(AgentDefinition agent, String tenantId) {
         Capabilities caps = agent.getCapabilities();
-        if (caps == null || caps.pluginIds() == null) {
+        if (caps == null || caps.pluginIds() == null || caps.pluginIds().isEmpty()) {
             return;
         }
+        String agentId = agent.getAgentId();
         for (String pluginId : caps.pluginIds()) {
+            if (pluginRuntime.isAttached(agentId, pluginId)) {
+                continue;   // 本机已挂载，无需重复
+            }
+            Map<String, Object> config = Map.of();
+            if (agentPluginRepository != null) {
+                var binding = agentPluginRepository.findByAgentIdAndPluginId(agentId, pluginId);
+                if (binding.isPresent()) {
+                    var b = binding.get();
+                    if (b.getEnabled() != null && !b.getEnabled()) {
+                        continue;   // 绑定已停用，不该被兜底装回来
+                    }
+                    if (b.getConfig() != null) {
+                        config = b.getConfig();
+                    }
+                }
+            }
             try {
-                pluginRuntime.attach(pluginId, agent.getAgentId(), tenantId, Map.of());
+                pluginRuntime.attach(pluginId, agentId, tenantId, config);
             } catch (Exception e) {
-                log.warn("Failed to attach plugin {} at run time: {}", pluginId, e.getMessage());
+                // 兜底失败不影响本轮对话：常见原因是插件已被删除、capabilities 里留了历史 id
+                log.debug("Skip attaching plugin {} for agent {}: {}", pluginId, agentId, e.getMessage());
             }
         }
     }

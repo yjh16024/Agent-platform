@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.agentplatform</groupId>
+        <artifactId>agent-platform</artifactId>
+        <version>1.1.0</version>
+    </parent>
+
+    <artifactId>plugin-example</artifactId>
+    <name>Agent Platform Plugin Example</name>
+    <description>外部插件示例：前置钩子 / 后置钩子 / 工具 / 混合 四种最小实现 + 配套 manifest</description>
+
+    <!--
+      这个模块是「外部 jar 插件」的样板：它**不是**宿主的一部分，产出的 jar 通过
+        POST /api/v1/plugins/upload  （multipart: manifest + jar）
+      上传，再 attach 到智能体上热加载。
+
+      打包产物 target/plugin-example-1.1.0.jar 的用法见 src/main/resources/manifests/ 下的 4 份 manifest。
+      一个 jar 里可以放多个 Plugin 实现，用不同 manifest（不同 id + 不同 main_class）分别上传，
+      就得到多个互相独立的插件 —— 因为每个插件都有自己的 PluginClassLoader。
+
+      关于 <scope>provided</scope>（很重要，别改成 compile）：
+        宿主的 PluginClassLoader 会把 com.agentplatform.plugin.sdk.* 委派给父加载器，
+        所以 SDK 类**必须由宿主提供**。把 SDK 打进 jar 不但没用，还会让插件加载第二份
+        agent-platform-common 之类的类，一旦出现在接口签名上就是 LinkageError。
+        provided 同时会让 SDK 的传递依赖（jackson 等）也停在 provided，不进 jar。
+        （普通 maven-jar-plugin 本来就只打 target/classes，这里主要是防以后有人误用 shade 打 fat jar。）
+    -->
+    <dependencies>
+        <dependency>
+            <groupId>com.agentplatform</groupId>
+            <artifactId>agent-platform-plugin-sdk</artifactId>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <!--
+          不加 spring-boot-maven-plugin：外部插件是普通 jar，不能 repackage 成可执行胖包
+          （胖包会把 SDK / Spring 一起塞进去，正是上面要避免的事）。
+        -->
+        <finalName>plugin-example-${project.version}</finalName>
+    </build>
+</project>

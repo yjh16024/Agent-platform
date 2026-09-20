@@ -18,8 +18,31 @@ export function attachPlugin(
   return http.post<unknown>(`/api/v1/plugins/${pluginId}/attach`, { agent_id: agentId, ...extra });
 }
 
+/**
+ * 卸载插件。
+ *
+ * **注意：这是「级联卸载」** —— 该插件在**所有**智能体上的挂载都会被一并取消
+ * （后端会同时清理绑定表与各智能体的 capabilities），避免出现"A 卸载成功、B 还显示已挂载
+ * 但其实已经不生效"的错位状态。所以调用前务必先用 {@link pluginAttachments} 查影响面，
+ * 若有其它智能体在用，要让用户明确确认。
+ */
 export function detachPlugin(pluginId: string, agentId: string) {
-  return http.post<void>(`/api/v1/plugins/${pluginId}/detach?agentId=${encodeURIComponent(agentId)}`, {});
+  return http.post<{ plugin_id: string; detached_agents: string[]; count: number }>(
+    `/api/v1/plugins/${pluginId}/detach?agentId=${encodeURIComponent(agentId)}`,
+    {},
+  );
+}
+
+/** 一条插件挂载记录（卸载影响面提示用）。 */
+export interface PluginAttachment {
+  agentId: string;
+  agentName?: string;
+  enabled?: boolean;
+}
+
+/** 查某插件被哪些智能体挂载。 */
+export function pluginAttachments(pluginId: string) {
+  return http.get<PluginAttachment[]>(`/api/v1/plugins/${encodeURIComponent(pluginId)}/attachments`);
 }
 
 export function attachments(agentId: string) {

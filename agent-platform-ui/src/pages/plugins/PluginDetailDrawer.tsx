@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Drawer, Descriptions, Button, Modal, Select, Input, Switch, message, Space, Tag } from 'antd';
-import { pluginDetail, attachPlugin, detachPlugin, attachments } from '../../api/plugins';
+import {
+  pluginDetail, attachPlugin, detachPlugin, attachments, pluginAttachments, type PluginAttachment,
+} from '../../api/plugins';
 import { listAgents } from '../../api/agents';
 import { PluginDef, AgentResponse } from '../../api/types';
 
@@ -66,15 +68,47 @@ export default function PluginDetailDrawer({
     }
   };
 
-  const doDetach = async () => {
+  /** 真正执行卸载（已确认影响面后调用）。 */
+  const confirmDetach = async () => {
     if (!pluginId || !selAgentId) return;
     try {
-      await detachPlugin(pluginId, selAgentId);
-      message.success('已卸载');
+      const r = await detachPlugin(pluginId, selAgentId);
+      const n = r?.count ?? 0;
+      message.success(n > 1 ? `已卸载，并一并取消了 ${n} 个智能体上的挂载` : '已卸载');
       loadAttached();
     } catch (e) {
       message.error((e as Error).message);
     }
+  };
+
+  /**
+   * 卸载入口：先查这个插件被哪些智能体用着。
+   * 若除当前智能体外还有别的智能体在用，必须让用户明确知道「会一并取消」——
+   * 因为后端是级联卸载（否则会出现 B 显示已挂载但实际已失效的错位状态）。
+   */
+  const doDetach = async () => {
+    if (!pluginId || !selAgentId) return;
+    let others: PluginAttachment[] = [];
+    try {
+      const list = await pluginAttachments(pluginId);
+      others = list.filter((a) => a.agentId !== selAgentId);
+    } catch {
+      // 影响面查询失败不阻断卸载，退化成直接卸载（后端仍会级联处理）
+    }
+    if (others.length === 0) {
+      await confirmDetach();
+      return;
+    }
+    const names = others.map((a) => a.agentName || a.agentId).join('、');
+    Modal.confirm({
+      title: '该插件正被多个智能体使用',
+      content: `除当前智能体外，还有 ${others.length} 个智能体挂载了「${detail?.name ?? pluginId}」：${names}。`
+        + '卸载会一并取消这些挂载，确定继续？',
+      okText: '一并卸载',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: () => confirmDetach(),
+    });
   };
 
   const attachModal = (
