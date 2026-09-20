@@ -10,9 +10,11 @@ import com.agentplatform.plugin.sdk.Plugin;
 import com.agentplatform.plugin.sdk.PluginDescriptor;
 import com.agentplatform.plugin.sdk.PluginTool;
 import com.agentplatform.plugin.sdk.ToolProvider;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -45,6 +47,7 @@ import java.util.Map;
  */
 @Slf4j
 @Component
+@Lazy(false)
 @RequiredArgsConstructor
 public class BuiltinPluginRegistrar {
 
@@ -55,8 +58,17 @@ public class BuiltinPluginRegistrar {
     private final PluginRepository pluginRepository;
     private final AgentPluginRepository agentPluginRepository;
 
-    /** 启动时同步一次（此时所有 Plugin Bean 已被 {@link PluginRuntime} 收集完毕）。 */
-    @PostConstruct
+    /**
+     * 启动就绪时同步一次。
+     *
+     * <p><b>为什么不用 {@code @PostConstruct}（2026-09-20 修）</b>：桌面版以
+     * {@code -Dspring.main.lazy-initialization=true} 启动，而本类<b>不被任何 bean 依赖</b> ——
+     * 懒加载下它永远不会被创建，{@code @PostConstruct} 自然也不会执行，
+     * 表现为「写了内置插件却始终不在市场里出现，并且没有任何日志」。
+     * 改用 {@link ApplicationReadyEvent}（事件监听器会被容器主动实例化）并用 {@code @Lazy(false)} 兜底；
+     * 顺带确保此时 Flyway 已迁移完毕，不会与建表动作竞争。</p>
+     */
+    @EventListener(ApplicationReadyEvent.class)
     public void sync() {
         Map<String, Plugin> builtins = pluginRuntime.builtinPlugins();
         int created = 0;

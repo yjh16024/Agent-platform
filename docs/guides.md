@@ -156,8 +156,15 @@ helm install agent-platform agent-platform-deploy/helm/agent-platform \
 ### 2.7 桌面分发（Windows 绿色版）
 
 ```bat
-desktop\build.bat    REM 一键：jlink JRE → 后端 jar → electron-builder（dir，不归档）→ 改名 dist\green
+desktop\build.bat          REM 一键全流程：前端构建 → jlink JRE → 后端 jar（带 clean）→ electron-builder（dir）→ 改名 dist\green
+desktop\build.bat fast     REM 快速：跳过前端重建 + 后端增量构建（未删/改名源文件时可用）
+desktop\build.bat no-ui    REM 只重建后端与桌面壳，沿用当前前端产物
 ```
+
+**为什么默认带 `clean`**：Maven 从不清除陈旧产物，而"跳过 clean 以保留增量编译"的代价是 ——
+**被删除或改名的 Java 源文件会留下旧 `.class` 一起打进 jar，导致已删掉的功能在运行时"复活"**
+（曾把三个已删除的内置插件重新注册回 `plugin_def`）。clean 约多花一分钟，但消灭这一整类问题；
+确认只改了文件内容、没动文件结构时再用 `fast`。
 
 > **这是推荐的日常运行方式**：自带 jlink 精简 JRE 与内嵌 H2，免装 JDK / MySQL，双击即用；
 > 从源码启动（`start-core.bat`）仅用于开发联调、跑测试与服务器部署。
@@ -175,6 +182,33 @@ desktop\build.bat    REM 一键：jlink JRE → 后端 jar → electron-builder�
 - 桌面包以 `embedded`（H2）profile 运行，**免装 MySQL / Redis**。
 
 ---
+
+### 2.8 桌面版开发模式（改代码免重打包）
+
+日常改代码不要在 `desktop\build.bat` 上耗时间（jlink + 打包 + electron-builder 是分钟级）。改用：
+
+```bat
+desktop\dev.bat
+```
+
+它让打包好的绿色版指向**仓库里新构建的产物**（通过环境变量 `AP_DEV_JAR` / `AP_DEV_STATIC`），于是：
+
+| 改了什么 | 你要执行的 | 然后在应用窗口里 |
+|---|---|---|
+| 前端（`agent-platform-ui`） | `cd agent-platform-ui && npm run build:prod` | 按 **Ctrl+R** 刷新 —— **后端不用重启** |
+| 后端（Java） | `mvn -pl agent-platform-core -am package -DskipTests` | 按 **Ctrl+Shift+R** 热重启后端（窗口不关） |
+| 桌面壳本身（`desktop/main.js`） | `desktop\build.bat`（一键全流程，已含前端构建，见 §2.7） | 重启应用 |
+
+说明与开关：
+
+- `AP_DEV=1` 是总开关；**不设置时行为与普通绿色版完全一致**（仍使用打包内的 jar 与静态资源）。
+- `AP_DEV_STATIC` 会让 Spring 用源码目录**完全替换** jar 内的 `classpath:/static/`，
+  所以前端产物改完刷新页面即生效 —— 这正是"改界面不用重启后端"的原因。
+- `AP_REUSE_BACKEND=1`：若起始端口上已有就绪的后端（例如你自己 `mvn spring-boot:run`），
+  桌面版直接复用、不再另起一个；关掉桌面版也不会连带关掉你的后端。
+  配合 `spring-boot-devtools` 可把后端改动压到秒级（项目当前未引入该依赖）。
+- **注意**：Java 代码改动必须重启 JVM 才能生效，没有"改完立刻生效"的方案；
+  开发模式省掉的是"重打包 + 重启整个桌面程序"，而不是"重启进程"这件事本身。
 
 ## 三、端到端演示用例
 

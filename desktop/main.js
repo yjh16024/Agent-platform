@@ -11,9 +11,34 @@ const path = require('path');
 const fs = require('fs');
 
 const SMOKE = process.env.AP_DESKTOP_SMOKE === '1';
+
+/*
+ * ---- 开发模式（默认关闭；不设环境变量时行为与以前完全一致）----
+ *
+ * 痛点：改一行代码就要跑 desktop\build.bat（jlink + mvn package + electron-builder）再重启 exe，
+ * 一轮几分钟。开发模式把这条链路拆开：
+ *
+ *   AP_DEV=1          开发模式总开关
+ *   AP_DEV_JAR        用外部 jar（不设则取仓库 agent-platform-core/target 下的 jar）
+ *                     → 改完后端只需 mvn package，不必重打桌面包
+ *   AP_DEV_STATIC     把后端静态资源指到源码目录（不设则取仓库 .../src/main/resources/static）
+ *                     → 前端 npm run build:prod 后刷新页面即生效，**后端完全不用重启**
+ *   AP_REUSE_BACKEND  若起始端口上已有就绪的后端（例如自己 spring-boot:run 的），直接复用、不再 spawn
+ *
+ * 快捷键（仅开发模式）：Ctrl+R 刷新页面（菜单栏被置空后默认快捷键也失效了，这里补回）；
+ *                      Ctrl+Shift+R 热重启后端（窗口不退出）
+ *
+ * 一键入口：desktop\dev.bat
+ */
+const DEV = process.env.AP_DEV === '1';
+const REUSE_BACKEND = DEV && process.env.AP_REUSE_BACKEND === '1';
+const START_PORT = 8081;
+
 let backend = null;
 let win = null;
 let bootLogFile = null;
+/** 热重启期间为 true：后端子进程退出属预期，不要跟着关窗口。 */
+let restartingBackend = false;
 
 // ---- 主题（换肤）----
 // 网页侧换肤后经 preload 上报，这里落盘成 userData/theme.json；下次启动先读它再建窗口，
@@ -80,12 +105,45 @@ function javaExe() {
     : path.join(__dirname, 'runtime', 'bin', 'java.exe');
 }
 
+/** 仓库里 Maven 构建出的 core jar（开发模式用）。 */
+function repoJar() {
+  return path.join(__dirname, '..', 'agent-platform-core', 'target', 'agent-platform-core-1.1.0.jar');
+}
+
 function backendJar() {
+  // 开发模式优先用外部 jar：改完后端只需 mvn package，不必重打桌面包
+  if (DEV) {
+    const devJar = process.env.AP_DEV_JAR || repoJar();
+    if (fs.existsSync(devJar)) return devJar;
+    logLine(`[dev] AP_DEV_JAR 不存在：${devJar}（回落到内置 jar）`);
+  }
   if (app.isPackaged) {
     const jar = path.join(process.resourcesPath, 'backend', 'app.jar');
     if (fs.existsSync(jar)) return jar;
   }
-  return path.join(__dirname, '..', 'agent-platform-core', 'target', 'agent-platform-core-1.1.0.jar');
+  return repoJar();
+}
+
+/**
+ * 开发模式下的静态资源目录（前端产物），转成 Spring 能识别的 {@code file:} URL。
+ * <p>设置后 Spring 会用它<b>完全替换</b>默认的 {@code classpath:/static/}，
+ * 于是前端产物改完只需刷新页面 —— 后端进程都不用重启。</p>
+ */
+function devStaticLocation() {
+  if (!DEV) {
+    return null;
+  }
+  const dir = process.env.AP_DEV_STATIC
+    || path.join(__dirname, '..', 'agent-platform-core', 'src', 'main', 'resources', 'static');
+  if (!fs.existsSync(dir)) {
+    logLine(`[dev] AP_DEV_STATIC 不存在：${dir}（回落到 jar 内静态资源）`);
+    return null;
+  }
+  if (!fs.existsSync(path.join(dir, 'index.html'))) {
+    logLine(`[dev] 警告：${dir} 下没有 index.html —— 请先执行 cd agent-platform-ui && npm run build:prod`);
+  }
+  // file: URL 用正斜杠更稳，末尾补斜杠表示目录
+  return 'file:' + dir.replace(/\\/g, '/').replace(/\/+$/, '') + '/';
 }
 
 function dataDir() {
@@ -138,8 +196,26 @@ function loadingHtml(message) {
     <body><div class="logo">Agent Platform</div><div class="tip">${message}</div></body></html>`)}`;
 }
 
+/**
+ * 开发模式：若起始端口上已经有一个就绪的后端（例如自己跑的 {@code mvn spring-boot:run}），
+ * 直接复用它、不再 spawn。这样关掉桌面版不会连带关掉用户的后端，后端重启也不必重启窗口。
+ * <p>要求 HTTP 有应答才复用，避免把别的程序占用的端口误当成本平台后端。</p>
+ */
+async function reuseExistingBackend() {
+  if (!REUSE_BACKEND) {
+    return null;
+  }
+  try {
+    await waitHttp(START_PORT, 1500);
+    logLine(`[dev] 复用已在运行的后端 (${START_PORT})`);
+    return START_PORT;
+  } catch {
+    return null;
+  }
+}
+
 async function startBackend() {
-  const port = await freePort(8081);
+  const port = await freePort(START_PORT);
   const exe = javaExe();
   const jar = backendJar();
   if (!fs.existsSync(exe)) throw new Error(`runtime java not found: ${exe}`);
@@ -149,7 +225,7 @@ async function startBackend() {
   //  - TieredStopAtLevel=1：即时编译只到 C1、跳过 C2，启动阶段显著更快；
   //  - UseSerialGC：小堆用串行 GC，省掉并行 GC 线程的初始化开销；
   //  - lazy-initialization：bean 延迟初始化，缩短启动阻塞（代价：某功能首次点击时才初始化）。
-  backend = spawn(exe, [
+  const args = [
     '--enable-preview',
     '-Xms128m', '-Xmx1g',
     '-XX:TieredStopAtLevel=1',
@@ -159,16 +235,65 @@ async function startBackend() {
     '-jar', jar,
     '--spring.profiles.active=embedded',
     `--server.port=${port}`,
-  ], { cwd: dataDir(), stdio: ['ignore', 'pipe', 'pipe'] });
+  ];
+  // 开发模式：静态资源指向源码目录 → build:prod 后刷新页面即生效，后端不用重启
+  const staticLoc = devStaticLocation();
+  if (staticLoc) {
+    args.push(`--spring.web.resources.static-locations=${staticLoc}`);
+    logLine(`[dev] static-locations=${staticLoc}`);
+  }
+  backend = spawn(exe, args, { cwd: dataDir(), stdio: ['ignore', 'pipe', 'pipe'] });
   backend.stdout.on('data', (d) => logLine(`[backend] ${String(d).trim()}`));
   backend.stderr.on('data', (d) => logLine(`[backend-err] ${String(d).trim()}`));
   backend.on('exit', (code) => {
     logLine(`backend exited with code ${code}`);
+    if (restartingBackend) {
+      return;   // 开发模式热重启：后端退出属预期，不要把窗口一起关掉
+    }
     if (win && !win.isDestroyed()) win.destroy();
     if (!app.isQuitting) app.quit();
   });
   await waitHttp(port, 120000);
   return port;
+}
+
+/**
+ * 开发模式：热重启后端（Ctrl+Shift+R）。窗口保持不关，重启完成后自动载入新端口。
+ * <p>用途：改完后端代码 → {@code mvn -pl agent-platform-core -am package -DskipTests} → 按快捷键，
+ * 不用退桌面版、也不用重跑 electron-builder。</p>
+ */
+async function restartBackend() {
+  if (restartingBackend) {
+    return;
+  }
+  if (!backend) {
+    logLine('[dev] 当前后端不由本窗口管理（复用了外部后端），请自行重启它');
+    return;
+  }
+  restartingBackend = true;
+  logLine('[dev] 正在重启后端 ...');
+  try {
+    try { backend.kill(); } catch { /* ignore */ }
+    backend = null;
+    if (win && !win.isDestroyed()) {
+      await win.loadURL(loadingHtml('正在重启本地服务…'));
+    }
+    // 给系统一点时间回收端口与文件句柄（Windows 上 jar 句柄释放稍慢）
+    await new Promise((r) => setTimeout(r, 800));
+    const port = await startBackend();
+    if (win && !win.isDestroyed()) {
+      try { await win.webContents.session.clearCache(); } catch { /* ignore */ }
+      await win.loadURL(`http://127.0.0.1:${port}`);
+    }
+    logLine(`[dev] 后端已重启于 ${port}`);
+  } catch (e) {
+    logLine(`[dev] 重启失败：${e.message}`);
+    if (win && !win.isDestroyed()) {
+      await win.loadURL(loadingHtml(`重启失败：${e.message}`));
+    }
+  } finally {
+    restartingBackend = false;
+  }
 }
 
 const gotLock = app.requestSingleInstanceLock();
@@ -235,18 +360,35 @@ if (!gotLock) {
      * 其余快捷键（刷新、缩放等）平台自己有入口或系统层面可用，不额外补。
      */
     win.webContents.on('before-input-event', (event, input) => {
+      const key = String(input.key || '').toLowerCase();
       const isDevTools =
         input.type === 'keyDown' &&
-        (input.key === 'F12' || (input.control && input.shift && input.key.toLowerCase() === 'i'));
+        (input.key === 'F12' || (input.control && input.shift && key === 'i'));
       if (isDevTools) {
         win.webContents.toggleDevTools();
+        event.preventDefault();
+        return;
+      }
+      if (!DEV || input.type !== 'keyDown' || !input.control) {
+        return;
+      }
+      // Ctrl+Shift+R：热重启后端（窗口不退出）
+      if (input.shift && key === 'r') {
+        restartBackend();
+        event.preventDefault();
+        return;
+      }
+      // Ctrl+R：刷新页面。菜单栏被置空后连默认刷新快捷键都没了，开发时每次手动点很烦，这里补回。
+      if (key === 'r') {
+        win.webContents.reload();
         event.preventDefault();
       }
     });
 
     await win.loadURL(loadingHtml('正在启动本地服务…（约 10–25 秒）'));
     try {
-      const port = await startBackend();
+      // 开发模式：若起始端口上已有就绪的后端（如自己 spring-boot:run 的），直接复用
+      const port = (await reuseExistingBackend()) ?? await startBackend();
       logLine(`backend ready on ${port}; loading UI`);
       // 清掉 Electron 自身的 HTTP 缓存：否则升级后仍可能复用上一次的前端产物
       // （表现为「后端已更新，但桌面版工作流画布依旧整页空白」）。
