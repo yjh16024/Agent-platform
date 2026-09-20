@@ -595,7 +595,7 @@ export default function ChatPage() {
                 className={frag(CLASS_HEADLINE_TEXT)}
                 style={{ margin: 0, fontWeight: 600 }}
               >
-                智能体交互平台
+                白雾·智能体交互平台
               </Typography.Title>
               <Typography.Text type="secondary" style={{ fontSize: 13 }}>
                 一个运行入口，按需要装配模型、知识、工具与记忆

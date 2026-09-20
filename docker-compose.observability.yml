@@ -1,4 +1,4 @@
-# Agent Platform · 本地可观测性栈（阶段 B + C）
+# 白雾 · 本地可观测性栈（阶段 B + C）
 # 组成：Prometheus（指标已就位）+ Loki（日志）+ Tempo（Trace）+ Grafana（统一看板/告警）
 # 启动：docker compose -f docker-compose.observability.yml up -d
 # 访问：

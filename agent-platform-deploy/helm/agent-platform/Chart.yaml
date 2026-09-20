@@ -1,6 +1,6 @@
 apiVersion: v2
 name: agent-platform
-description: 智能体交互平台 · Helm Chart
+description: 白雾·智能体交互平台 · Helm Chart
 type: application
 version: 0.1.0
 appVersion: "1.0.0"

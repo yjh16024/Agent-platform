@@ -1,4 +1,4 @@
-# 智能体交互平台 · 本地基础设施
+# 白雾·智能体交互平台 · 本地基础设施
 # 启动：docker compose up -d
 # 包含：MySQL 8.4 / Redis 7 / Milvus 2.x（Kafka / ES / ClickHouse 在后续阶段补充）
 name: agent-platform

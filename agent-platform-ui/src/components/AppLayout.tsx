@@ -175,7 +175,7 @@ export default function AppLayout() {
               <AppstoreOutlined />
             </span>
             <span {...{ [HOST_ATTRS.slot]: SLOTS.sidebarBrandName }} style={{ fontWeight: 600 }}>
-              智能体交互平台
+              白雾
             </span>
           </div>
           {/*

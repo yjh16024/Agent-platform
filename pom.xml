@@ -8,8 +8,8 @@
     <artifactId>agent-platform</artifactId>
     <version>1.1.0</version>
     <packaging>pom</packaging>
-    <name>Agent Platform</name>
-    <description>智能体交互平台 - 多模型 · 上下文 · RAG · 工作流 · 多模态 · 工具调用 · Skills · 智能体管理 · 插件系统</description>
+    <name>白雾·智能体交互平台</name>
+    <description>白雾·智能体交互平台 - 多模型 · 上下文 · RAG · 工作流 · 多模态 · 工具调用 · Skills · 智能体管理 · 插件系统</description>
 
     <modules>
         <module>agent-platform-common</module>

@@ -29,7 +29,7 @@
  */
 
 /** 窗口标题的唯一来源。**平台改名只改这一处。** */
-export const PRODUCT_TITLE = '智能体交互平台';
+export const PRODUCT_TITLE = '白雾·智能体交互平台';
 
 let installed = false;
 

@@ -1,5 +1,5 @@
 # ============================================================
-# 智能体交互平台 · 多阶段构建 Dockerfile（JDK 21）
+# 白雾·智能体交互平台 · 多阶段构建 Dockerfile（JDK 21）
 # ============================================================
 
 # ---- 阶段 1：构建（Maven + JDK 21）----
@@ -25,7 +25,7 @@ RUN mvn -B -q package -DskipTests
 # ---- 阶段 2：运行时（JDK 21 JRE 精简镜像）----
 FROM eclipse-temurin:21-jre-ubi9-minimal
 LABEL maintainer="agent-platform"
-LABEL description="智能体交互平台 · 核心调度层"
+LABEL description="白雾·智能体交互平台 · 核心调度层"
 
 WORKDIR /app
 
