@@ -77,8 +77,14 @@ if "%BUILD_UI%"=="1" (
 )
 
 echo [2/5] jlink JRE runtime, skip if exists ...
+REM 2026-09-20 瘦身：原参数产出的 runtime 是 110.4 MB，三处可省（实测见下），模块集**没动**
+REM （java.se 保持完整，避免运行期 NoClassDefFoundError —— 宁可少省几 MB）：
+REM   1) --include-locales=zh,en  ：jdk.localedata 默认带全套语言数据，我们只用中英；
+REM   2) --compress=zip-6         ：JDK 21 起支持的 zip-N 压缩档位；
+REM   3) 去掉 jdk.crypto.cryptoki ：PKCS#11 硬件加密（智能卡/USB Key），桌面应用用不到，
+REM                                 注意 jdk.crypto.ec 必须保留 —— TLS 走它。
 if not exist "runtime\bin\java.exe" (
-    "%JAVA_HOME%\bin\jlink.exe" --add-modules java.se,jdk.unsupported,jdk.zipfs,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.localedata,jdk.management,jdk.net --output "runtime" --strip-debug --no-header-files --no-man-pages
+    "%JAVA_HOME%\bin\jlink.exe" --add-modules java.se,jdk.unsupported,jdk.zipfs,jdk.crypto.ec,jdk.localedata,jdk.management,jdk.net --include-locales=zh,en --compress=zip-6 --output "runtime" --strip-debug --no-header-files --no-man-pages
     if errorlevel 1 goto :fail
 ) else (
     echo [INFO] runtime already exists, skip jlink. Delete runtime to rebuild it.

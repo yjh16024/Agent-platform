@@ -21,8 +21,16 @@ if [ -z "${JAVA_HOME:-}" ]; then
 fi
 
 echo "[1/5] jlink JRE runtime (skip if exists)..."
+# 2026-09-20 瘦身，与 build.bat 的参数**逐字保持一致**（两套脚本产出的 runtime 必须同构）：
+#   --include-locales=zh,en  ：jdk.localedata 默认带全套语言数据，我们只用中英
+#   --compress=zip-6         ：JDK 21 起的 zip-N 压缩档位
+#   去掉 jdk.crypto.cryptoki ：PKCS#11 硬件加密（智能卡/USB Key），桌面用不到
+#                             注意 jdk.crypto.ec 必须保留 —— TLS 走它
+# 模块集刻意不动（仍为 java.se 全集）：换具体模块集的风险远大于收益。
+# 实测 110.4 MB -> 50.7 MB。
 if [ ! -f "runtime/bin/java" ]; then
-  "$JAVA_HOME/bin/jlink" --add-modules java.se,jdk.unsupported,jdk.zipfs,jdk.crypto.ec,jdk.crypto.cryptoki,jdk.localedata,jdk.management,jdk.net \
+  "$JAVA_HOME/bin/jlink" --add-modules java.se,jdk.unsupported,jdk.zipfs,jdk.crypto.ec,jdk.localedata,jdk.management,jdk.net \
+    --include-locales=zh,en --compress=zip-6 \
     --output runtime --strip-debug --no-header-files --no-man-pages
 fi
 

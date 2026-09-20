@@ -17,6 +17,15 @@ extraResources:
   # 后端 fat jar（含前端 static + H2，以 embedded 启动）
   - from: ../agent-platform-core/target/agent-platform-core-1.1.0.jar
     to: backend/app.jar
+# 只打包两种语言包。Electron 默认把全部 locale 塞进 locales\（实测 40.3 MB / 58 个 .pak），
+# 而我们这个界面的文案全在网页侧（前端自己的 i18n），Electron 只用到很少一部分：
+#   - zh-CN：界面主语言；
+#   - en-US：兜底 —— 系统 locale 不在列表里时 Electron 会回落到一个可用项，
+#     必须留一个，否则非中文系统上 Chromium 的右键菜单/对话框会变成空白或英文缺失。
+# 留两个即可，省约 38 MB。（2026-09-20 加入）
+electronLanguages:
+  - zh-CN
+  - en-US
 win:
   # dir = 只产出解包目录，不归档。见下方说明（2026-09-15 由 zip 改为 dir）。
   target:
