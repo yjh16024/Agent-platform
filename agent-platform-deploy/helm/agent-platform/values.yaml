@@ -70,7 +70,11 @@ services:
 secrets:
   mysqlPassword: "change-me"
   redisPassword: ""
-  jwtSecret: "change-me-to-a-256-bit-secret-key-for-production-use-please"
+  # ⚠️ 必须替换，理由同 k8s/base/secret.yaml：
+  #   agent-platform.security.enabled 默认 true，而 SecurityStartupGuard 在
+  #   「鉴权开启 + JWT 密钥仍为 change-me-* 默认值」时会拒绝启动。
+  #   生产请用 ≥32 字节随机串（openssl rand -base64 48），并改由 Vault / SealedSecrets 管理。
+  jwtSecret: "REPLACE-ME-jwt-secret-at-least-32-bytes-use-openssl-rand-base64-48"
   llmApiKey: "sk-local"
 
 # 入口

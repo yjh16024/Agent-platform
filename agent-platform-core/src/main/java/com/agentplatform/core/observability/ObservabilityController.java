@@ -1,6 +1,7 @@
 package com.agentplatform.core.observability;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.model.entity.LogIndex;
 import com.agentplatform.model.repository.LogIndexRepository;
 import lombok.RequiredArgsConstructor;
@@ -30,6 +31,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/observability")
 @RequiredArgsConstructor
+@RequiresPermission("log:read")
 public class ObservabilityController {
 
     private final ObservabilityService observabilityService;

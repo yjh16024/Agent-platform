@@ -3,6 +3,7 @@ package com.agentplatform.core.agent.controller;
 import com.agentplatform.core.agent.dto.AgentRunRequest;
 import com.agentplatform.core.agent.dto.AgentRunResponse;
 import com.agentplatform.core.agent.runtime.AgentRuntimeService;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import tools.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
@@ -33,6 +34,7 @@ public class AgentRunController {
      * 统一运行入口。
      */
     @PostMapping("/run")
+    @RequiresPermission("agent:invoke")
     public ResponseEntity<?> run(@RequestBody AgentRunRequest req) {
         if (Boolean.TRUE.equals(req.stream())) {
             return ResponseEntity.ok()

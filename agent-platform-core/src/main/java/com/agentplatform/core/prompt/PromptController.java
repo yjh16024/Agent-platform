@@ -1,6 +1,7 @@
 package com.agentplatform.core.prompt;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.model.record.OptimizationResult;
 import com.agentplatform.model.record.Persona;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/prompt")
 @RequiredArgsConstructor
+@RequiresPermission("agent:invoke")
 public class PromptController {
 
     private final PromptOptimizer optimizer;

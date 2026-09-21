@@ -7,6 +7,7 @@ import com.agentplatform.core.agent.dto.AgentPatchRequest;
 import com.agentplatform.core.agent.dto.AgentResponse;
 import com.agentplatform.core.agent.service.AgentService;
 import com.agentplatform.core.agent.service.AgentVersionService;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.model.entity.AgentVersion;
 import com.agentplatform.model.enums.AgentStatus;
 import jakarta.validation.Valid;
@@ -33,6 +34,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/agents")
 @RequiredArgsConstructor
+@RequiresPermission("agent:write")
 public class AgentController {
 
     private final AgentService agentService;
@@ -75,6 +77,7 @@ public class AgentController {
 
     /** 分页查询。 */
     @GetMapping
+    @RequiresPermission("agent:read")
     public ApiResponse<PageResult<AgentResponse>> list(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @RequestParam(required = false) String q,
@@ -87,6 +90,7 @@ public class AgentController {
 
     /** 详情。 */
     @GetMapping("/{agentId}")
+    @RequiresPermission("agent:read")
     public ApiResponse<AgentResponse> get(
             @PathVariable String agentId,
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId) {
@@ -128,6 +132,7 @@ public class AgentController {
 
     /** 版本列表。 */
     @GetMapping("/{agentId}/versions")
+    @RequiresPermission("agent:read")
     public ApiResponse<List<AgentVersion>> versions(
             @PathVariable String agentId,
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId) {
@@ -136,6 +141,7 @@ public class AgentController {
 
     /** 版本差异对比。 */
     @GetMapping("/{agentId}/diff")
+    @RequiresPermission("agent:read")
     public ApiResponse<Map<String, Object>> diff(
             @PathVariable String agentId,
             @RequestParam String from,

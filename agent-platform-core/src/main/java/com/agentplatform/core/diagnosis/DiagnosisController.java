@@ -1,6 +1,7 @@
 package com.agentplatform.core.diagnosis;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.core.diagnosis.engine.DiagnosisEngine;
 import com.agentplatform.core.diagnosis.rule.BuiltinDiagnosisRules;
 import com.agentplatform.core.log.LogCategory;
@@ -24,6 +25,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/diagnosis")
 @RequiredArgsConstructor
+@RequiresPermission("log:read")
 public class DiagnosisController {
 
     private final DiagnosisEngine engine;
@@ -33,6 +35,7 @@ public class DiagnosisController {
      * 手动触发诊断（body 含 trace_id/log_id/context，或直接给 message+category）。
      */
     @PostMapping("/analyze")
+    @RequiresPermission("agent:invoke")
     public ApiResponse<DiagnosticReport> analyze(@RequestBody Map<String, Object> body) {
         String traceId = (String) body.get("trace_id");
         String message = (String) body.get("message");

@@ -4,6 +4,7 @@ import com.agentplatform.common.dto.ApiResponse;
 import com.agentplatform.core.plugin.marketplace.PluginArtifactStore;
 import com.agentplatform.core.plugin.marketplace.PluginService;
 import com.agentplatform.core.plugin.runtime.PluginManifestLoader;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.model.entity.AgentPlugin;
 import com.agentplatform.model.entity.PluginDef;
 import com.agentplatform.plugin.sdk.model.PluginManifest;
@@ -32,6 +33,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/plugins")
 @RequiredArgsConstructor
+@RequiresPermission("plugin:manage")
 public class PluginController {
 
     private final PluginService pluginService;

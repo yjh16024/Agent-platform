@@ -1,6 +1,7 @@
 package com.agentplatform.core.skill;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.core.skill.executor.SkillExecutionResult;
 import com.agentplatform.core.skill.executor.SkillExecutionService;
 import com.agentplatform.core.skill.market.SkillMarketService;
@@ -32,6 +33,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/skills")
 @RequiredArgsConstructor
+@RequiresPermission("skill:manage")
 public class SkillController {
 
     private final SkillService skillService;

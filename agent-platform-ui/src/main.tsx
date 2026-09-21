@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
+import { App as AntApp } from 'antd';
 import { HashRouter } from 'react-router-dom';
 import App from './App';
 import { installDialogDragging } from './components/dialogDrag';
@@ -47,9 +48,25 @@ installTitleGuard();
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <ThemeProvider>
-      <HashRouter>
-        <App />
-      </HashRouter>
+      {/*
+        antd 的 <App> 必须放在**最外层**。
+        它提供 message / notification / modal 的 context holder —— 只有处在 <App> 之内，
+        useApp() 取到的实例才真的能把提示渲染出来。
+
+        之前 <App> 只存在于 AppLayout 内部，而登录页在 AppLayout **之外**
+        （App.tsx 里 /login 是独立路由，理由是"未登录时不该出现导航入口"），
+        于是登录页那句 message.error(...) 静默失效 —— 表现就是"点了登录没有任何反应"，
+        用户只能反复点（后端日志里能看到几十次重复的 401）。
+
+        component={false}：不额外渲染一层 DOM，避免改变既有结构
+        —— AppLayout 内部的 DOM 层级被皮肤选择器依赖（如 [data-slot='sidebar'] > :first-child），
+        多包一层 div 有踩坏皮肤的风险。
+      */}
+      <AntApp component={false}>
+        <HashRouter>
+          <App />
+        </HashRouter>
+      </AntApp>
     </ThemeProvider>
   </React.StrictMode>,
 );

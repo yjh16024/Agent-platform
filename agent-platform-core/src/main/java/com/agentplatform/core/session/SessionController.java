@@ -2,6 +2,7 @@ package com.agentplatform.core.session;
 
 import com.agentplatform.common.dto.ApiResponse;
 import com.agentplatform.common.dto.PageResult;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.core.session.SessionDtos.CreateSessionRequest;
 import com.agentplatform.core.session.SessionDtos.MessageDto;
 import com.agentplatform.core.session.SessionDtos.SessionDetail;
@@ -27,6 +28,7 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/sessions")
 @RequiredArgsConstructor
+@RequiresPermission("session:manage")
 public class SessionController {
 
     private final SessionService sessionService;
@@ -71,6 +73,7 @@ public class SessionController {
 
     /** 分页列出会话。 */
     @GetMapping
+    @RequiresPermission("session:read")
     public ApiResponse<PageResult<SessionSummary>> list(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @RequestParam(required = false) String agentId,
@@ -82,6 +85,7 @@ public class SessionController {
 
     /** 会话详情（含全部消息）。 */
     @GetMapping("/{sessionId}")
+    @RequiresPermission("session:read")
     public ApiResponse<SessionDetail> get(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @PathVariable String sessionId) {
@@ -90,6 +94,7 @@ public class SessionController {
 
     /** 会话消息列表（时间顺序）。 */
     @GetMapping("/{sessionId}/messages")
+    @RequiresPermission("session:read")
     public ApiResponse<List<MessageDto>> messages(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @PathVariable String sessionId) {

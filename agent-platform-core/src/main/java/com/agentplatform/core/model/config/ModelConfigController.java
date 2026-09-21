@@ -1,6 +1,7 @@
 package com.agentplatform.core.model.config;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.model.record.ModelBinding;
 import com.agentplatform.model.record.ModelConfigView;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/api/v1/model-config")
 @RequiredArgsConstructor
+@RequiresPermission("model:manage")
 public class ModelConfigController {
 
     private final ModelConfigService modelConfigService;

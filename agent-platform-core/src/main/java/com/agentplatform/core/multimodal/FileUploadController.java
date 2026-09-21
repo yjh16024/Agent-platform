@@ -1,6 +1,7 @@
 package com.agentplatform.core.multimodal;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.model.entity.FileAsset;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
@@ -24,12 +25,14 @@ import java.util.List;
 @RestController
 @RequestMapping("/api/v1/files")
 @RequiredArgsConstructor
+@RequiresPermission("file:read")
 public class FileUploadController {
 
     private final FileUploadService fileUploadService;
 
     /** 上传文件。 */
     @PostMapping("/upload")
+    @RequiresPermission("file:manage")
     public ApiResponse<FileAsset> upload(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @RequestParam("file") MultipartFile file,
@@ -54,6 +57,7 @@ public class FileUploadController {
 
     /** 删除文件（存储对象 + 元数据）。 */
     @DeleteMapping("/{fileId}")
+    @RequiresPermission("file:manage")
     public ApiResponse<Void> delete(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @PathVariable String fileId) {

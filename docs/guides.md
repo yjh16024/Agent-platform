@@ -146,14 +146,52 @@ helm install agent-platform agent-platform-deploy/helm/agent-platform \
 - 🔶 生产建议：Istio mTLS、cert-manager、Vault 管密钥、镜像签名（cosign）。
 - ⚠️ 默认 `JWT_SECRET` / `MODEL_KEY_ENC_KEY` 为 `change-me-*`，`SECURITY_ENABLED=true` 且未覆盖时**启动守卫会拒绝启动**。
 
-### 2.6 弹性
+### 2.6 账号与权限（RBAC）
+
+**首次启动**：当某租户下**一个用户都没有**时，`RbacSeeder` 会同步内置角色（`admin` / `operator` / `viewer`）
+与 23 个权限点，并创建初始管理员 `admin`。密码来源见下 —— **桌面版把它写进了
+`application-embedded.yml`**（`admin123456`），因为桌面用户看不到启动日志。
+
+```bash
+RBAC_ADMIN_PASSWORD=<初始密码>        # 仅"该租户下无任何用户"时生效，之后每次启动都跳过
+
+RBAC_ADMIN_RESET_PASSWORD=<新密码>    # 已存在 admin 时强制重置密码（忘记密码用）
+                                      # ⚠️ 用完必须移除，否则每次启动都会把它重置回同一个值
+                                      #    用户在界面上改的新密码会被覆盖掉
+```
+
+| 开关 | 默认 | 说明 |
+|---|---|---|
+| `SECURITY_ENABLED` | `true` | core 侧是否校验 Bearer token |
+| `RBAC_ENABLED` | `true` | 是否做角色→权限点授权校验（`@RequiresPermission`） |
+
+两者**互相独立**：`SECURITY_ENABLED=true` + `RBAC_ENABLED=false` 表示"要登录，但不做细粒度授权"
+（此时所有接口"登录即可访问"）。
+
+**权限模型**：角色 → 权限点。权限码的唯一权威来源是 `RbacPermission` 枚举，
+启动时同步进 `sys_permission` 表（所以界面看到的与库里生效的完全一致）。
+
+**token 里只放角色码**，权限由服务端按角色推导并缓存 —— 因此：
+**改「角色的权限」即时生效；改「用户的角色」需要重新登录**（界面上有提示）。
+
+**内置角色**：`admin`（全部）/ `operator`（业务读写，不含系统管理）/ `viewer`（只读）。
+
+**三条防自锁规则**（很久不碰管理界面时最容易踩）：
+不能停用 / 删除 / 摘掉**最后一个启用状态的管理员**、不能删除自己、内置角色与被引用的角色不可删。
+这些事故只能手工改数据库救回来，所以宁可在这里挡住。
+
+> ⚠️ **往 `RbacPermission` 新增权限点之后**：Seeder 会把它补进内置角色（幂等补齐），
+> 但**界面上被手工删掉过的权限不会自动恢复**。新增受管控的接口后，
+> 请确认 `admin` 仍持有新权限码，否则会出现"管理员被自己的系统拒绝"。
+
+### 2.7 弹性
 
 | 层级 | 指标 | 策略 |
 |---|---|---|
 | agent-core | CPU / 内存 / Kafka 堆积 | HPA + KEDA（堆积 >1000 扩容） |
 | 诊断/优化 Worker | 队列长度 | KEDA 自定义指标 |
 
-### 2.7 桌面分发（Windows 绿色版）
+### 2.8 桌面分发（Windows 绿色版）
 
 ```bat
 desktop\build.bat          REM 一键全流程：前端构建 → jlink JRE → 后端 jar（带 clean）→ electron-builder（dir）→ 改名 dist\green

@@ -1,6 +1,7 @@
 package com.agentplatform.core.skin;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.CacheControl;
 import org.springframework.http.MediaType;
@@ -28,6 +29,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/skins")
 @RequiredArgsConstructor
+@RequiresPermission("skin:manage")
 public class SkinController {
 
     private final SkinMarketService skinMarketService;

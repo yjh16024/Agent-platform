@@ -161,8 +161,22 @@ agent-platform:
       flush-interval-ms: ${OBS_TEMPO_FLUSH_MS:500}
     queue-capacity: ${OBS_QUEUE_CAPACITY:4096}
   # 生产鉴权：core 侧 JWT 兜底（true 后直连 8081 需 Bearer Token）
+  # 2026-09-20 起**默认开启**（含 RBAC）。两个必须知道的配套项：
+  #   1) SecurityStartupGuard 在「开启鉴权 + JWT 密钥仍为默认值」时会**拒绝启动**，
+  #      所以必须提供 JWT_SECRET —— start-core.bat 里已给了一个本地开发用的固定值；
+  #   2) 桌面（embedded）profile 会把它显式覆盖回 false：桌面版还没有登录页，
+  #      开启后前端拿不到 token 会整体 401。等登录页落地（阶段 4）再打开。
   security:
-    enabled: ${SECURITY_ENABLED:false}
+    enabled: ${SECURITY_ENABLED:true}
+    # RBAC（用户管理 + 角色权限管理）
+    # true（默认）：登录走 sys_user 表并签发携带 roles 的 token，@RequiresPermission 生效；
+    #              启动时由 RbacSeeder 同步权限点、创建内置角色（admin/operator/viewer）。
+    # false       ：登录沿用「静态账号 / 演示模式」，接口不做权限校验。
+    # 初始管理员密码：优先取环境变量 RBAC_ADMIN_PASSWORD，未设置则随机生成并打印到启动日志（仅首次）；
+    #              已存在 admin 时若设了 RBAC_ADMIN_RESET_PASSWORD，则用它重置 admin 密码
+    #              （忘记密码 / 部署时指定用；用完请立刻移除该环境变量）。
+    rbac:
+      enabled: ${RBAC_ENABLED:true}
   # Kafka 事件总线（配置变更广播 / 日志事件流）
   # 默认开启；broker 暂不可用时 KafkaEventBus 异步发送失败仅记 debug、不阻断主流程。
   # 桌面（embedded）profile 会显式覆盖为 false（单机无 broker，且已排除 Kafka 自动配置）。

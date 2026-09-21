@@ -2,6 +2,7 @@ package com.agentplatform.core.tool;
 
 import com.agentplatform.common.dto.ApiResponse;
 import com.agentplatform.common.util.JsonUtils;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.core.tool.executor.HttpApiTool;
 import com.agentplatform.core.tool.executor.ToolExecutor;
 import com.agentplatform.core.tool.market.ToolMarketService;
@@ -34,6 +35,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/tools")
 @RequiredArgsConstructor
+@RequiresPermission("tool:write")
 public class ToolController {
 
     private final ToolRegistry registry;
@@ -47,6 +49,7 @@ public class ToolController {
      * HTTP 工具市场：内置精选的**免 Key 公开 API**（天气/汇率/IP/二维码等），可一键注册为 HTTP 工具。
      */
     @GetMapping("/market")
+    @RequiresPermission("tool:read")
     public ApiResponse<List<Map<String, Object>>> toolMarket() {
         return ApiResponse.ok(toolMarketService.list());
     }
@@ -68,6 +71,7 @@ public class ToolController {
      * @param limit 条数上限（可选，最大 100）
      */
     @GetMapping("/mcp/market")
+    @RequiresPermission("tool:read")
     public ApiResponse<List<Map<String, Object>>> mcpMarket(
             @RequestParam(required = false) String q,
             @RequestParam(required = false) Integer limit) {
@@ -78,6 +82,7 @@ public class ToolController {
      * 列出全部已注册工具（含来源与 HTTP 工具的 endpoint/method，供前端编辑回显）。
      */
     @GetMapping
+    @RequiresPermission("tool:read")
     public ApiResponse<List<Map<String, Object>>> list() {
         List<Map<String, Object>> tools = new ArrayList<>();
         for (Tool t : registry.all()) {
@@ -131,6 +136,7 @@ public class ToolController {
      * 执行工具（经责任链）。
      */
     @PostMapping("/{toolName}/invoke")
+    @RequiresPermission("tool:invoke")
     public ApiResponse<ToolResult> invoke(
             @PathVariable String toolName,
             @RequestBody(required = false) JsonNode args,

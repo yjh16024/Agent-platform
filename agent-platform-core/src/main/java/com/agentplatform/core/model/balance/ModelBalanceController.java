@@ -1,6 +1,7 @@
 package com.agentplatform.core.model.balance;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -22,6 +23,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/model-balance")
 @RequiredArgsConstructor
+@RequiresPermission("model:manage")
 public class ModelBalanceController {
 
     private final ModelBalanceService modelBalanceService;

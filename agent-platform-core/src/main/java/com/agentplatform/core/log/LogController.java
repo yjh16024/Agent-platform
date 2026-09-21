@@ -2,6 +2,7 @@ package com.agentplatform.core.log;
 
 import com.agentplatform.common.dto.ApiResponse;
 import com.agentplatform.common.dto.PageResult;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -22,6 +23,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/logs")
 @RequiredArgsConstructor
+@RequiresPermission("log:read")
 public class LogController {
 
     private final LogService logService;
@@ -61,6 +63,7 @@ public class LogController {
 
     /** 清理超过保留期的日志。 */
     @DeleteMapping("/purge")
+    @RequiresPermission("log:manage")
     public ApiResponse<Map<String, Object>> purge(@RequestParam(defaultValue = "30") int retentionDays) {
         int deleted = logService.purge(retentionDays);
         return ApiResponse.ok(Map.of("deleted", deleted, "retention_days", retentionDays), "purged");

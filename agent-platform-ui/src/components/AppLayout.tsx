@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Layout, Menu, Button, Input, Space, App as AntApp } from 'antd';
 import {
   DashboardOutlined,
@@ -20,8 +20,13 @@ import {
   SettingOutlined,
   SkinOutlined,
   SearchOutlined,
+  UserOutlined,
+  TeamOutlined,
+  LogoutOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { setToken } from '../api/http';
+import { getMe } from '../api/auth';
 import SidebarSkinSettings from './SidebarSkinSettings';
 import { useTheme } from '../theme/ThemeProvider';
 import { HOST_ATTRS, SLOTS, sidebarHooks } from '../skin/contract';
@@ -59,53 +64,128 @@ export default function AppLayout() {
   // 换肤：外壳颜色全部走 --ap-* CSS 变量（主题由皮肤市场决定，未装皮肤时用默认外观）
   const { siderTheme } = useTheme();
 
+  /**
+   * 当前用户的权限码；`null` = 还没拿到。
+   *
+   * <p>它**只用于隐藏入口**，不承担拦截职责 —— 拦截在后端
+   * （`@RequiresPermission` + `PermissionAspect`）。所以取值为空时的取舍是
+   * **全量显示**而不是全隐藏：接口会照常返回 403，用户至少知道有这么一个功能，
+   * 而不是面对一个"什么都没有"的平台。反过来若只靠这里隐藏而后端不拦，才是真漏洞。</p>
+   */
+  const [perms, setPerms] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    getMe()
+      .then((me) => {
+        if (alive) {
+          setPerms(me.perms ?? []);
+        }
+      })
+      .catch(() => {
+        // 拿不到就保持 null（= 不限），理由见上
+        if (alive) {
+          setPerms(null);
+        }
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   const selectedKey = useMemo(() => {
     const path = location.pathname;
     if (path.startsWith('/agents')) return '/agents';
     return path;
   }, [location.pathname]);
 
-  const menuItems = [
+  type NavItem = {
+    key: string;
+    icon?: ReactNode;
+    label: string;
+    /** 所需权限码；不填 = 所有登录用户可见。见下方过滤逻辑的说明。 */
+    perm?: string;
+    children?: NavItem[];
+  };
+
+  /**
+   * 侧栏导航。
+   *
+   * <p>{@code perm} 与后端 Controller 上的 {@code @RequiresPermission} **一一对应**：
+   * 这里写错不会造成越权（后端仍会拦），但会让用户点进去吃 403。
+   * 每加一个受管控的页面，记得两边一起加。</p>
+   */
+  const menuItems: NavItem[] = [
     { key: '/overview', icon: <DashboardOutlined />, label: '概览' },
-    { key: '/agents', icon: <RobotOutlined />, label: '智能体' },
-    { key: '/chat', icon: <MessageOutlined />, label: '对话' },
-    { key: '/sessions', icon: <HistoryOutlined />, label: '会话历史' },
-    { key: '/knowledge-bases', icon: <DatabaseOutlined />, label: '知识库' },
-    { key: '/workflows', icon: <BranchesOutlined />, label: '工作流' },
-    { key: '/skills', icon: <BookOutlined />, label: 'Skills' },
-    { key: '/skins', icon: <SkinOutlined />, label: '皮肤市场' },
-    { key: '/plugins', icon: <AppstoreOutlined />, label: '插件' },
-    { key: '/files', icon: <FolderOutlined />, label: '文件' },
-    { key: '/settings', icon: <SettingOutlined />, label: '模型设置' },
+    { key: '/agents', icon: <RobotOutlined />, label: '智能体', perm: 'agent:read' },
+    { key: '/chat', icon: <MessageOutlined />, label: '对话', perm: 'agent:invoke' },
+    { key: '/sessions', icon: <HistoryOutlined />, label: '会话历史', perm: 'session:read' },
+    { key: '/knowledge-bases', icon: <DatabaseOutlined />, label: '知识库', perm: 'kb:read' },
+    { key: '/workflows', icon: <BranchesOutlined />, label: '工作流', perm: 'workflow:read' },
+    { key: '/skills', icon: <BookOutlined />, label: 'Skills', perm: 'skill:manage' },
+    { key: '/skins', icon: <SkinOutlined />, label: '皮肤市场', perm: 'skin:manage' },
+    { key: '/plugins', icon: <AppstoreOutlined />, label: '插件', perm: 'plugin:manage' },
+    { key: '/files', icon: <FolderOutlined />, label: '文件', perm: 'file:read' },
+    { key: '/settings', icon: <SettingOutlined />, label: '模型设置', perm: 'model:manage' },
     {
       key: '/ops',
       icon: <ToolOutlined />,
       label: '运维工具',
       children: [
-        { key: '/logs', icon: <FileTextOutlined />, label: '运行日志' },
-        { key: '/observability', icon: <LineChartOutlined />, label: '智能体可观测性' },
-        { key: '/diagnosis', icon: <BugOutlined />, label: '智能诊断' },
-        { key: '/prompt', icon: <ThunderboltOutlined />, label: '提示词优化' },
-        { key: '/tools', icon: <ApiOutlined />, label: '工具调试' },
-        { key: '/quota', icon: <SafetyCertificateOutlined />, label: '用户配额' },
+        { key: '/logs', icon: <FileTextOutlined />, label: '运行日志', perm: 'log:read' },
+        { key: '/observability', icon: <LineChartOutlined />, label: '智能体可观测性', perm: 'log:read' },
+        { key: '/diagnosis', icon: <BugOutlined />, label: '智能诊断', perm: 'log:read' },
+        { key: '/prompt', icon: <ThunderboltOutlined />, label: '提示词优化', perm: 'agent:invoke' },
+        { key: '/tools', icon: <ApiOutlined />, label: '工具调试', perm: 'tool:read' },
+        { key: '/quota', icon: <SafetyCertificateOutlined />, label: '用户配额', perm: 'quota:manage' },
+      ],
+    },
+    {
+      key: '/system',
+      icon: <TeamOutlined />,
+      label: '系统管理',
+      children: [
+        { key: '/system/users', icon: <UserOutlined />, label: '用户管理', perm: 'user:manage' },
+        { key: '/system/roles', icon: <SafetyCertificateOutlined />, label: '角色权限', perm: 'role:manage' },
       ],
     },
   ];
 
-  /** 按关键词过滤导航（含「运维工具」那组的子项）。 */
-  const visibleMenuItems: typeof menuItems = (() => {
+  /** 先按权限裁剪，再按关键词过滤（含「运维工具」那组的子项）。 */
+  const visibleMenuItems: NavItem[] = (() => {
+    /**
+     * 权限判据。
+     *
+     * `perms === null`（还没拿到）与 `perms.length === 0`（后端没开 RBAC /
+     * 演示模式下签发的 token 不带角色）都视为**不限** —— 这两种情况下后端本来就不会拦，
+     * 若这里全隐藏，用户会看到一个空侧栏却找不到原因。
+     */
+    const allowed = (p?: string) => !p || !perms || perms.length === 0 || perms.includes(p);
+
+    const keptByPerm: NavItem[] = [];
+    for (const item of menuItems) {
+      if (item.children) {
+        const kids = item.children.filter((c) => allowed(c.perm));
+        // 子项被裁光就整组不显示，否则会留下一个展开后空无一物的分组
+        if (kids.length) {
+          keptByPerm.push({ ...item, children: kids });
+        }
+      } else if (allowed(item.perm)) {
+        keptByPerm.push(item);
+      }
+    }
+
     const k = searchKw.trim().toLowerCase();
     if (!k) {
-      return menuItems;
+      return keptByPerm;
     }
     const hit = (v: unknown) => String(v ?? '').toLowerCase().includes(k);
-    const out: typeof menuItems = [];
-    for (const item of menuItems) {
-      const kids = 'children' in item && Array.isArray(item.children) ? item.children : null;
-      if (kids) {
-        const kept = kids.filter((c) => hit(c.label));
-        if (kept.length) {
-          out.push({ ...item, children: kept } as (typeof menuItems)[number]);
+    const out: NavItem[] = [];
+    for (const item of keptByPerm) {
+      if (item.children) {
+        const kids = item.children.filter((c) => hit(c.label));
+        if (kids.length) {
+          out.push({ ...item, children: kids });
         }
       } else if (hit(item.label)) {
         out.push(item);
@@ -263,6 +343,22 @@ export default function AppLayout() {
                   title="皮肤设置"
                   style={{ color: 'var(--ap-sider-text)' }}
                   onClick={() => setSkinSettingsOpen(true)}
+                />
+                {/*
+                  退出登录 —— 账户体系落地后把这段装回来（原来因"点下去没有实际后果"被撤掉）。
+                  鉴权**关闭**时它同样可用：那个场景下后端不校验 token，退出只是清掉本地存储。
+                */}
+                <Button
+                  size="small"
+                  type="text"
+                  icon={<LogoutOutlined />}
+                  aria-label="退出登录"
+                  title="退出登录"
+                  style={{ color: 'var(--ap-sider-text)' }}
+                  onClick={() => {
+                    setToken(null);
+                    navigate('/login', { replace: true });
+                  }}
                 />
               </Space>
             </div>

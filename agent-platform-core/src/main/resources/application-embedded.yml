@@ -42,6 +42,18 @@ agent-platform:
   # 若要在桌面接 Kafka：删掉本项，同时删掉上方 KafkaAutoConfiguration 排除项。
   events:
     enabled: false
+  # 桌面单机**开启鉴权与 RBAC**（2026-09-20 登录页 + 用户/角色管理落地后打开）。
+  # 这里刻意**不再覆盖** agent-platform.security.*，即继承 application.yml 的默认 true，
+  # 桌面版与业务环境走同一套鉴权/授权路径。
+  #
+  # ⚠️ jwt.secret 必须显式给**非默认值**：SecurityStartupGuard 在
+  #    「security.enabled=true 且密钥仍是 change-me-*」时会**拒绝启动**（fail-fast，有意为之）。
+  #    而桌面壳（desktop/main.js）spawn 后端时并不传 JWT_SECRET，所以只能写在本文件里。
+  #    这是**本机单机**场景：token 只在本机页面与本地后端之间流转，硬编码风险可接受；
+  #    但它决定了本机 token 的签发 —— 若日后桌面版要连远程后端，必须改成随机/外部注入。
+  #    环境变量 JWT_SECRET 仍可覆盖它（CI / 特殊环境用）。
+  jwt:
+    secret: ${JWT_SECRET:desktop-local-only-jwt-secret-please-override-0123456789}
   rag:
     fulltext:
       enabled: false
@@ -54,6 +66,17 @@ management:
   endpoint:
     health:
       show-details: always
+# 桌面版首次启动时 H2 库里一个用户都没有，RbacSeeder 会用它创建 admin 账号。
+#
+# 为什么必须给一个**已知**的初值：不设时 Seeder 会随机生成密码并**只打印到启动日志**，
+# 而桌面版用户看不到日志（它在 userData/app.log 里），结果是"打开就是登录页但不知道密码"。
+# 它只在「该租户下一个用户都没有」时生效，之后每次启动都会被跳过，所以不存在覆盖用户改过的密码的问题。
+#
+# ⚠️ 这是**固定弱口令**，请在首次登录后立刻到「系统管理 → 用户管理」改掉。
+# 注意它必须是**顶层键**（不能写进上面的 agent-platform: 块）：
+# 代码里读的是 ${RBAC_ADMIN_PASSWORD:}，写进块内会变成 agent-platform.RBAC_ADMIN_PASSWORD 而读不到。
+RBAC_ADMIN_PASSWORD: admin123456
+
 # 启动优化：桌面模式下降级本应用包日志（DEBUG → INFO），减少启动期日志格式化与写盘开销。
 # 需要排查问题时把这里改回 DEBUG（或删掉本段，回落 application.yml 的 DEBUG）。
 logging:

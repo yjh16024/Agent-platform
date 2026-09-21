@@ -1,5 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import AppLayout from './components/AppLayout';
+import RequireAuth from './components/RequireAuth';
+import LoginPage from './pages/LoginPage';
 import Overview from './pages/Overview';
 import AgentList from './pages/agents/AgentList';
 import ChatPage from './pages/chat/ChatPage';
@@ -17,11 +19,21 @@ import WorkflowsPage from './pages/workflows/WorkflowsPage';
 import FilesPage from './pages/files/FilesPage';
 import ModelSettingsPage from './pages/settings/ModelSettingsPage';
 import SkinMarketPage from './pages/skins/SkinMarketPage';
+import UserManagePage from './pages/system/UserManagePage';
+import RoleManagePage from './pages/system/RoleManagePage';
 
 export default function App() {
   return (
     <Routes>
-      <Route element={<AppLayout />}>
+      {/* 登录页在 AppLayout 之外：未登录时不该出现任何导航入口 */}
+      <Route path="/login" element={<LoginPage />} />
+      <Route
+        element={
+          <RequireAuth>
+            <AppLayout />
+          </RequireAuth>
+        }
+      >
         <Route path="/" element={<Navigate to="/overview" replace />} />
         <Route path="/overview" element={<Overview />} />
         <Route path="/agents" element={<AgentList />} />
@@ -40,6 +52,8 @@ export default function App() {
         <Route path="/observability" element={<ObservabilityPage />} />
         <Route path="/quota" element={<QuotaPage />} />
         <Route path="/settings" element={<ModelSettingsPage />} />
+        <Route path="/system/users" element={<UserManagePage />} />
+        <Route path="/system/roles" element={<RoleManagePage />} />
       </Route>
     </Routes>
   );

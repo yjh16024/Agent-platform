@@ -85,6 +85,11 @@ if defined NEED_BUILD (
 )
 
 REM ---- 6. Start core service ----
+REM 鉴权密钥：SECURITY_ENABLED / RBAC_ENABLED 现已**默认开启**，而 SecurityStartupGuard 在
+REM "开启鉴权 + JWT 密钥仍为默认值(change-me-*)" 时会**拒绝启动**（fail-fast，这是有意的）。
+REM 这里给一个本地开发用的固定值；**生产环境务必用 ≥32 字节的随机串覆盖**。
+REM 用 `if not defined` 是为了让外部已设的 JWT_SECRET 优先（例如 CI 或自己的启动脚本）。
+if not defined JWT_SECRET set "JWT_SECRET=local-dev-only-change-me-32bytes-0123456789"
 set "JAVA_CMD=java"
 if defined JAVA_HOME set "JAVA_CMD=%JAVA_HOME%\bin\java.exe"
 echo [3/3] Starting core service on port 8081 (DB_MODE=%DB_MODE%)...

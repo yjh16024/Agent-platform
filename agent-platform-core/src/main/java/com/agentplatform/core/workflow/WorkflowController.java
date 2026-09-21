@@ -1,6 +1,7 @@
 package com.agentplatform.core.workflow;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.core.workflow.node.WorkflowDefinition;
 import com.agentplatform.model.entity.WorkflowDef;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +25,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/workflows")
 @RequiredArgsConstructor
+@RequiresPermission("workflow:write")
 public class WorkflowController {
 
     private final WorkflowService workflowService;
@@ -51,6 +53,7 @@ public class WorkflowController {
 
     /** 列表。 */
     @GetMapping
+    @RequiresPermission("workflow:read")
     public ApiResponse<List<WorkflowDef>> list(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId) {
         return ApiResponse.ok(workflowService.list(tenantId));
@@ -58,6 +61,7 @@ public class WorkflowController {
 
     /** 详情。 */
     @GetMapping("/{workflowId}")
+    @RequiresPermission("workflow:read")
     public ApiResponse<WorkflowDefinition> get(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @PathVariable String workflowId) {

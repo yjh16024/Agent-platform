@@ -100,6 +100,29 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- AOP（RBAC 的 @RequiresPermission 切面）。
+             ⚠️ 不能写 spring-boot-starter-aop —— **Spring Boot 4 已移除该 starter**，
+             BOM 里只保留了 org.aspectj:* 三个构件（aspectjweaver / aspectjrt / aspectjtools），
+             写 starter 会在 POM 解析阶段就报 "dependency.version is missing"。
+             显式声明（而不是依赖传递依赖）的理由：@Aspect 能否生效取决于 aspectjweaver
+             是否在 classpath（AopAutoConfiguration 以 @ConditionalOnClass(Advice.class) 为前提），
+             它此前是从某条传递依赖里带进来的 —— 哪天上游调整依赖树，切面会**静默失效**
+             （权限校验不执行且无任何报错），这类问题极难排查。版本由 Boot BOM 管理。 -->
+        <dependency>
+            <groupId>org.aspectj</groupId>
+            <artifactId>aspectjweaver</artifactId>
+        </dependency>
+
+        <!-- 密码哈希（RBAC）。
+             刻意只引 spring-security-crypto 这个**工具库**，不引 spring-boot-starter-security：
+             前者只提供 BCryptPasswordEncoder 等算法实现，不带任何自动配置，不会给现有
+             17 个 Controller 套上 Spring Security 的默认过滤器链（CSRF / 默认登录页等）。
+             版本由 Spring Boot BOM 统一管理，故不写 version。 -->
+        <dependency>
+            <groupId>org.springframework.security</groupId>
+            <artifactId>spring-security-crypto</artifactId>
+        </dependency>
+
         <!-- OkHttp -->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>

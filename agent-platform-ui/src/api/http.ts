@@ -58,7 +58,27 @@ function headers(): Record<string, string> {
 
 async function unwrap<T>(res: Response, raw = false): Promise<T> {
   if (res.status === 401) {
-    throw new ApiError('未认证（401），请先登录或检查网关', 'UNAUTHORIZED', 401);
+    /*
+     * token 失效（过期 / 服务端换了 JWT_SECRET / 账号被停用）时，除了报错还要**把用户送回登录页**。
+     * 否则界面会停在"每个请求都失败但没人说明原因"的状态，用户只能靠刷新去猜。
+     *
+     * 这里用 location.hash 而不是 react-router 的 navigate：本文件是纯 fetch 封装，
+     * 刻意不依赖 React（也被非组件代码调用），而项目用的是 HashRouter，改 hash 即完成跳转。
+     * 已经在登录页时不再重复赋值，避免把用户正在输入的密码清掉。
+     */
+    setToken(null);
+    if (!window.location.hash.startsWith('#/login')) {
+      window.location.hash = '#/login';
+    }
+    /*
+     * 但**登录接口自己的 401 不是 token 失效**，而是"用户名或密码错误"。
+     * 那种情况必须放行到下面的通用错误分支，让用户看到后端原话
+     * —— 否则会被改写成"登录已失效，请重新登录"，正好把最该看到的信息盖掉，
+     * 用户只能对着正确的账号反复试（后端日志里能看到几十次重复的 401）。
+     */
+    if (!res.url.includes('/auth/login')) {
+      throw new ApiError('登录已失效，请重新登录', 'UNAUTHORIZED', 401);
+    }
   }
   const body = await res.json().catch(() => null);
   if (!res.ok) {

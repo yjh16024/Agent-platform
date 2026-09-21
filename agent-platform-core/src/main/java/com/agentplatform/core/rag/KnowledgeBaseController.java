@@ -1,6 +1,7 @@
 package com.agentplatform.core.rag;
 
 import com.agentplatform.common.dto.ApiResponse;
+import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.core.rag.retriever.RetrievalResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -23,12 +24,14 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/v1/knowledge-bases")
 @RequiredArgsConstructor
+@RequiresPermission("kb:read")
 public class KnowledgeBaseController {
 
     private final KnowledgeBaseService kbService;
 
     /** 创建知识库。 */
     @PostMapping
+    @RequiresPermission("kb:write")
     public ApiResponse<Map<String, Object>> create(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @RequestParam String name,
@@ -43,6 +46,7 @@ public class KnowledgeBaseController {
 
     /** 上传文档。 */
     @PostMapping("/{kbId}/documents")
+    @RequiresPermission("kb:write")
     public ApiResponse<Integer> upload(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @PathVariable String kbId,
@@ -118,6 +122,7 @@ public class KnowledgeBaseController {
 
     /** 删除单个文档（含其 chunk 与向量）。 */
     @DeleteMapping("/documents/{docId}")
+    @RequiresPermission("kb:write")
     public ApiResponse<Void> deleteDocument(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @PathVariable String docId) {
@@ -127,6 +132,7 @@ public class KnowledgeBaseController {
 
     /** 删除知识库（物理删除：文档 + chunk + 向量）。 */
     @DeleteMapping("/{kbId}")
+    @RequiresPermission("kb:write")
     public ApiResponse<Void> delete(
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @PathVariable String kbId) {
