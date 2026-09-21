@@ -4,15 +4,23 @@ import { PlusOutlined } from '@ant-design/icons';
 import { listLogs, collectLog } from '../../api/ops';
 import { LogEvent } from '../../api/types';
 import { useAppStore } from '../../store/appStore';
+import { useDict } from '../../dict/store';
+import { DICT } from '../../api/dict';
 
-const LEVELS = ['TRACE', 'DEBUG', 'INFO', 'WARN', 'ERROR'];
-const CATEGORIES = ['agent', 'llm', 'plugin', 'skill', 'api', 'workflow', 'system'];
+/*
+ * 原来这里各写了一份硬编码清单，与后端 LogLevel / LogCategory 枚举构成**两份定义**。
+ * 而且**已经漂移了**：CATEGORIES 少了一个 tool（后端枚举里有 8 个），
+ * 意味着按 tool 类别过滤日志在这个界面上根本选不到。
+ * 现在从数据字典取，字典初值由 DictSeeder 直接读那两个枚举同步。
+ */
 
 const levelColor = (l?: string) =>
   ({ ERROR: 'red', WARN: 'orange', INFO: 'blue', DEBUG: 'default', TRACE: 'default' }[l ?? ''] ?? 'default');
 
 export default function LogsPage() {
   const { tenantId } = useAppStore();
+  const levelOptions = useDict(DICT.LOG_LEVEL);
+  const categoryOptions = useDict(DICT.LOG_CATEGORY);
   const [items, setItems] = useState<LogEvent[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
@@ -109,14 +117,14 @@ export default function LogsPage() {
           allowClear
           style={{ width: 120 }}
           onChange={setLevel}
-          options={LEVELS.map((l) => ({ value: l, label: l }))}
+          options={levelOptions}
         />
         <Select
           placeholder="类别"
           allowClear
           style={{ width: 140 }}
           onChange={setCategory}
-          options={CATEGORIES.map((c) => ({ value: c, label: c }))}
+          options={categoryOptions}
         />
         <Button type="primary" onClick={load}>
           查询
@@ -151,10 +159,10 @@ export default function LogsPage() {
             <Input placeholder="缺省自动生成" />
           </Form.Item>
           <Form.Item name="level" label="级别" rules={[{ required: true }]}>
-            <Select options={LEVELS.map((l) => ({ value: l, label: l }))} />
+            <Select options={levelOptions} />
           </Form.Item>
           <Form.Item name="category" label="类别" rules={[{ required: true }]}>
-            <Select options={CATEGORIES.map((c) => ({ value: c, label: c }))} />
+            <Select options={categoryOptions} />
           </Form.Item>
           <Form.Item name="traceId" label="traceId（可选）">
             <Input />

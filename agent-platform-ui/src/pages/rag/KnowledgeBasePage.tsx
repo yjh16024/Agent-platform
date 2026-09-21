@@ -8,6 +8,8 @@ import {
   listKbs, createKb, uploadDoc, searchKb, deleteKb, listDocuments, listChunks, deleteDocument,
 } from '../../api/knowledgeBases';
 import { KnowledgeBase, RetrievalResult, DocMeta, ChunkMeta } from '../../api/types';
+import { useDict } from '../../dict/store';
+import { DICT } from '../../api/dict';
 
 const fmtSize = (n?: number) => {
   if (!n) return '—';
@@ -17,6 +19,12 @@ const fmtSize = (n?: number) => {
 };
 
 export default function KnowledgeBasePage() {
+  /**
+   * 切分策略来自数据字典。
+   * 原来这里写死 ['recursive','semantic','structural']，与后端真实注册的 Chunker 两份定义；
+   * 字典初值由 DictSeeder 从 Spring 容器里的 Chunker Bean 动态同步，加新切分器只需写一个类。
+   */
+  const chunkStrategyOptions = useDict(DICT.CHUNK_STRATEGY);
   const [items, setItems] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -288,7 +296,7 @@ export default function KnowledgeBasePage() {
             <Input.TextArea rows={2} />
           </Form.Item>
           <Form.Item name="chunkStrategy" label="切分策略" initialValue="recursive">
-            <Select options={['recursive', 'semantic', 'structural'].map((s) => ({ value: s, label: s }))} />
+            <Select options={chunkStrategyOptions} />
           </Form.Item>
           <Form.Item name="chunkSize" label="chunk 大小" initialValue={512}>
             <InputNumber min={64} max={4096} style={{ width: '100%' }} />

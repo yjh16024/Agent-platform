@@ -3,30 +3,16 @@ import {
   Card, Form, Input, Select, AutoComplete, Button, Space, Typography, Alert, message, Divider, Row, Col,
 } from 'antd';
 import { getModelConfig, saveEmbeddingBinding, saveChatBinding } from '../../api/modelConfig';
+import { useDict } from '../../dict/store';
+import { DICT } from '../../api/dict';
 
 const { Title, Text } = Typography;
 
-// 嵌入服务商（不含 deepseek——无 embedding 接口；local 为本地 Mock）
-const EMBEDDING_PROVIDERS = [
-  { value: 'siliconflow', label: 'siliconflow（硅基流动）' },
-  { value: 'openai', label: 'openai' },
-  { value: 'qwen', label: 'qwen（通义千问）' },
-  { value: 'ernie', label: 'ernie（文心一言）' },
-  { value: 'hunyuan', label: 'hunyuan（混元）' },
-  { value: 'zhipu', label: 'zhipu（智谱）' },
-  { value: 'local', label: 'local（本地 Mock）' },
-];
-
-// 对话服务商（智能体未单独配置时的平台默认）
-const CHAT_PROVIDERS = [
-  { value: 'deepseek', label: 'deepseek' },
-  { value: 'openai', label: 'openai' },
-  { value: 'qwen', label: 'qwen（通义千问）' },
-  { value: 'ernie', label: 'ernie（文心一言）' },
-  { value: 'hunyuan', label: 'hunyuan（混元）' },
-  { value: 'anthropic', label: 'anthropic（Claude / Bailian）' },
-  { value: 'local', label: 'local（本地 Mock）' },
-];
+/*
+ * 服务商清单原先在这里各写一份（EMBEDDING_PROVIDERS / CHAT_PROVIDERS）。
+ * 现在改为从数据字典取 —— 注意是**两个**字典（对话 / 嵌入），
+ * 因为两侧的可选集合本来就不同：嵌入侧有 siliconflow / zhipu 但没有 deepseek / anthropic。
+ */
 
 const EMBEDDING_MODELS = [
   'BAAI/bge-m3', 'BAAI/bge-large-zh-v1.5', 'text-embedding-3-small', 'text-embedding-3-large', 'text-embedding-ada-002',
@@ -58,6 +44,9 @@ export default function ModelSettingsPage() {
   const [embedForm] = Form.useForm();
   const [chatForm] = Form.useForm();
   const [loading, setLoading] = useState(false);
+  /** 服务商清单来自数据字典；**两侧是两个不同的字典**，见文件上方注释。 */
+  const embedProviderOptions = useDict(DICT.MODEL_PROVIDER_EMBEDDING);
+  const chatProviderOptions = useDict(DICT.MODEL_PROVIDER_CHAT);
   const [savingEmb, setSavingEmb] = useState(false);
   const [savingChat, setSavingChat] = useState(false);
   const [embMasked, setEmbMasked] = useState('');
@@ -153,7 +142,7 @@ export default function ModelSettingsPage() {
           <Card title="嵌入模型（RAG 向量化）" loading={loading}>
             <Form form={embedForm} layout="vertical">
               <Form.Item name="provider" label="服务商 provider">
-                <Select allowClear placeholder="留空走本地 Mock" options={EMBEDDING_PROVIDERS} />
+                <Select allowClear placeholder="留空走本地 Mock" options={embedProviderOptions} />
               </Form.Item>
               <Form.Item name="model" label="模型 model（支持手输最新模型名）">
                 <AutoComplete
@@ -187,7 +176,7 @@ export default function ModelSettingsPage() {
           <Card title="默认对话模型（智能体未单独配置时回退）" loading={loading}>
             <Form form={chatForm} layout="vertical">
               <Form.Item name="provider" label="服务商 provider">
-                <Select allowClear placeholder="留空使用全局 LiteLLM / Mock" options={CHAT_PROVIDERS} />
+                <Select allowClear placeholder="留空使用全局 LiteLLM / Mock" options={chatProviderOptions} />
               </Form.Item>
               <Form.Item name="model" label="模型 model（支持手输）">
                 <AutoComplete

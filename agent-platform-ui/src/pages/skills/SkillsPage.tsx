@@ -12,6 +12,8 @@ import {
   getSkillsDir, openSkillsFolder, syncSkills, uploadSkill, skillFiles, readSkillFile,
 } from '../../api/skills';
 import { SkillDef } from '../../api/types';
+import { useDict } from '../../dict/store';
+import { DICT } from '../../api/dict';
 import SkillMarketModal from './SkillMarketModal';
 
 const EXAMPLE = `name: 客服话术助手
@@ -36,11 +38,18 @@ allowed-tools:
 在这里写下 Skill 的能力说明、操作步骤与约束（即注入系统提示词的正文）。
 `;
 
-const TOOL_OPTIONS = ['search', 'calculator', 'http_get', 'tts_synthesize'].map((t) => ({ value: t, label: t }));
+/*
+ * 原本这里写死了 ['search','calculator','http_get','tts_synthesize'] ——
+ * 其中只有 search 是对的：后端内置工具的 Bean 名是 calc（不是 calculator），
+ * http_get / tts_synthesize 则根本不存在。那意味着这个下拉一直在提供无效选项。
+ * 现在改成从数据字典取（字典初值由 DictSeeder 从 Spring 容器里的 Tool Bean 动态同步）。
+ */
 
 const dirOf = (s: SkillDef) => (s.manifest?.dir as string | undefined) ?? '';
 
 export default function SkillsPage() {
+  /** 可绑定的内置工具，来自数据字典（dict:read，三个内置角色都有）。 */
+  const toolOptions = useDict(DICT.BUILTIN_TOOL);
   const [items, setItems] = useState<SkillDef[]>([]);
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
@@ -316,7 +325,7 @@ export default function SkillsPage() {
           <Form.Item name="prompt" label="提示词正文（SKILL.md 正文）" rules={[{ required: true, message: '请输入提示词' }]}>
             <Input.TextArea rows={6} placeholder={SKILL_MD_TEMPLATE} />
           </Form.Item>
-          <Form.Item name="tools" label="绑定工具（allowed-tools）"><Select mode="tags" options={TOOL_OPTIONS} placeholder="回车添加工具名" /></Form.Item>
+          <Form.Item name="tools" label="绑定工具（allowed-tools）"><Select mode="tags" options={toolOptions} placeholder="回车添加工具名" /></Form.Item>
         </Form>
       </Modal>
 
@@ -361,7 +370,7 @@ export default function SkillsPage() {
           <Form.Item name="version" label="版本"><Input /></Form.Item>
           <Form.Item name="description" label="描述"><Input.TextArea rows={2} /></Form.Item>
           <Form.Item name="prompt" label="提示词正文（改写会同步回 SKILL.md）" rules={[{ required: true }]}><Input.TextArea rows={8} /></Form.Item>
-          <Form.Item name="tools" label="绑定工具"><Select mode="tags" options={TOOL_OPTIONS} /></Form.Item>
+          <Form.Item name="tools" label="绑定工具"><Select mode="tags" options={toolOptions} /></Form.Item>
         </Form>
 
         <Divider orientation="left" plain>目录文件（渐进式披露资源）</Divider>

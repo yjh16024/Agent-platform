@@ -23,10 +23,12 @@ import {
   UserOutlined,
   TeamOutlined,
   LogoutOutlined,
+  ProfileOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { setToken } from '../api/http';
 import { getMe } from '../api/auth';
+import { preloadDicts } from '../dict/store';
 import SidebarSkinSettings from './SidebarSkinSettings';
 import { useTheme } from '../theme/ThemeProvider';
 import { HOST_ATTRS, SLOTS, sidebarHooks } from '../skin/contract';
@@ -88,6 +90,14 @@ export default function AppLayout() {
           setPerms(null);
         }
       });
+
+    /*
+     * 顺带预取数据字典：与 /me 并行发出，不阻塞首屏。
+     * 放在这里是因为它是"登录后、进入主界面"时该做的事 —— 登录页不需要字典。
+     * 失败时静默（各下拉会是空的，但功能可用），详见 dict/store.ts 的说明。
+     */
+    void preloadDicts();
+
     return () => {
       alive = false;
     };
@@ -147,6 +157,9 @@ export default function AppLayout() {
       children: [
         { key: '/system/users', icon: <UserOutlined />, label: '用户管理', perm: 'user:manage' },
         { key: '/system/roles', icon: <SafetyCertificateOutlined />, label: '角色权限', perm: 'role:manage' },
+        // 用 dict:write 而不是 dict:read 作为可见条件：该页面所有接口都要求写权限，
+        // 只给读权限的话点进去必然 403 —— 那是"看得到但用不了"，比看不到更糟。
+        { key: '/system/dicts', icon: <ProfileOutlined />, label: '数据字典', perm: 'dict:write' },
       ],
     },
   ];

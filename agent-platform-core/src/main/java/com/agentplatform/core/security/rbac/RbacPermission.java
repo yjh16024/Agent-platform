@@ -67,7 +67,15 @@ public enum RbacPermission {
 
     // ---- 系统管理（本题新增的模块）----
     USER_MANAGE("user:manage", "管理用户", "系统管理"),
-    ROLE_MANAGE("role:manage", "管理角色与权限", "系统管理");
+    ROLE_MANAGE("role:manage", "管理角色与权限", "系统管理"),
+
+    // ---- 数据字典 ----
+    // 读码以 :read 结尾 → 自动进 readOnlyCodes()，所以 viewer 也会拿到。
+    // 这是有意的：前端每个下拉都要读字典，viewer 拿不到就会满页空下拉。
+    // 写码放进 systemCodes() → operator 拿不到，只有 admin 能改。
+    // 理由：字典是**全局影响面最大**的配置 —— 改错一个标签，所有引用它的页面都跟着变。
+    DICT_READ("dict:read", "查看数据字典", "系统管理"),
+    DICT_WRITE("dict:write", "管理数据字典", "系统管理");
 
     private final String code;
     private final String label;
@@ -115,8 +123,12 @@ public enum RbacPermission {
                 .collect(Collectors.toCollection(LinkedHashSet::new));
     }
 
-    /** 系统管理类权限码，operator 角色需要排除它们。 */
+    /**
+     * 系统管理类权限码，operator 角色需要排除它们。
+     * <p>注意 {@code DICT_READ} **不在**这里：读字典是普适能力（每个页面下拉都要用），
+     * operator 与 viewer 都该有；只有 {@code DICT_WRITE} 需要收紧到 admin。</p>
+     */
     public static Set<String> systemCodes() {
-        return Set.of(USER_MANAGE.code, ROLE_MANAGE.code);
+        return Set.of(USER_MANAGE.code, ROLE_MANAGE.code, DICT_WRITE.code);
     }
 }

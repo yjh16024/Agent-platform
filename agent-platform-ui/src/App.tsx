@@ -21,6 +21,7 @@ import ModelSettingsPage from './pages/settings/ModelSettingsPage';
 import SkinMarketPage from './pages/skins/SkinMarketPage';
 import UserManagePage from './pages/system/UserManagePage';
 import RoleManagePage from './pages/system/RoleManagePage';
+import DictManagePage from './pages/system/DictManagePage';
 
 export default function App() {
   return (
@@ -54,6 +55,7 @@ export default function App() {
         <Route path="/settings" element={<ModelSettingsPage />} />
         <Route path="/system/users" element={<UserManagePage />} />
         <Route path="/system/roles" element={<RoleManagePage />} />
+        <Route path="/system/dicts" element={<DictManagePage />} />
       </Route>
     </Routes>
   );
