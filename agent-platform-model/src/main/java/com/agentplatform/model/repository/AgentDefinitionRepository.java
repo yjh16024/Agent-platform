@@ -45,4 +45,7 @@ public interface AgentDefinitionRepository extends JpaRepository<AgentDefinition
      * 是否存在同名 Agent。
      */
     boolean existsByTenantIdAndName(String tenantId, String name);
+
+    /** 统计报表用：租户下的智能体总数。 */
+    long countByTenantId(String tenantId);
 }

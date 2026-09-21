@@ -28,4 +28,7 @@ public interface SysUserRepository extends JpaRepository<SysUser, Long> {
     boolean existsByTenantIdAndUsername(String tenantId, String username);
 
     long countByTenantIdAndStatus(String tenantId, SysUserStatus status);
+
+    /** 统计报表用：租户下的用户总数。 */
+    long countByTenantId(String tenantId);
 }

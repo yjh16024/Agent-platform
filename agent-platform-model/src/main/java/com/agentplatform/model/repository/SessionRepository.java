@@ -43,4 +43,7 @@ public interface SessionRepository extends JpaRepository<Session, Long> {
     @Modifying(clearAutomatically = true, flushAutomatically = true)
     @Query("UPDATE Session s SET s.updatedAt = CURRENT_TIMESTAMP WHERE s.sessionId = :sessionId")
     int touch(@Param("sessionId") String sessionId);
+
+    /** 统计报表用：租户下的会话总数。 */
+    long countByTenantId(String tenantId);
 }

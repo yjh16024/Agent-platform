@@ -19,6 +19,8 @@ import WorkflowsPage from './pages/workflows/WorkflowsPage';
 import FilesPage from './pages/files/FilesPage';
 import ModelSettingsPage from './pages/settings/ModelSettingsPage';
 import SkinMarketPage from './pages/skins/SkinMarketPage';
+import AuditPage from './pages/ops/AuditPage';
+import ReportsPage from './pages/ops/ReportsPage';
 import UserManagePage from './pages/system/UserManagePage';
 import RoleManagePage from './pages/system/RoleManagePage';
 import DictManagePage from './pages/system/DictManagePage';
@@ -47,6 +49,8 @@ export default function App() {
         <Route path="/plugins" element={<PluginMarketplace />} />
         <Route path="/files" element={<FilesPage />} />
         <Route path="/logs" element={<LogsPage />} />
+        <Route path="/audit" element={<AuditPage />} />
+        <Route path="/reports" element={<ReportsPage />} />
         <Route path="/diagnosis" element={<DiagnosisPage />} />
         <Route path="/prompt" element={<PromptOptimizePage />} />
         <Route path="/tools" element={<ToolsPage />} />

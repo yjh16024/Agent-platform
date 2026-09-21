@@ -24,6 +24,8 @@ import {
   TeamOutlined,
   LogoutOutlined,
   ProfileOutlined,
+  FileProtectOutlined,
+  BarChartOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { setToken } from '../api/http';
@@ -143,6 +145,9 @@ export default function AppLayout() {
       label: '运维工具',
       children: [
         { key: '/logs', icon: <FileTextOutlined />, label: '运行日志', perm: 'log:read' },
+        // 操作日志与运行日志并列：前者记"人的操作"，后者记"系统运行"
+        { key: '/audit', icon: <FileProtectOutlined />, label: '操作日志', perm: 'audit:read' },
+        { key: '/reports', icon: <BarChartOutlined />, label: '统计报表', perm: 'report:read' },
         { key: '/observability', icon: <LineChartOutlined />, label: '智能体可观测性', perm: 'log:read' },
         { key: '/diagnosis', icon: <BugOutlined />, label: '智能诊断', perm: 'log:read' },
         { key: '/prompt', icon: <ThunderboltOutlined />, label: '提示词优化', perm: 'agent:invoke' },

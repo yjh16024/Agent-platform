@@ -75,7 +75,20 @@ public enum RbacPermission {
     // 写码放进 systemCodes() → operator 拿不到，只有 admin 能改。
     // 理由：字典是**全局影响面最大**的配置 —— 改错一个标签，所有引用它的页面都跟着变。
     DICT_READ("dict:read", "查看数据字典", "系统管理"),
-    DICT_WRITE("dict:write", "管理数据字典", "系统管理");
+    DICT_WRITE("dict:write", "管理数据字典", "系统管理"),
+
+    // ---- 操作日志 / 审计 ----
+    // 读码同样以 :read 结尾 → 自动进 readOnlyCodes()，三个内置角色都能看
+    //（审计是"给人看的"，只让 admin 看反而会让运维查不到问题）。
+    // 但**清理审计记录**是不可逆操作，且能抹掉追责线索，所以单独一个 manage 码、只给 admin。
+    AUDIT_READ("audit:read", "查看操作日志", "运维"),
+    AUDIT_MANAGE("audit:manage", "清理操作日志", "运维"),
+
+    // ---- 统计报表 ----
+    // 读码以 :read 结尾 → 自动进 readOnlyCodes()，三个内置角色都能看（报表是"给人看的"）。
+    // **刻意不设 report:manage**：报表只有查询聚合、不改任何数据，做不出"写操作"这件事，
+    // 加一个权限码只会让清单变长而没有实际管控对象。
+    REPORT_READ("report:read", "查看统计报表", "运维");
 
     private final String code;
     private final String label;
@@ -129,6 +142,6 @@ public enum RbacPermission {
      * operator 与 viewer 都该有；只有 {@code DICT_WRITE} 需要收紧到 admin。</p>
      */
     public static Set<String> systemCodes() {
-        return Set.of(USER_MANAGE.code, ROLE_MANAGE.code, DICT_WRITE.code);
+        return Set.of(USER_MANAGE.code, ROLE_MANAGE.code, DICT_WRITE.code, AUDIT_MANAGE.code);
     }
 }
