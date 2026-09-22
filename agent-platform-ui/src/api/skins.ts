@@ -116,3 +116,21 @@ export function proxyImageUrl(url?: string | null) {
   }
   return `/api/v1/skins/proxy?url=${encodeURIComponent(url)}`;
 }
+
+/**
+ * 取皮肤的**客户端 bundle 文本**（自注册脚本），供 `skin/runtime.ts` 注入执行。
+ *
+ * <p>必须走这里而不是裸 `fetch`：`SkinController` 上有
+ * `@RequiresPermission("skin:manage")`，而 {@link http} 会注入
+ * `Authorization: Bearer <token>`。用裸 fetch 请求不带 token，
+ * 在 `security.enabled=true` 下必然 401 —— 表现为点「运行 JS」时报
+ * 「取皮肤 bundle 失败：HTTP 401」。</p>
+ *
+ * <p>注：`/api/v1/skins/proxy`（图片）走的是另一条路 —— 它由 `<img src>` 调用、
+ * 无法带 token，所以在 `JwtAuthFilter` 里被显式列为匿名路径。</p>
+ */
+export function fetchSkinBundle(id: string) {
+  return http.get<{ text?: string; path?: string }>(
+    `/api/v1/skins/bundle?id=${encodeURIComponent(id)}`,
+  );
+}

@@ -35,6 +35,7 @@ import * as React from 'react';
 import * as ReactDOM from 'react-dom';
 import * as ReactDOMClient from 'react-dom/client';
 import { releaseCustomizationOf } from './customization';
+import { fetchSkinBundle } from '../api/skins';
 
 /** DSH 客户端插件导出的形状。 */
 export interface SkinPlugin {
@@ -325,18 +326,23 @@ export function installModuleLoader(): void {
 
 // ---------------------------------------------------------------- 激活 / 卸载
 
-/** 拉取皮肤 bundle 文本。 */
+/**
+ * 拉取皮肤 bundle 文本。
+ *
+ * <p>必须走 {@code api/skins.ts} 的封装，**不能用裸 fetch**：`/skins/bundle` 在
+ * `SkinController` 上是 `@RequiresPermission("skin:manage")` 管控的接口，
+ * 只有经 `http` 封装才会带上 `Authorization: Bearer`。裸 fetch 不带 token，
+ * 在 `security.enabled=true` 时必然 401 —— 用户看到的正是
+ * 「取皮肤 bundle 失败：HTTP 401」，而且因为代码里写的是"bundle 失败"，
+ * 极易被误判成上游图床/仓库的问题。</p>
+ */
 async function fetchBundleText(id: string): Promise<string> {
-  const r = await fetch(`/api/v1/skins/bundle?id=${encodeURIComponent(id)}`);
-  if (!r.ok) {
-    throw new Error(`取皮肤 bundle 失败：HTTP ${r.status}`);
-  }
-  const body = (await r.json()) as { data?: { text?: string; path?: string } };
-  const text = body?.data?.text;
+  const data = await fetchSkinBundle(id);
+  const text = data?.text;
   if (!text) {
     throw new Error('皮肤 bundle 为空');
   }
-  log(`bundle = ${body?.data?.path}（${text.length} 字符）`);
+  log(`bundle = ${data?.path}（${text.length} 字符）`);
   return text;
 }
 

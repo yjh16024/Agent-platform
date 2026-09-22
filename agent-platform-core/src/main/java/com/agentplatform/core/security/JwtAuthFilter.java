@@ -128,8 +128,28 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         if (path.startsWith("/actuator/health") || isAnonymousAuthPath(path)) {
             return true;
         }
+        if (isAnonymousImageProxyPath(path)) {
+            return true;
+        }
         // 非 API 路径（仪表盘静态资源 / SPA）放行
         return !path.startsWith("/api/");
+    }
+
+    /**
+     * {@code /api/v1/skins/proxy} 是**匿名**的。
+     *
+     * <p><b>为什么必须匿名</b>：它的调用方是 {@code <img src="...">}（皮肤市场的封面与截图，
+     * 见 {@code SkinMarketPage} 的 {@code proxyImageUrl()}），而 HTML 图片标签
+     * <b>无法附加 Authorization 头</b> —— 任何"必须带 token 的图片接口"在浏览器里注定 401。
+     * RBAC 落地后这里整页图片全挂，且报错只显示"图片裂了"，排查时极易误判成上游图床问题。</p>
+     *
+     * <p><b>为什么放行是安全的</b>：① 只做 GET 转发、无副作用、不写任何数据；
+     * ② 目标域名受 {@code SkinMarketService} 的白名单约束，不构成开放代理 / SSRF；
+     * ③ 内容是公开的皮肤截图，不含任何租户数据。</p>
+     */
+    private boolean isAnonymousImageProxyPath(String path) {
+        // getRequestURI() 不含查询串，故用 equals —— 用 startsWith 会误放行同前缀的路径
+        return path.equals("/api/v1/skins/proxy");
     }
 
     /**
