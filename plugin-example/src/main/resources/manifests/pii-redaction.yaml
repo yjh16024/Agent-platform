@@ -1,0 +1,31 @@
+# 示例插件 5 —— 输出治理钩子（before_output，返回 String 即替换最终输出）
+#
+# 与 output-enrich.yaml 的区别（很容易搞混，这是本次补全的关键点）：
+#   after_llm    返回 Map  → 只能给「附加产物」（如 audio_url），改不了回复正文
+#   before_output 返回 String → 替换用户看到的正文
+# 所以"脱敏 / 合规改写 / 格式化"必须用 before_output。
+#
+# 上传：
+#   POST /api/v1/plugins/upload
+#     -F "manifest=<本文件内容>"
+#     -F "jar=@target/plugin-example-1.1.0.jar"
+#
+# 挂载（config 可关掉脱敏）：
+#   POST /api/v1/plugins/example_pii_redaction/attach
+#     -d '{"agent_id":"<agent_id>","config":{"enabled":true}}'
+
+id: example_pii_redaction
+name: 示例·输出脱敏
+version: 1.0.0
+description: 在最终输出里对手机号/身份证/银行卡/邮箱打码（演示 before_output 替换输出）
+
+author: 白雾平台
+entry:
+  type: java
+  main_class: com.example.plugin.PiiRedactionPlugin
+
+contributes:
+  hooks:
+    - point: before_output
+
+permissions: {}

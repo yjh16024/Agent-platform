@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Layout, Menu, Button, Input, Space, App as AntApp } from 'antd';
+import { Layout, Menu, Button, Input, Space, Badge, App as AntApp } from 'antd';
 import {
   DashboardOutlined,
   RobotOutlined,
@@ -26,10 +26,13 @@ import {
   ProfileOutlined,
   FileProtectOutlined,
   BarChartOutlined,
+  BellOutlined,
+  BulbOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { setToken } from '../api/http';
 import { getMe } from '../api/auth';
+import { unreadCount } from '../api/notifications';
 import { preloadDicts } from '../dict/store';
 import SidebarSkinSettings from './SidebarSkinSettings';
 import { useTheme } from '../theme/ThemeProvider';
@@ -54,6 +57,46 @@ export default function AppLayout() {
   const location = useLocation();
   /** 侧栏折叠：DSH 皮肤用 rail/wide 两态做造型，这个状态必须真实存在。 */
   const [collapsed, setCollapsed] = useState(false);
+  /** 未读通知数（侧栏角标）。0 时不渲染角标。 */
+  const [unread, setUnread] = useState(0);
+
+  /*
+    未读数轮询（侧栏角标的数据来源）。
+    两个节流措施缺一不可：
+      1) 30 秒间隔 —— 通知没有强实时要求，更密只是白耗后端；
+      2) document.hidden 时跳过 —— 页面在后台还发请求纯属浪费（桌面版最小化时尤其明显）。
+    只查 count 不拉列表，单次代价极小。
+
+    另外监听 ap:notice-changed：通知页做完"标记已读/删除"后会派发它，
+    让角标立刻更新 —— 否则"点了全部已读、角标却还挂着数字"会停留 30 秒，
+    看起来像没生效。
+  */
+  useEffect(() => {
+    let stopped = false;
+    const tick = async () => {
+      if (document.hidden) {
+        return;
+      }
+      try {
+        const r = await unreadCount();
+        if (!stopped) {
+          setUnread(r?.count ?? 0);
+        }
+      } catch {
+        // 未登录 / 后端未开 RBAC 时这里会失败：静默即可 ——
+        // 角标只是提示，不该为此弹一个错误提示打扰用户。
+      }
+    };
+    const onChanged = () => void tick();
+    void tick();
+    const timer = window.setInterval(() => void tick(), 30_000);
+    window.addEventListener('ap:notice-changed', onChanged);
+    return () => {
+      stopped = true;
+      window.clearInterval(timer);
+      window.removeEventListener('ap:notice-changed', onChanged);
+    };
+  }, []);
   /**
    * 侧栏搜索。
    *
@@ -114,7 +157,8 @@ export default function AppLayout() {
   type NavItem = {
     key: string;
     icon?: ReactNode;
-    label: string;
+    /** 放宽为 ReactNode：未读通知角标要挂在 label 里（antd Menu 支持节点 label）。 */
+    label: ReactNode;
     /** 所需权限码；不填 = 所有登录用户可见。见下方过滤逻辑的说明。 */
     perm?: string;
     children?: NavItem[];
@@ -129,6 +173,25 @@ export default function AppLayout() {
    */
   const menuItems: NavItem[] = [
     { key: '/overview', icon: <DashboardOutlined />, label: '概览' },
+    /*
+      消息通知放在高频位置（紧跟概览）：它是"待办式"入口，用户需要主动来看，
+      藏进分组里就失去了提醒的意义。
+      角标数字来自 unreadCount 轮询（见下方 effect），不是静态值。
+    */
+    {
+      key: '/notifications',
+      icon: <BellOutlined />,
+      label: (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          消息通知
+          {unread > 0 && <Badge count={unread} size="small" overflowCount={99} />}
+        </span>
+      ),
+      perm: 'notice:read',
+    },
+    // 与「消息通知」并列放在顶部高频区：两者都是"每个人自己的"功能，
+    // 塞进「运维工具」分组会让它在权限树里显得像管理员专属（同通知的处理）。
+    { key: '/memory', icon: <BulbOutlined />, label: '长期记忆', perm: 'profile:read' },
     { key: '/agents', icon: <RobotOutlined />, label: '智能体', perm: 'agent:read' },
     { key: '/chat', icon: <MessageOutlined />, label: '对话', perm: 'agent:invoke' },
     { key: '/sessions', icon: <HistoryOutlined />, label: '会话历史', perm: 'session:read' },

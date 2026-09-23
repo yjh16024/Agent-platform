@@ -1,0 +1,34 @@
+# 示例插件 6 —— 错误兜底钩子（on_error，返回 String 即兜底回复，异常不再上抛）
+#
+# 演示三件事：
+#   1. 从 HookContext.metadata() 取 exception / error_message / original_input；
+#   2. 按错误信息粗分类给不同话术；
+#   3. 返回 null 表示"这次我不兜底"，异常照常上抛（多插件协作时有用）。
+#
+# 宿主侧的配套行为：兜底成功后 AgentRuntimeService 会补记一条 run.degraded 的 WARN 日志
+# —— 否则"失败"会从日志里消失，而用户其实收到了兜底话术。
+#
+# 上传：
+#   POST /api/v1/plugins/upload
+#     -F "manifest=<本文件内容>"
+#     -F "jar=@target/plugin-example-1.1.0.jar"
+#
+# 挂载（可自定义话术）：
+#   POST /api/v1/plugins/example_graceful_fallback/attach
+#     -d '{"agent_id":"<agent_id>","config":{"fallback_text":"稍后再试试～"}}'
+
+id: example_graceful_fallback
+name: 示例·错误兜底
+version: 1.0.0
+description: LLM 调用失败时给出友好的兜底回复，避免用户看到 500（演示 on_error）
+
+author: 白雾平台
+entry:
+  type: java
+  main_class: com.example.plugin.GracefulFallbackPlugin
+
+contributes:
+  hooks:
+    - point: on_error
+
+permissions: {}

@@ -1,0 +1,40 @@
+# 示例插件 8 —— 事件订阅（EventSubscriber）：监听"运行失败"并告警
+#
+# 与钩子的区别：钩子拦管线的特定环节（能改写输入输出）；事件订阅是"事已发生"的事后通知。
+#
+# ★ 两个要注意的约束：
+#   1) 只能订阅 agent 级事件（agent.run.completed / agent.run.failed）。
+#      租户级事件（配额超限、权限拒绝）没有 agent 维度，派发给插件会打破
+#      "插件按智能体隔离"的模型 —— 声明了也不会收到，注册时会记一条 warn。
+#   2) 只收到"挂载了本插件的那台智能体"的事件。
+#
+# 上传：
+#   POST /api/v1/plugins/upload
+#     -F "manifest=<本文件内容>"
+#     -F "jar=@target/plugin-example-1.1.0.jar"
+#
+# 挂载（挂到任意智能体后，让该智能体运行失败一次即可验证）：
+#   POST /api/v1/plugins/example_run_failure_alert/attach
+#     -d '{"agent_id":"<agent_id>"}'
+#
+# 验证方式（二选一）：
+#   1) 控制台出现 [example-run-failure-alert] 第 N 次失败告警：...；
+#   2) 让模型调用工具 example_failure_alert_stats 查看 failure_count。
+
+id: example_run_failure_alert
+name: 示例·运行失败告警
+version: 1.0.0
+description: 订阅智能体运行失败事件并做告警（演示 EventSubscriber 事件订阅；真实场景接 Slack/钉钉/监控）
+
+author: 白雾平台
+entry:
+  type: java
+  main_class: com.example.plugin.RunFailureAlertPlugin
+
+contributes:
+  events:
+    - agent.run.failed
+  tools:
+    - example_failure_alert_stats
+
+permissions: {}

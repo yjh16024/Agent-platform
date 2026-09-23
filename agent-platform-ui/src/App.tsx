@@ -24,6 +24,8 @@ import ReportsPage from './pages/ops/ReportsPage';
 import UserManagePage from './pages/system/UserManagePage';
 import RoleManagePage from './pages/system/RoleManagePage';
 import DictManagePage from './pages/system/DictManagePage';
+import NotificationsPage from './pages/notifications/NotificationsPage';
+import MemoryPage from './pages/memory/MemoryPage';
 
 export default function App() {
   return (
@@ -60,6 +62,8 @@ export default function App() {
         <Route path="/system/users" element={<UserManagePage />} />
         <Route path="/system/roles" element={<RoleManagePage />} />
         <Route path="/system/dicts" element={<DictManagePage />} />
+        <Route path="/notifications" element={<NotificationsPage />} />
+        <Route path="/memory" element={<MemoryPage />} />
       </Route>
     </Routes>
   );

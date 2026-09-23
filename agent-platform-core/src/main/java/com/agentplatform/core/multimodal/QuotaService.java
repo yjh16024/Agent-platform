@@ -1,8 +1,14 @@
 package com.agentplatform.core.multimodal;
 
 import com.agentplatform.common.exception.BizException;
+import com.agentplatform.core.notification.NotificationService;
+import com.agentplatform.core.plugin.runtime.DomainEventBus;
 import com.agentplatform.model.entity.TenantQuota;
+import com.agentplatform.model.enums.NotificationLevel;
+import com.agentplatform.model.enums.NotificationType;
 import com.agentplatform.model.repository.TenantQuotaRepository;
+import com.agentplatform.plugin.sdk.model.DomainEvent;
+import com.agentplatform.plugin.sdk.model.EventTypes;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -59,6 +65,23 @@ public class QuotaService {
     private StringRedisTemplate redisTemplate;
 
     /**
+     * 可选依赖：站内通知。
+     * <p>配额耗尽会**静默拦掉业务**（调用方只看到失败，不知道为什么），用户不主动查
+     * 就根本不知道 —— 所以这是最该发通知的场景之一。去重窗口在 {@link NotificationService} 内。</p>
+     */
+    @Autowired(required = false)
+    private NotificationService notificationService;
+
+    /**
+     * 可选依赖：领域事件总线。
+     * <p>配额超限是**租户级事件**（没有 agentId），因此<b>不会派发给插件订阅者</b>
+     * —— 那会打破按智能体隔离。这里发布是为了让核心侧订阅者（以及将来的平台级订阅者）
+     * 能消费同一套事件，而不是给插件用的。</p>
+     */
+    @Autowired(required = false)
+    private DomainEventBus domainEventBus;
+
+    /**
      * 检查并递增用量，超限抛异常。
      *
      * @param tenantId   租户 ID
@@ -76,12 +99,56 @@ public class QuotaService {
         long limit = resolveLimit(tenantId, quotaType, period, customLimit);
         long used = increment(tenantId, quotaType, period);
         if (used > limit) {
+            // 先发通知再抛：配额耗尽会**静默拦掉业务**，用户需要知道原因与出路。
+            // 通知失败绝不影响下面要抛的业务异常 —— 两者是互不依赖的两件事，
+            // 所以这里不复用同一个 try（NotificationService 内部已吞异常，此处只是明确边界）。
+            notifyQuotaExceeded(quotaType, used, limit);
+            publishQuotaExceeded(tenantId, quotaType, used, limit);
             throw new BizException("QUOTA_EXCEEDED",
                     "Tenant " + tenantId + " exceeded " + quotaType + " quota (" + used + "/" + limit + ")");
         }
         // 每 100 次沉一次 DB，避免每请求写库
         if (used % 100 == 0) {
             persistUsed(tenantId, quotaType, period, used, limit);
+        }
+    }
+
+    /**
+     * 发布「配额超限」领域事件（失败静默）。
+     *
+     * <p>这是<b>租户级事件</b>（{@code ofTenant}，无 agentId），所以<b>不会派发给插件订阅者</b>
+     * —— 那会打破按智能体隔离。发布它是为了让核心侧/将来的平台级订阅者能消费同一套事件。</p>
+     */
+    private void publishQuotaExceeded(String tenantId, String quotaType, long used, long limit) {
+        if (domainEventBus == null) {
+            return;
+        }
+        try {
+            domainEventBus.publish(DomainEvent.ofTenant(EventTypes.QUOTA_EXCEEDED, tenantId,
+                    DomainEvent.payload("quota_type", quotaType, "used", used, "limit", limit)));
+        } catch (Exception e) {
+            log.debug("发布配额事件失败（已忽略）：{}", e.getMessage());
+        }
+    }
+
+    /**
+     * 发送"配额已用尽"通知（失败静默）。
+     *
+     * <p>收件人取当前登录用户 —— 是谁触发把业务撞到限额上的，就提醒谁。
+     * 拿不到请求上下文（异步线程）时收件人为空、通知自动跳过，不会写出无主数据。</p>
+     */
+    private void notifyQuotaExceeded(String quotaType, long used, long limit) {
+        if (notificationService == null) {
+            return;
+        }
+        try {
+            notificationService.notifyCurrent(NotificationType.quota, NotificationLevel.error,
+                    "配额已用尽：" + quotaType,
+                    "「" + quotaType + "」配额已用尽（" + used + "/" + limit + "），相关调用已被拦截。"
+                            + "请联系管理员调整配额。",
+                    "/settings");
+        } catch (Exception e) {
+            log.debug("发送配额通知失败（已忽略）：{}", e.getMessage());
         }
     }
 

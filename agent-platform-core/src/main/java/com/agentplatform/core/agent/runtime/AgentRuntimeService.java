@@ -10,11 +10,14 @@ import com.agentplatform.core.log.LogCategory;
 import com.agentplatform.core.log.LogEvent;
 import com.agentplatform.core.log.LogLevel;
 import com.agentplatform.core.log.LogService;
+import com.agentplatform.core.notification.NotificationService;
 import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.rag.ConversationAttachmentService;
 import com.agentplatform.core.rag.retriever.HybridRetriever;
 import com.agentplatform.core.rag.retriever.RetrievalResult;
 import com.agentplatform.model.entity.DocumentEntity;
+import com.agentplatform.model.enums.NotificationLevel;
+import com.agentplatform.model.enums.NotificationType;
 import com.agentplatform.model.repository.AgentPluginRepository;
 import com.agentplatform.model.repository.DocumentRepository;
 import com.agentplatform.core.multimodal.FileUploadService;
@@ -22,9 +25,12 @@ import com.agentplatform.core.model.router.ModelRouter;
 import com.agentplatform.core.model.secret.ModelBindingService;
 import com.agentplatform.core.multimodal.QuotaService;
 import com.agentplatform.core.plugin.runtime.AgentPipeline;
+import com.agentplatform.core.plugin.runtime.DomainEventBus;
 import com.agentplatform.core.plugin.runtime.ExtensionRegistry;
 import com.agentplatform.core.plugin.runtime.PipelineResult;
 import com.agentplatform.core.plugin.runtime.PluginRuntime;
+import com.agentplatform.plugin.sdk.model.DomainEvent;
+import com.agentplatform.plugin.sdk.model.EventTypes;
 import com.agentplatform.core.session.SessionService;
 import com.agentplatform.core.session.SessionSummaryService;
 import com.agentplatform.core.skill.SkillService;
@@ -81,6 +87,14 @@ public class AgentRuntimeService {
     @Autowired(required = false)
     private SessionSummaryService sessionSummaryService;
 
+    /** 用户长期画像（长期记忆，可选：未注入时不注入画像，保持原行为与单测可用）。 */
+    @Autowired(required = false)
+    private com.agentplatform.core.memory.UserFactService userFactService;
+
+    /** 向量记忆（历史对话语义召回，可选：未注入时不召回，保持原行为与单测可用）。 */
+    @Autowired(required = false)
+    private com.agentplatform.core.memory.ConversationMemoryService conversationMemoryService;
+
     /** 模型绑定解析（可选：单测中未注入时退化为全局默认，凭证走适配器默认）。 */
     @Autowired(required = false)
     private ModelBindingService modelBindingService;
@@ -88,6 +102,14 @@ public class AgentRuntimeService {
     /** 运行日志采集（可选：单测中未注入时静默跳过，保证既有单测不受影响）。 */
     @Autowired(required = false)
     private LogService logService;
+
+    /** 站内通知：运行失败时提醒发起人（可选：未注入时静默跳过，保证既有单测不受影响）。 */
+    @Autowired(required = false)
+    private NotificationService notificationService;
+
+    /** 领域事件总线：把运行完成/失败派发给订阅了的插件（可选：未注入时静默跳过）。 */
+    @Autowired(required = false)
+    private DomainEventBus domainEventBus;
 
     /** Skill 注入（可选：未注入时不追加 Skill 提示词，保持旧行为与单测可用）。 */
     @Autowired(required = false)
@@ -125,8 +147,17 @@ public class AgentRuntimeService {
     @Autowired(required = false)
     private AgentPluginRepository agentPluginRepository;
 
-    /** 工具调用循环最大轮数（防止模型在 tool_calls 里死循环）。 */
-    static final int MAX_TOOL_ROUNDS = 5;
+    /**
+     * 工具调用循环最大轮数（防止模型在 tool_calls 里死循环）。
+     *
+     * <p><b>2026-09-22：由写死的 5 提为可配置、默认 20。</b>旧值是为「文本注入」式回灌设的 ——
+     * 那种做法每轮都要把累积的观察文本整段重发，轮数一多 token 就爆炸，所以只能压到 5。
+     * 改用原生 tool-role 回灌后，每轮只在消息序列尾部追加两条（assistant + tool），
+     * 上下文成本与轮数近似线性，20 轮是可接受的；而真实的编程类任务
+     * （查文件 → 读内容 → 改 → 跑测试 → 再改）经常会用掉十几轮。</p>
+     */
+    @Value("${agent-platform.agent.tool.max-rounds:20}")
+    private int maxToolRounds = 20;
 
     /** 默认模型 provider / 名称（智能体未显式配置时兜底到真实模型）。 */
     @Value("${agent-platform.model.default-provider:deepseek}")
@@ -183,9 +214,21 @@ public class AgentRuntimeService {
 
             // ④.6 早期会话摘要续接（历史被截断丢弃的早期轮次压缩进上下文，让「记忆」跨长对话保留）
             String earlySummary = earlySummaryOf(session);
-            final String effectivePrompt = earlySummary == null
+            final String promptWithSummary = earlySummary == null
                     ? systemPrompt
                     : systemPrompt + "\n\n## 早期会话摘要（较早轮次已压缩，仅作背景参考）\n" + earlySummary;
+            // 长期记忆（用户主动填写的画像）拼在中期摘要之后 ——
+            // 与设计约定的召回顺序一致：短期（会话历史）→ 中期（摘要）→ 长期（画像）→ 向量
+            final String userProfile = profileOf(tenantId, req.userId());
+            final String promptWithProfile = userProfile == null
+                    ? promptWithSummary
+                    : promptWithSummary + userProfile;
+            // 向量记忆（第四层）：按语义从该用户**其它会话**里召回相关片段
+            final String recalledHistory = recallHistory(tenantId, req.userId(), userMessage,
+                    session == null ? null : session.getSessionId());
+            final String effectivePrompt = recalledHistory == null
+                    ? promptWithProfile
+                    : promptWithProfile + recalledHistory;
 
             // ④ 确保插件已挂载（热加载）
             ensurePluginsAttached(agent, tenantId);
@@ -231,7 +274,29 @@ public class AgentRuntimeService {
                         "run.failed agent=" + agent.getName() + " model=" + model
                                 + " error=" + e.getMessage(),
                         traceId, runId, tenantId, agent.getAgentId(), stackTraceOf(e));
+                notifyRunFailed(agent.getName(), model, e);
+                // 领域事件：让"订阅了的插件"能对运行失败做反应（上报监控、切备用模型、
+                // 写外部审计…）。与上面的通知是两条独立通道 —— 通知面向**人**、事件面向**代码**，
+                // 且事件只派发给**这台智能体**上订阅了的插件（挂到别的智能体上的收不到）。
+                publishAgentEvent(EventTypes.AGENT_RUN_FAILED, tenantId, agent.getAgentId(), runId,
+                        DomainEvent.payload(
+                                "agent_id", agent.getAgentId(),
+                                "agent_name", agent.getName(),
+                                "model", model,
+                                "error", briefError(e)));
                 throw e;
+            }
+
+            // ⑤.1 插件兜底（on_error）成功时 LLM 异常不会走到上面的 catch，
+            //     这里补记一条 WARN —— 否则"失败"在日志与审计里会凭空消失，
+            //     而用户实际收到的是兜底话术，事后排查会完全对不上账。
+            if (pipeline.extras() != null
+                    && Boolean.TRUE.equals(pipeline.extras().get("error_handled"))) {
+                logTo(LogLevel.WARN, LogCategory.agent,
+                        "run.degraded agent=" + agent.getName() + " model=" + model
+                                + " error=" + pipeline.extras().get("error_message")
+                                + "（已由插件 on_error 兜底）",
+                        traceId, runId, tenantId, agent.getAgentId());
             }
 
             // ⑥ 计量与响应（含插件附加产物如 audio_url；RAG 检索命中时附带引用溯源）
@@ -257,6 +322,9 @@ public class AgentRuntimeService {
                 } catch (Exception e) {
                     log.warn("Failed to persist session exchange: {}", e.getMessage());
                 }
+                // 向量记忆：索引本轮用户消息，供**其它会话**将来按语义召回
+                //（放在落库之后：索引要靠回查刚写入的那条消息拿 messageId）
+                indexConversationMemory(tenantId, req.userId(), session.getSessionId(), userMessage);
             }
 
             logTo(LogLevel.INFO, LogCategory.agent, "run.completed agent=" + agent.getName()
@@ -265,8 +333,68 @@ public class AgentRuntimeService {
                     traceId, runId, tenantId, agent.getAgentId());
             log.info("Run {} completed: agent={}, model={}, shortCircuit={}",
                     runId, req.agentId(), model, pipeline.shortCircuited());
+            // 领域事件：运行成功完成。典型订阅场景 —— 用量统计上报、结果二次加工、
+            // 外部系统同步。payload 只放"确定稳定"的字段：订阅者读到的 key 就是契约。
+            publishAgentEvent(EventTypes.AGENT_RUN_COMPLETED, tenantId, agent.getAgentId(), runId,
+                    DomainEvent.payload(
+                            "agent_id", agent.getAgentId(),
+                            "agent_name", agent.getName(),
+                            "model", model,
+                            "short_circuited", pipeline.shortCircuited(),
+                            "latency_ms", latency[0],
+                            "prompt_tokens", usageTokens[0],
+                            "completion_tokens", usageTokens[1]));
             return resp;
         });
+    }
+
+    /**
+     * 发送"运行失败"通知（失败静默）。
+     *
+     * <p>收件人取当前登录用户，即发起本次运行的人。注意：若这次失败已被插件
+     * {@code on_error} 兜底，走不到这里 —— 那种情况在上面的 {@code run.degraded}
+     * 分支里另行处理（用户已拿到兜底回复，不该再收到一条"失败"提醒）。</p>
+     */
+    private void notifyRunFailed(String agentName, String model, Exception e) {
+        if (notificationService == null) {
+            return;
+        }
+        try {
+            notificationService.notifyCurrent(NotificationType.task, NotificationLevel.error,
+                    "智能体运行失败：" + agentName,
+                    "模型 " + model + " 调用失败：" + briefError(e)
+                            + "。可在「运行日志」查看完整堆栈。",
+                    "/logs");
+        } catch (Exception ex) {
+            log.debug("发送运行失败通知失败（已忽略）：{}", ex.getMessage());
+        }
+    }
+
+    /** 异常信息摘要（超长截断，避免文案撑爆通知正文列宽）。 */
+    private static String briefError(Exception e) {
+        String msg = e == null ? null : e.getMessage();
+        if (msg == null || msg.isBlank()) {
+            return "(无错误信息)";
+        }
+        return msg.length() <= 200 ? msg : msg.substring(0, 197) + "...";
+    }
+
+    /**
+     * 发布 agent 级领域事件（失败静默，绝不影响主流程）。
+     *
+     * <p>与通知是两条独立通道：通知写库、面向<b>人</b>；事件只做进程内派发、面向
+     * <b>订阅了的插件</b>。两者互不依赖 —— 没有订阅者时事件派发是零成本的空操作。</p>
+     */
+    private void publishAgentEvent(String type, String tenantId, String agentId, String runId,
+                                   Map<String, Object> payload) {
+        if (domainEventBus == null) {
+            return;
+        }
+        try {
+            domainEventBus.publish(DomainEvent.ofAgent(type, tenantId, agentId, runId, payload));
+        } catch (Exception e) {
+            log.debug("发布事件 {} 失败（已忽略）：{}", type, e.getMessage());
+        }
     }
 
     /**
@@ -343,12 +471,28 @@ public class AgentRuntimeService {
 
     /**
      * 执行工具调用循环（P1）：注入 tools → 模型返回 tool_calls → 逐个执行 →
-     * 文本回灌下一轮 → 直至模型不再请求工具。
-     * <p>
-     * 采用「工具结果文本注入」的轻量闭环：把每次调用名/入参/结果拼为文本追加到
-     * 用户消息后重新请求。优点是兼容 OpenAI / Anthropic / 本地适配器且不动全局
-     * 消息协议；代价是不走原生 tool-role 消息，足够支撑 calc/search 等单步工具。
-     * </p>
+     * 以<b>原生 tool-role 消息</b>回灌下一轮 → 直至模型不再请求工具。
+     *
+     * <h3>2026-09-22：由「文本注入」改为原生 function calling 协议</h3>
+     * 旧做法把每次调用的名称/入参/结果拼成一段文本、追加到用户消息后重新请求。它确实
+     * 兼容性好（不动消息协议），但代价很实在：
+     * <ul>
+     *   <li>模型看到的是「聊天记录里的旁白」而不是协议级的工具结果 —— 多轮时容易把
+     *       历史里的旧结果误当成当前轮的结果；</li>
+     *   <li>每轮都要把累积的观察文本整段重发，token 随轮数近似平方增长；</li>
+     *   <li>工具返回的结构化 JSON（{@code LocalMcpClient}/{@code HttpMcpClient} 都返回 JSON）
+     *       被压成自然语言，模型得再解析一次，丢字段很常见。</li>
+     * </ul>
+     * 现在改为标准两跳：请求带 {@code tools} → 模型回 {@code assistant(tool_calls)} →
+     * 执行后回 {@code role=tool} 消息（带 {@code tool_call_id}）→ 再问一次。
+     * 消息序列由 {@code history} 承载，所以<b>第二轮起 {@code userMessage} 传 null</b>
+     * （各适配器已支持空 userMessage 不再补一条空消息）。
+     *
+     * <p>⚠️ <b>工具声明每轮都会带上</b>（旧实现只在第一轮给）—— 否则模型从第二轮起
+     * 就再也调不到工具，多步任务会中途「失忆」。</p>
+     *
+     * <p>⚠️ <b>assistant(tool_calls) 这条消息必须记回序列</b>：工具结果消息要靠
+     * {@code tool_call_id} 指回它，缺了上游会因「引用了不存在的调用」直接 400。</p>
      */
     private String runToolLoop(
             String provider, String model, String systemPrompt, String userMessage,
@@ -356,20 +500,26 @@ public class AgentRuntimeService {
             List<ModelAdapter.ToolSpec> tools, List<ModelAdapter.ChatMessage> history,
             String traceId, String runId, String tenantId, AgentDefinition agent, int[] usageTokens,
             Map<String, Object> extraImages) {
-        String rolling = userMessage;
-        for (int round = 0; round < MAX_TOOL_ROUNDS; round++) {
-            boolean hasTools = round == 0 && tools != null && !tools.isEmpty();
+        // 本轮对话序列：会话历史 + 当前用户消息；此后每轮的 assistant(tool_calls) 与
+        // tool 结果都追加在尾部，下一轮整段作为 history 发出。
+        List<ModelAdapter.ChatMessage> convo = new ArrayList<>(history);
+        // 仅第一轮带用户消息；此后消息都在 convo 里，重复发送等于重复提问。
+        String nextUserMessage = userMessage;
+        boolean toolDeclared = tools != null && !tools.isEmpty();
+
+        for (int round = 0; round < maxToolRounds; round++) {
             logTo(LogLevel.INFO, LogCategory.llm, "llm.call provider=" + provider + " model=" + model
                             + " routing=" + resolved.routing() + " round=" + round
-                            + " tools=" + (hasTools ? tools.size() : 0)
-                            + " history=" + history.size() + " chars=" + rolling.length(),
+                            + " tools=" + (toolDeclared ? tools.size() : 0)
+                            + " history=" + convo.size() + " chars="
+                            + (nextUserMessage == null ? 0 : nextUserMessage.length()),
                     traceId, runId, tenantId, agent.getAgentId());
             long t0 = System.currentTimeMillis();
             ModelAdapter.ChatRequest chatReq = new ModelAdapter.ChatRequest(
-                    model, systemPrompt, rolling, gc.temperature(), gc.maxTokens(), extraImages, history,
+                    model, systemPrompt, nextUserMessage, gc.temperature(), gc.maxTokens(), extraImages, convo,
                     resolved.baseUrl(), resolved.apiKey(),
-                    hasTools ? tools : List.of(),
-                    hasTools ? "auto" : null);
+                    toolDeclared ? tools : List.of(),
+                    toolDeclared ? "auto" : null);
             ModelAdapter.ChatResponse resp = modelRouter.chat(provider, chatReq);
             usageTokens[0] += resp.promptTokens();
             usageTokens[1] += resp.completionTokens();
@@ -378,11 +528,15 @@ public class AgentRuntimeService {
                             + " tokens=" + (resp.promptTokens() + resp.completionTokens())
                             + " toolCalls=" + (resp.toolCalls() == null ? 0 : resp.toolCalls().size()),
                     traceId, runId, tenantId, agent.getAgentId());
+
             if (resp.toolCalls() == null || resp.toolCalls().isEmpty()) {
                 return resp.content() == null ? "" : resp.content();
             }
-            // 逐个执行模型请求的工具
-            StringBuilder observations = new StringBuilder();
+
+            // ① 把模型这一轮的 assistant(tool_calls) 原样记回序列（见方法注释的第二条警告）
+            convo.add(ModelAdapter.ChatMessage.assistantToolCalls(resp.toolCalls()));
+
+            // ② 逐个执行，并以 role=tool 消息回灌（一次调用一条，id 一一对应）
             for (ModelAdapter.ToolCall call : resp.toolCalls()) {
                 long toolT0 = System.nanoTime();
                 ToolResult tr;
@@ -402,14 +556,14 @@ public class AgentRuntimeService {
                                 + " success=" + tr.success() + " latency=" + toolLatencyMs + "ms args="
                                 + (call.arguments() == null ? "{}" : call.arguments().toString()),
                         traceId, runId, tenantId, agent.getAgentId());
-                observations.append("工具[").append(call.name()).append("] 执行")
-                        .append(tr.success() ? "成功" : "失败")
-                        .append("，结果：").append(outputText).append("\n");
+                // ⚠️ 失败也必须回灌：模型等不到这次调用的结果，就会一直重试同一个工具。
+                convo.add(ModelAdapter.ChatMessage.tool(call.id(), outputText));
             }
-            rolling = rolling + "\n\n[工具调用结果]\n" + observations
-                    + "\n请依据上述工具结果继续回答用户问题；如无进一步工具可调用，直接给出最终答复。";
+
+            // ③ 后续轮次不再重复发送用户消息
+            nextUserMessage = null;
         }
-        logTo(LogLevel.WARN, LogCategory.tool, "tool loop reached max rounds " + MAX_TOOL_ROUNDS
+        logTo(LogLevel.WARN, LogCategory.tool, "tool loop reached max rounds " + maxToolRounds
                         + " agent=" + agent.getName(),
                 traceId, runId, tenantId, agent.getAgentId());
         return "（工具调用超过最大轮次，已停止；请重试或补充说明）";
@@ -517,6 +671,59 @@ public class AgentRuntimeService {
 
     /** RAG 检索产物：注入提示词的附文 + 引用列表。 */
     private record RagRender(String systemBlock, List<AgentRunResponse.Reference> references) {
+    }
+
+    /**
+     * 读取用户的长期画像（渲染好的整段提示词附文）。
+     *
+     * <p>多层级记忆里「长期」这一层：内容由**用户自己填写**，跨会话、跨智能体长期有效。
+     * 与中期摘要一样按"读失败就跳过"处理 —— 画像读不出来最多是这轮少一点背景，
+     * 不该让用户发不出消息。</p>
+     *
+     * <p>召回顺序遵循设计约定：短期（会话历史）→ 中期（早期摘要）→ 长期（画像）→ 向量，
+     * 所以这里拼在早期摘要之后。</p>
+     */
+    private String profileOf(String tenantId, String userId) {
+        if (userFactService == null || userId == null || userId.isBlank()) {
+            return null;
+        }
+        try {
+            return userFactService.render(tenantId, userId);
+        } catch (Exception e) {
+            log.warn("Failed to load user profile: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 按语义召回该用户的历史对话片段（向量记忆）。
+     *
+     * <p>多层级记忆的第四层，也是唯一"按内容相关性"而非"按时间近远"取的一层。
+     * 排除当前会话 —— 它的内容已经通过短期缓存与历史回放进上下文了，
+     * 再召回一遍等于同一段话说两遍（详见 {@code ConversationMemoryService} 类注释）。</p>
+     */
+    private String recallHistory(String tenantId, String userId, String query, String currentSessionId) {
+        if (conversationMemoryService == null || userId == null || userId.isBlank()) {
+            return null;
+        }
+        try {
+            return conversationMemoryService.recall(tenantId, userId, query, currentSessionId);
+        } catch (Exception e) {
+            log.warn("Failed to recall conversation memory: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** 异步索引本轮用户消息进向量记忆（失败静默，绝不阻塞对话）。 */
+    private void indexConversationMemory(String tenantId, String userId, String sessionId, String userMessage) {
+        if (conversationMemoryService == null || userId == null || userId.isBlank()) {
+            return;
+        }
+        try {
+            conversationMemoryService.indexAsync(tenantId, userId, sessionId, userMessage);
+        } catch (Exception e) {
+            log.debug("Failed to schedule conversation memory indexing: {}", e.getMessage());
+        }
     }
 
     /**
@@ -663,6 +870,26 @@ public class AgentRuntimeService {
 
     /**
      * 流式执行（SSE）。
+     *
+     * <h3>2026-09-22：补齐插件钩子与工具调用（此前是「裸模型调用」）</h3>
+     * 旧实现只有一句 {@code modelRouter.route(...).stream(chatReq)}，于是<b>流式开关一打开，
+     * 工具调用与插件钩子会一起静默失效</b>。这也是长期记在 memory 里的
+     * 「钩子只在非流式链路生效」的**真正根因** —— 症状表现在钩子，病灶在这里。
+     *
+     * <p>现在流式链路与本服务的 {@link #run} 对齐了这几件事：配额计次、会话解析与
+     * <b>会话持久化</b>（旧实现连历史都不存，等于流式对话没有记忆）、RAG / Skill / 摘要注入、
+     * 插件热挂载、插件钩子、工具调用、日志与领域事件。</p>
+     *
+     * <p><b>与非流式仅剩两处差异，且都是有原因的</b>：</p>
+     * <ul>
+     *   <li><b>不跑 {@code after_llm} / {@code before_output}</b> —— 流式内容已逐块推给前端，
+     *       后端此时再改写也改不动已经显示出去的文字，硬套只会造成「钩子日志显示成功、
+     *       用户看到的仍是原文」这种最难排查的状态。需要输出治理请用 {@code before_llm}
+     *       前置改写，或改用非流式（详见 {@link AgentPipeline#beforeStream}）；</li>
+     *   <li><b>工具轮不流式</b> —— 工具调用天然是「模型说完 → 宿主执行 → 再问一次」的往返，
+     *       中间没有可展示的 token。所以先用非流式跑完工具循环，再把最终答复分块推流，
+     *       而不是让用户盯着空白等。</li>
+     * </ul>
      */
     public Flux<AgentRunResponse.Output> runStream(AgentRunRequest req) {
         String runId = req.runId() != null ? req.runId() : IdGenerator.generate("run");
@@ -671,26 +898,214 @@ public class AgentRuntimeService {
 
         return TraceContext.withContext(traceId, runId, tenantId, () -> {
             AgentDefinition agent = agentService.getOrThrow(tenantId, req.agentId());
-            String userMessage = extractUserMessage(req, tenantId);
-            String basePrompt = withSkillPrompts(agent,
-                    assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
-            RagRender rag = retrieveKnowledge(agent, req, userMessage, null);
-            final String systemPrompt = rag == null || rag.systemBlock() == null || rag.systemBlock().isBlank()
-                    ? basePrompt
-                    : basePrompt + rag.systemBlock();
+
+            logTo(LogLevel.INFO, LogCategory.agent, "run.start agent=" + agent.getName()
+                            + " mode=" + req.mode() + " session=" + req.sessionId() + " streaming=true",
+                    traceId, runId, tenantId, agent.getAgentId());
+
+            // ⓪ 配额校验（与非流式一致，流式同样计入一次调用）
+            if (quotaService != null) {
+                quotaService.checkAndIncrement(tenantId, "model_calls", null);
+            }
+
+            // ② 生成参数与模型绑定
             GenerationConfig gc = mergeGenerationConfig(agent.getGenerationConfig(), req.model());
             ModelBindingService.ResolvedModel resolved = resolveModelBinding(agent, gc);
-            String provider = resolved.provider();
-            String model = resolved.model();
+            final String provider = resolved.provider();
+            final String model = resolved.model();
 
-            ModelAdapter.ChatRequest chatReq = new ModelAdapter.ChatRequest(
-                    model, systemPrompt, userMessage, gc.temperature(), gc.maxTokens(), Map.of(), List.of(),
-                    resolved.baseUrl(), resolved.apiKey());
+            // ③ 用户消息 + 图片附件（与非流式同一条提取路径）
+            String userMessage = extractUserMessage(req, tenantId);
+            final List<Map<String, String>> imageData = collectImageData(req, tenantId);
+            final Map<String, Object> imageExtra =
+                    imageData.isEmpty() ? Map.of() : Map.of("images", imageData);
+
+            // ④ 会话解析（用于历史回放与收尾持久化）
+            final Session session = sessionService == null ? null
+                    : sessionService.resolve(tenantId, agent.getAgentId(), req.userId(),
+                    req.sessionId(), userMessage);
+
+            // ⑤ 系统提示词：人格 + Skill + RAG + 早期摘要（与非流式保持同一条组装路径）
+            String basePrompt = withSkillPrompts(agent,
+                    assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
+            String attachmentKbId = ensureAttachments(req, tenantId);
+            RagRender rag = retrieveKnowledge(agent, req, userMessage, attachmentKbId);
+            String promptWithRag = rag == null || rag.systemBlock() == null || rag.systemBlock().isBlank()
+                    ? basePrompt
+                    : basePrompt + rag.systemBlock();
+            String earlySummary = earlySummaryOf(session);
+            final String promptWithSummary = earlySummary == null
+                    ? promptWithRag
+                    : promptWithRag + "\n\n## 早期会话摘要（较早轮次已压缩，仅作背景参考）\n" + earlySummary;
+            // 长期记忆（用户画像）：与非流式保持同一顺序（短期 → 中期 → 长期 → 向量）
+            final String userProfile = profileOf(tenantId, req.userId());
+            final String promptWithProfile = userProfile == null
+                    ? promptWithSummary
+                    : promptWithSummary + userProfile;
+            // 向量记忆（第四层）：按语义召回其它会话的相关片段
+            final String recalledHistory = recallHistory(tenantId, req.userId(), userMessage,
+                    session == null ? null : session.getSessionId());
+            final String effectivePrompt = recalledHistory == null
+                    ? promptWithProfile
+                    : promptWithProfile + recalledHistory;
+
+            // ⑥ 插件热挂载（否则本次运行的钩子根本不存在）
+            ensurePluginsAttached(agent, tenantId);
+
+            // ⑦ 历史回放 + 工具声明
+            final List<ModelAdapter.ChatMessage> sessionHistory = loadHistory(req, tenantId);
+            final List<ModelAdapter.ToolSpec> toolSpecs = resolveToolSpecs(req);
+
+            // ⑧ 前置钩子 before_llm：短路则直接产出该文本，改写则用改写后的消息去调模型
+            AgentPipeline.StreamHookResult pre =
+                    agentPipeline.beforeStream(agent.getAgentId(), runId, userMessage);
+            if (pre.shortCircuited()) {
+                String direct = pre.shortCircuit();
+                logTo(LogLevel.INFO, LogCategory.agent, "run.completed agent=" + agent.getName()
+                                + " shortCircuit=true streaming=true", traceId, runId, tenantId, agent.getAgentId());
+                persistExchange(session, tenantId, runId, userMessage, direct, model);
+                return Flux.just(new AgentRunResponse.Output("assistant", direct, null));
+            }
+            final String streamMessage = pre.message();
+
+            // 流式下不生效的钩子点显式告警（避免"本地测试好、开流式就失效"的隐形坑）
+            agentPipeline.warnStreamingUnsupported(agent.getAgentId(), "after_llm");
+            agentPipeline.warnStreamingUnsupported(agent.getAgentId(), "before_output");
+
+            // ⑨ 有工具：先非流式跑完工具循环，再把最终答复分块推流
+            if (!toolSpecs.isEmpty() && toolExecutor != null) {
+                return Flux.defer(() -> {
+                    final int[] usageTokens = {0, 0};
+                    String answer;
+                    try {
+                        answer = runToolLoop(provider, model, effectivePrompt, streamMessage, gc, resolved,
+                                toolSpecs, sessionHistory, traceId, runId, tenantId, agent, usageTokens,
+                                imageExtra);
+                    } catch (Exception e) {
+                        String fallback = agentPipeline.onStreamError(agent.getAgentId(), runId, streamMessage, e);
+                        if (fallback == null) {
+                            logTo(LogLevel.ERROR, LogCategory.agent,
+                                    "run.failed agent=" + agent.getName() + " model=" + model
+                                            + " error=" + e.getMessage() + " streaming=true",
+                                    traceId, runId, tenantId, agent.getAgentId(), stackTraceOf(e));
+                            notifyRunFailed(agent.getName(), model, e);
+                            return Flux.error(e);
+                        }
+                        answer = fallback;
+                        logTo(LogLevel.WARN, LogCategory.agent,
+                                "run.degraded agent=" + agent.getName() + " streaming=true"
+                                        + " error=" + e.getMessage() + "（已由插件 on_error 兜底）",
+                                traceId, runId, tenantId, agent.getAgentId());
+                    }
+                    finishStream(agent, tenantId, runId, traceId, model, userMessage, answer,
+                            session, usageTokens, true, req.userId());
+                    return Flux.fromIterable(chunkText(answer));
+                }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
+            }
+
+            // ⑩ 无工具：真流式；同时累积全文用于会话持久化，并用 on_error 兜底失败
+            final StringBuilder collected = new StringBuilder();
             return modelRouter.route(provider, com.agentplatform.core.model.ModelCapability.TEXT)
-                    .stream(chatReq)
+                    .stream(new ModelAdapter.ChatRequest(
+                            model, effectivePrompt, streamMessage, gc.temperature(), gc.maxTokens(),
+                            imageExtra, sessionHistory, resolved.baseUrl(), resolved.apiKey()))
                     .filter(d -> !d.finished() && d.text() != null && !d.text().isEmpty())
-                    .map(d -> new AgentRunResponse.Output("assistant", d.text(), null));
+                    .map(d -> {
+                        collected.append(d.text());
+                        return new AgentRunResponse.Output("assistant", d.text(), null);
+                    })
+                    .concatWith(Flux.defer(() -> {
+                        // 流正常结束后收尾：存会话 + 记日志 + 派发事件
+                        final int[] usage = {0, 0};
+                        finishStream(agent, tenantId, runId, traceId, model, userMessage,
+                                collected.toString(), session, usage, false, req.userId());
+                        return Flux.empty();
+                    }))
+                    .onErrorResume(err -> {
+                        // Flux 的 onErrorResume 回调给的是 Throwable，而管线与日志都按 Exception 建模
+                        // （非 Exception 的 Throwable，如 Error，包一层以保证兜底链路统一）。
+                        Exception e = err instanceof Exception ex ? ex : new RuntimeException(err);
+                        // 失败：先问 on_error 要兜底话术，拿到就把兜底当成一次流式输出推出去
+                        String fallback = agentPipeline.onStreamError(agent.getAgentId(), runId, streamMessage, e);
+                        if (fallback == null) {
+                            logTo(LogLevel.ERROR, LogCategory.agent,
+                                    "run.failed agent=" + agent.getName() + " model=" + model
+                                            + " error=" + e.getMessage() + " streaming=true",
+                                    traceId, runId, tenantId, agent.getAgentId(), stackTraceOf(e));
+                            notifyRunFailed(agent.getName(), model, e);
+                            return Flux.error(e);
+                        }
+                        logTo(LogLevel.WARN, LogCategory.agent,
+                                "run.degraded agent=" + agent.getName() + " streaming=true"
+                                        + " error=" + e.getMessage() + "（已由插件 on_error 兜底）",
+                                traceId, runId, tenantId, agent.getAgentId());
+                        persistExchange(session, tenantId, runId, userMessage, fallback, model);
+                        return Flux.fromIterable(chunkText(fallback));
+                    });
         });
+    }
+
+    /**
+     * 流式收尾：持久化会话 + 记完成日志 + 派发领域事件。
+     *
+     * <p>抽出来是因为「工具轮」与「真流式」两条分支的收尾完全一致 ——
+     * 分开写迟早会漏掉其中一条（旧实现的流式链路就既没存会话也没发事件）。</p>
+     */
+    private void finishStream(AgentDefinition agent, String tenantId, String runId, String traceId,
+                              String model, String userMessage, String answer, Session session,
+                              int[] usageTokens, boolean toolLoop, String userId) {
+        persistExchange(session, tenantId, runId, userMessage, answer, model);
+        // 向量记忆：把本轮用户消息异步索引进索引，供**其它会话**将来按语义召回。
+        // 放在落库之后：索引要靠回查刚写入的那条消息拿 messageId。
+        if (session != null) {
+            indexConversationMemory(tenantId, userId, session.getSessionId(), userMessage);
+        }
+        logTo(LogLevel.INFO, LogCategory.agent, "run.completed agent=" + agent.getName()
+                        + " model=" + model + " streaming=true toolLoop=" + toolLoop
+                        + " shortCircuit=false",
+                traceId, runId, tenantId, agent.getAgentId());
+        publishAgentEvent(EventTypes.AGENT_RUN_COMPLETED, tenantId, agent.getAgentId(), runId,
+                DomainEvent.payload(
+                        "agent_id", agent.getAgentId(),
+                        "agent_name", agent.getName(),
+                        "model", model,
+                        "streaming", Boolean.TRUE,
+                        "short_circuited", Boolean.FALSE,
+                        "prompt_tokens", usageTokens == null ? 0 : usageTokens[0],
+                        "completion_tokens", usageTokens == null ? 0 : usageTokens[1]));
+    }
+
+    /** 保存一轮对话（失败不阻断，流式与非流式共用）。 */
+    private void persistExchange(Session session, String tenantId, String runId,
+                                 String userMessage, String reply, String model) {
+        if (session == null || sessionService == null) {
+            return;
+        }
+        try {
+            sessionService.recordExchange(tenantId, session.getSessionId(), runId, userMessage, reply, model);
+        } catch (Exception e) {
+            log.warn("Failed to persist streaming session exchange: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 把完整文本切成小块，模拟流式推送。
+     *
+     * <p>用于「工具轮」分支：那一段必须等工具往返完成才有最终文本，没法真流式；
+     * 直接一次性推出整段，用户会看到长时间空白后文字突然整块出现。切成小块至少
+     * 让渲染是渐进的（且前端无需区分两种来源）。</p>
+     */
+    private static List<AgentRunResponse.Output> chunkText(String text) {
+        if (text == null || text.isEmpty()) {
+            return List.of();
+        }
+        int step = 24;
+        List<AgentRunResponse.Output> out = new ArrayList<>();
+        for (int i = 0; i < text.length(); i += step) {
+            out.add(new AgentRunResponse.Output("assistant",
+                    text.substring(i, Math.min(text.length(), i + step)), null));
+        }
+        return out;
     }
 
     /**

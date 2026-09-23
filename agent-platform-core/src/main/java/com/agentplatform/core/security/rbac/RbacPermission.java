@@ -88,7 +88,29 @@ public enum RbacPermission {
     // 读码以 :read 结尾 → 自动进 readOnlyCodes()，三个内置角色都能看（报表是"给人看的"）。
     // **刻意不设 report:manage**：报表只有查询聚合、不改任何数据，做不出"写操作"这件事，
     // 加一个权限码只会让清单变长而没有实际管控对象。
-    REPORT_READ("report:read", "查看统计报表", "运维");
+    REPORT_READ("report:read", "查看统计报表", "运维"),
+
+    // ---- 消息通知 ----
+    // **新建「通知」分组**，不塞进"运维/系统管理"：通知是"每个人都会用"的功能，
+    // 归到运维分组会让它在权限树里显得像管理员专属。
+    // 读码以 :read 结尾 → 自动进 readOnlyCodes()，三个内置角色都能看**自己的**通知。
+    // ⚠️ 注意："只能看自己的"这件事靠**仓储方法签名**强制（查询必带 recipientId），
+    // 不靠权限码 —— 权限码只决定"能不能用通知功能"，不决定"能看谁的通知"。
+    // 写码只有"清理"一个动作：本模块刻意不做"发给他人"、也不做广播
+    //（广播的一行记录被多人共享，已读状态会互相污染）。
+    NOTICE_READ("notice:read", "查看消息通知", "通知"),
+    NOTICE_MANAGE("notice:manage", "清理消息通知", "通知"),
+
+    // ---- 长期记忆（个人画像）----
+    // 同样是独立分组：画像属于"每个人都会用"的个人功能，不该塞进运维/系统管理。
+    // 读码以 :read 结尾 → 自动进 readOnlyCodes()，三个内置角色都能看**自己的**画像。
+    // ⚠️ 与通知同理："只能看自己的"靠**请求身份**（X-User-Id，由 JwtAuthFilter 用 token
+    //    覆盖写入、伪造不了）+ **仓储方法签名**（查询必带 tenantId + userId）强制，
+    //    权限码只决定"能不能用画像功能"，不决定"能看谁的画像"。
+    // ****manage 刻意不进 systemCodes()**：编辑自己的画像属于个人操作，
+    //    operator 也该有；viewer 作为只读角色不给（与 notice:manage 的处理一致）。
+    PROFILE_READ("profile:read", "查看个人画像", "长期记忆"),
+    PROFILE_MANAGE("profile:manage", "编辑个人画像", "长期记忆");
 
     private final String code;
     private final String label;
@@ -142,6 +164,7 @@ public enum RbacPermission {
      * operator 与 viewer 都该有；只有 {@code DICT_WRITE} 需要收紧到 admin。</p>
      */
     public static Set<String> systemCodes() {
-        return Set.of(USER_MANAGE.code, ROLE_MANAGE.code, DICT_WRITE.code, AUDIT_MANAGE.code);
+        return Set.of(USER_MANAGE.code, ROLE_MANAGE.code, DICT_WRITE.code, AUDIT_MANAGE.code,
+                NOTICE_MANAGE.code);
     }
 }

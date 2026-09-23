@@ -12,7 +12,14 @@
 #     -d '{"agent_id":"<agent_id>","config":{"rules":{"营业时间":"9:00-18:00"}}}'
 #
 # 注意：entry.main_class 指向的类必须 implements Plugin 体系中的一个可用接口
-# （AgentHook / ToolProvider），只实现 Plugin 会 attach 成功但什么都不做。
+# （AgentHook / ToolProvider / ResourceProvider），只实现 Plugin 会 attach 成功但什么都不做。
+#
+# 可用的钩子点（2026-09-22 核实）：
+#   before_llm    ✅ 短路 / 改写输入
+#   after_llm     ✅ 附加产物（改不了正文）
+#   before_output ✅ 替换最终输出（脱敏 / 合规）
+#   on_error      ✅ 兜底回复
+#   on_attach / on_detach ❌ 不触发，请直接用 Plugin.onAttach/onDetach
 
 id: example_keyword_reply
 name: 示例·关键词直答

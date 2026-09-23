@@ -15,8 +15,9 @@ import java.util.List;
  * <h3>两个关键差异（与钩子相比）</h3>
  * <ol>
  *   <li>工具是<b>按需调用</b>的，由 LLM 自己决定；每次回复都会跑的是钩子。</li>
- *   <li>触发条件更苛刻：聊天页要打开「工具」开关（请求体 {@code tools.enabled=true}），
- *       并且必须是<b>非流式</b>（工具循环 {@code runToolLoop} 只挂在 {@code AgentRuntimeService.run()} 上）。</li>
+ *   <li>触发条件更苛刻：聊天页要打开「工具」开关（请求体 {@code tools.enabled=true}）。
+ *       <b>（2026-09-22 更新）</b>流式链路也已支持工具调用 —— {@code runStream()} 会先以非流式
+ *       跑完工具循环、再把最终答复分块推流，所以不再要求"必须关闭流式"。</li>
  * </ol>
  *
  * <h3>写工具时务必注意</h3>

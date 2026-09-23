@@ -35,8 +35,12 @@ import java.util.Map;
  *   <li><b>只有非流式链路会触发</b>：宿主的 {@code AgentPipeline} 仅在
  *       {@code AgentRuntimeService.run()} 里被调用，{@code runStream()} 完全不经过它。
  *       也就是说聊天页的「流式」开关一旦打开，本插件的钩子会静默失效。</li>
- *   <li>{@link HookContext#agentId()} / {@link HookContext#runId()} 目前宿主恒传 {@code null}，
- *       metadata 恒为空 map —— 不要依赖它们。</li>
+ *   <li>{@code before_llm} 返回 {@code Map{input: "..."}} = <b>改写输入</b>（2026-09-22 新增）：
+ *       改写后的文本会传给 LLM，且后续钩子看到的是改写后的值。此前只有"短路"没有"改写"，
+ *       但旧文档把本钩子描述成"可改写请求"，与实现不符 —— 现已补齐。</li>
+ *   <li>{@link HookContext#agentId()} / {@link HookContext#runId()} <b>现在会如实填充</b>
+ *       （2026-09-20 修复，此前恒为 {@code null}）；{@code metadata} 也按钩子点带上下文，
+ *       例如 {@code on_error} 会带 {@code exception} / {@code error_message} / {@code original_input}。</li>
  *   <li>{@link #id()} 必须与 manifest 的 {@code id} 完全一致，否则 detach 时钩子反注册不掉
  *       （宿主按 {@code hook.id()} 匹配 pluginId）。</li>
  * </ul>

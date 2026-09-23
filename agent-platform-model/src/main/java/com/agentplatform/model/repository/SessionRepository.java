@@ -33,6 +33,14 @@ public interface SessionRepository extends JpaRepository<Session, Long> {
     Page<Session> findByTenantIdAndAgentIdAndUserId(
             String tenantId, String agentId, String userId, Pageable pageable);
 
+    /**
+     * 取某用户在租户下的**全部**会话（不分页）。
+     *
+     * <p>向量记忆「重建索引」用：{@code Message} 上没有 {@code user_id}，
+     * 消息的归属用户只能经会话推导，所以要先拿到这个用户的 sessionId 集合。</p>
+     */
+    java.util.List<Session> findByTenantIdAndUserId(String tenantId, String userId);
+
     Page<Session> findByTenantIdAndAgentId(String tenantId, String agentId, Pageable pageable);
 
     Page<Session> findByTenantId(String tenantId, Pageable pageable);

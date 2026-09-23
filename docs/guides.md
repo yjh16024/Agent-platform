@@ -3,7 +3,7 @@
 > **职责**：怎么扩展、怎么部署、怎么演示、怎么观测。**不重复**已实现功能清单与技术设计
 > （那两份属内部资料，不随本仓库发布）。
 > 环境变量的**完整权威清单**在 [../README.md](../README.md) 的「配置」一节，本文只列部署相关补充。
-> 最后核实：**2026-09-18**。
+> 最后核实：**2026-09-22**（09-22 更新钩子返回值表的"流式下"可用性一列）。
 
 ---
 
@@ -68,10 +68,57 @@ public class WeatherTool implements Tool {
 走 `POST /api/v1/plugins/upload`（multipart：`manifest` 文本 + `jar` 文件），
 再 `POST /api/v1/plugins/{id}/attach`（body `{"agent_id":"..."}`）挂到智能体上。
 
-- Hook 约定：`before_llm` 返回 String = 短路；`after_llm` 返回 Map = 附加产物。
-  **目前只有这两个钩子点会被触发**（`HookPoint` 里的 `before_output` / `on_error` 等尚未接线，写了不会生效）。
-- **钩子与插件工具只在非流式链路生效**：`AgentPipeline` 仅由非流式的 `/agent/run` 调用，
-  界面上开了「流式」开关时插件会静默不生效。
+- **Hook 返回值约定（2026-09-22 补齐为 5 种可用语义）**：
+
+  | 钩子点 | 返回 | 效果 | 流式下 |
+  |---|---|---|---|
+  | `before_llm` | `String` | **短路**：不调 LLM，直接作为最终回复 | ✅ |
+  | `before_llm` | `Map{input}` | **改写输入**：改后文本传给 LLM，后续钩子看到的是新值 | ✅ |
+  | `after_llm` | `Map` | **附加产物**（如 `audio_url`）。注意：**改不了回复正文** | ❌ |
+  | `before_output` | `String` / `Map{output}` | **替换最终输出** —— 脱敏 / 合规改写 / 格式化的唯一落点 | ❌ |
+  | `on_error` | `String` / `Map{reply}` | **兜底回复**：LLM 异常时用它收场、异常不再上抛；返回 `null` 则照常上抛 | ✅ |
+
+  **⚠️ 最后一列是硬约束**：`after_llm` 与 `before_output` 在**流式**请求下不会执行 ——
+  流式内容正在逐块推给前端，后端此时改写也改不动已经显示出去的文字。
+  流式下确有输出治理需求时，请改用 `before_llm` **前置改写**（或要求走非流式）。
+  宿主在流式请求上检测到这两个钩子会打 WARN，便于定位"本地测好、一开流式就失效"。
+
+  `on_attach` / `on_detach` **不会触发**，生命周期回调请直接用 `Plugin.onAttach` / `onDetach`。
+  Map 形式的键有容错：`input` 也接受 `message`/`prompt`，`output` 也接受 `reply`/`text`/`content`。
+- **资源托管（`ResourceProvider`，2026-09-22 落地）**：插件用 `provideResources()` **纯声明**
+  自己提供的外部依赖（密钥 / 连接 / 客户端，类型见 `ResourceTypes`），用 `provide(id)` 惰性给出实体；
+  同一智能体下的其它插件通过 `ctx.registrar().resolveResource(id)` 取用。
+  ⚠️ **必须在 `onAttach` 期间解析并缓存** —— 归属判定依赖 attach 作用域，工具执行期再解析拿不到；
+  跨智能体不可见（挂到 A 的插件解析不到 B 的资源）。
+  示例见 `plugin-example` 的 `PiiRedactionPlugin` / `GracefulFallbackPlugin` / `ResourceVaultPlugin`。
+- **事件订阅（`EventSubscriber`，2026-09-22 落地）**：插件实现 `eventTypes()` 声明订阅哪些事件、
+  实现 `onEvent(event)` 处理。与钩子的区别 —— **钩子拦管线的特定环节（能改写输入输出），
+  事件订阅是"事已发生"的事后通知（改变不了已发生的事）**。
+
+  可订阅的事件类型（见 `EventTypes`）：
+  | 类型 | 含义 | 可被插件订阅 |
+  |---|---|---|
+  | `agent.run.completed` | 一次运行成功完成 | ✅ |
+  | `agent.run.failed` | 一次运行失败 | ✅ |
+  | `quota.exceeded` | 配额超限 | ❌ 租户级 |
+  | `permission.denied` | 权限被拒 | ❌ 租户级 |
+
+  ⚠️ **三条必须知道的约束**：
+  1. **只能订阅 agent 级事件**。`quota.exceeded` / `permission.denied` 没有 agent 维度，
+     派发给插件会**打破"插件按智能体隔离"**——那等于任意智能体上的插件都能监听全租户行为。
+     声明了不可订阅的类型不会报错（否则插件作者会以为整个插件都挂了），但收不到，注册时记 warn。
+  2. **只收到"挂载了本插件的那台智能体"的事件**：挂到 A 的插件收不到 B 的。
+  3. **`onEvent` 在发布线程上同步调用**，别做重活（长耗时 HTTP / 大文件写入）；
+     抛异常会被宿主捕获，不影响其它订阅者与主流程。
+
+  ⚠️ **事件类型是插件契约**：一旦有插件订阅，**只增不改**；要改就新增类型、旧类型保留一段时间再废弃。
+  `payload` 的 **key 同样是契约**，且应保持浅层（别塞实体对象）。
+
+  示例见 `plugin-example` 的 `RunFailureAlertPlugin`（订阅运行失败做告警，并用一个工具让效果可验证）。
+- **钩子与插件工具在流式链路上也已生效（2026-09-22 起）**：`runStream()` 此前只做裸模型调用，
+  导致「一开流式开关，工具与插件双双静默失效」；现已与非流式对齐。
+  **但流式下可用范围更小**：只有 `before_llm`（短路/改写）与 `on_error`（兜底）会触发，
+  `after_llm` / `before_output` 刻意不生效（见上方返回值表的"流式下"一列）。
 - 插件能力**按智能体隔离**：挂到 A 的插件只影响 A，不会波及其它智能体。
 - 卸载是**级联**的：该插件在所有智能体上的挂载会被一并取消（界面会先提示影响面）。
 - 插件经 `PluginClassLoader` 做类隔离，但 **`permissions` / `runtime` 目前仅是 manifest 里的声明字段，

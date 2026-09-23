@@ -183,17 +183,25 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
         if (req.maxTokens() != null) {
             body.put("max_tokens", req.maxTokens());
         }
-        java.util.List<Map<String, String>> messages = new java.util.ArrayList<>();
+        java.util.List<Map<String, Object>> messages = new java.util.ArrayList<>();
         if (req.systemPrompt() != null && !req.systemPrompt().isBlank()) {
             messages.add(Map.of("role", "system", "content", req.systemPrompt()));
         }
-        // 多轮历史（既有 user/assistant 消息，按时间顺序）
+        // 多轮历史（既有 user/assistant 消息，按时间顺序；含原生 function calling 的两跳消息）
         if (req.history() != null) {
             for (ModelAdapter.ChatMessage m : req.history()) {
-                messages.add(Map.of("role", m.role(), "content", m.content()));
+                Map<String, Object> msg = toOpenAiMessage(m);
+                if (msg != null) {
+                    messages.add(msg);
+                }
             }
         }
-        messages.add(Map.of("role", "user", "content", req.userMessage()));
+        // userMessage 允许为空：工具循环的第二轮起，本轮消息已全部通过 history 传入
+        // （模型请求工具 → 我们把 assistant(tool_calls) + tool 结果放进 history，
+        //  此时不该再补一条空的 user 消息，否则重发用户提问会把上下文搞乱）。
+        if (req.userMessage() != null && !req.userMessage().isBlank()) {
+            messages.add(Map.of("role", "user", "content", req.userMessage()));
+        }
         body.put("messages", messages);
         // 工具声明（function calling）——tools 为空时不启用，保证旧行为不变
         if (req.tools() != null && !req.tools().isEmpty()) {
@@ -218,6 +226,57 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
             body.putAll(req.extra());
         }
         return body;
+    }
+
+    /**
+     * 把统一消息转成 OpenAI 协议的消息对象（含原生 function calling 的两跳）。
+     *
+     * <p>为什么不用 {@code Map.of(...)}：它**不接受 null 值**，而
+     * {@code role=assistant} 且只请求工具时 {@code content} 恰恰是 null（这正是 OpenAI 的合法形态）；
+     * {@code role=tool} 的消息还需要额外的 {@code tool_call_id} 字段 —— 键不同，
+     * 只能是键值不固定的 {@code Map<String,Object>}。</p>
+     *
+     * <p>三种形态：</p>
+     * <ul>
+     *   <li>{@code assistant} + toolCalls → {@code {role, content(可 null), tool_calls[]}}；</li>
+     *   <li>{@code tool} → {@code {role, tool_call_id, content}}（content 不可为 null，退化成空串）；</li>
+     *   <li>其余 → {@code {role, content}}。</li>
+     * </ul>
+     *
+     * <p>（包级可见而非 private：这是协议正确性最容易出错的一环，需要单测覆盖。）</p>
+     */
+    Map<String, Object> toOpenAiMessage(ModelAdapter.ChatMessage m) {
+        if (m == null) {
+            return null;
+        }
+        Map<String, Object> msg = new LinkedHashMap<>();
+        if (m.hasToolCalls()) {
+            msg.put("role", "assistant");
+            msg.put("content", m.content());
+            List<Map<String, Object>> calls = new java.util.ArrayList<>();
+            for (ModelAdapter.ToolCall c : m.toolCalls()) {
+                Map<String, Object> fn = new LinkedHashMap<>();
+                fn.put("name", c.name());
+                // OpenAI 要求 arguments 是**字符串**（JSON 文本），不是对象
+                fn.put("arguments", c.arguments() == null ? "{}" : c.arguments().toString());
+                Map<String, Object> call = new LinkedHashMap<>();
+                call.put("id", c.id());
+                call.put("type", "function");
+                call.put("function", fn);
+                calls.add(call);
+            }
+            msg.put("tool_calls", calls);
+            return msg;
+        }
+        if (m.isToolResult()) {
+            msg.put("role", "tool");
+            msg.put("tool_call_id", m.toolCallId() == null ? "" : m.toolCallId());
+            msg.put("content", m.content() == null ? "" : m.content());
+            return msg;
+        }
+        msg.put("role", m.role());
+        msg.put("content", m.content() == null ? "" : m.content());
+        return msg;
     }
 
     /**

@@ -138,10 +138,56 @@ public interface ModelAdapter {
     /**
      * 通用对话消息（多轮历史项）。
      *
-     * @param role    system / user / assistant
-     * @param content 文本内容
+     * <h3>为什么需要 {@code toolCallId} 与 {@code toolCalls}（2026-09-22 加）</h3>
+     * 原生 function calling 是**两跳**协议，缺少任一跳厂商都会直接 400：
+     * <ol>
+     *   <li>模型先返回 {@code assistant} 消息，其 {@code tool_calls} 里带若干 {@link ToolCall}（各有 {@code id}）；</li>
+     *   <li>宿主执行完工具后，必须回一条 <b>{@code role="tool"}</b> 的消息，
+     *       用 {@code tool_call_id} 指回第 1 跳里那次调用。</li>
+     * </ol>
+     * 此前平台把工具结果**拼成文本追加到用户消息**（见 {@code AgentRuntimeService.runToolLoop} 的旧注释），
+     * 因此不需要这两跳、{@link ChatMessage} 也就只有 role/content。
+     * 改为原生协议后必须能表达「哪次调用的结果」，故补上这两个字段。
+     *
+     * <p>各角色对字段的使用：</p>
+     * <table border="1">
+     *   <caption>role 与字段对应关系</caption>
+     *   <tr><th>role</th><th>content</th><th>toolCallId</th><th>toolCalls</th></tr>
+     *   <tr><td>system / user</td><td>正文</td><td>空</td><td>空</td></tr>
+     *   <tr><td>assistant（普通）</td><td>正文</td><td>空</td><td>空</td></tr>
+     *   <tr><td>assistant（请求工具）</td><td>可能为空</td><td>空</td><td><b>有值</b></td></tr>
+     *   <tr><td><b>tool（工具执行结果）</b></td><td>结果的文本形式</td><td><b>必有值</b></td><td>空</td></tr>
+     * </table>
+     *
+     * @param role       system / user / assistant / tool
+     * @param content    文本内容（{@code role=assistant} 且只请求工具时可能为空）
+     * @param toolCallId 仅 {@code role=tool} 使用：对应 {@link ToolCall#id()}
+     * @param toolCalls  仅 {@code role=assistant} 使用：本轮请求的工具调用
      */
-    record ChatMessage(String role, String content) {
+    record ChatMessage(String role, String content, String toolCallId, List<ToolCall> toolCalls) {
+
+        /** 兼容旧调用：普通文本消息。 */
+        public ChatMessage(String role, String content) {
+            this(role, content, null, List.of());
+        }
+
+        /** 工具执行结果消息（回灌给模型）。 */
+        public static ChatMessage tool(String toolCallId, String content) {
+            return new ChatMessage("tool", content, toolCallId, List.of());
+        }
+
+        /** 请求了工具的 assistant 消息（回灌时需原样带回，模型据此对齐 tool_call_id）。 */
+        public static ChatMessage assistantToolCalls(List<ToolCall> calls) {
+            return new ChatMessage("assistant", null, null, calls == null ? List.of() : calls);
+        }
+
+        public boolean isToolResult() {
+            return "tool".equalsIgnoreCase(role);
+        }
+
+        public boolean hasToolCalls() {
+            return toolCalls != null && !toolCalls.isEmpty();
+        }
     }
 
     /**

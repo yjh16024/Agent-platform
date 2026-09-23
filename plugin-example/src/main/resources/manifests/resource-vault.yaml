@@ -1,0 +1,36 @@
+# 示例插件 7 —— 资源托管（ResourceProvider + ToolProvider 并存）
+#
+# 一个插件可以同时贡献多类能力：本插件既登记资源（给别人用），又提供工具（给 LLM 用）。
+#
+# ★ 使用方注意：resolveResource 依赖 attach 作用域，必须在 onAttach 期间解析并缓存，
+#   不能等到工具执行时再解析（那时没有作用域）。
+#
+# 上传：
+#   POST /api/v1/plugins/upload
+#     -F "manifest=<本文件内容>"
+#     -F "jar=@target/plugin-example-1.1.0.jar"
+#
+# 挂载：
+#   POST /api/v1/plugins/example_resource_vault/attach
+#     -d '{"agent_id":"<agent_id>"}'
+
+id: example_resource_vault
+name: 示例·资源托管
+version: 1.0.0
+description: 把外部依赖登记为资源供同智能体的插件复用，并用一个工具证明资源拿到了（演示 ResourceProvider）
+
+author: 白雾平台
+entry:
+  type: java
+  main_class: com.example.plugin.ResourceVaultPlugin
+
+contributes:
+  resources:
+    - resource_id: example_vault:visitor_id
+      resource_type: secret
+    - resource_id: example_vault:pricing_cache
+      resource_type: datasource
+  tools:
+    - example_vault_lookup
+
+permissions: {}

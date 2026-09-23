@@ -136,6 +136,12 @@ public class SpringAiModelAdapter implements ModelAdapter {
                 if (m == null || m.content() == null || m.content().isBlank()) {
                     continue;
                 }
+                // 原生 function calling 的 tool 结果消息**不在此通道消费**：Spring AI 有它自己的
+                // 工具执行 Advisor 链，本适配器只做「system / user / assistant」文本回放。
+                // （不加这一条，工具结果会被当成一条 UserMessage 塞进上下文，污染对话。）
+                if (m.isToolResult()) {
+                    continue;
+                }
                 if ("assistant".equalsIgnoreCase(m.role())) {
                     messages.add(new AssistantMessage(m.content()));
                 } else if ("user".equalsIgnoreCase(m.role())) {

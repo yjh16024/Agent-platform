@@ -200,17 +200,15 @@ public class AnthropicAdapter implements ModelAdapter {
         if (req.systemPrompt() != null && !req.systemPrompt().isBlank()) {
             body.put("system", req.systemPrompt());
         }
-        // 多轮历史：system 已在顶层，历史与当前用户消息归一为 user/assistant 消息序列
-        List<Map<String, String>> messages = new ArrayList<>();
-        if (req.history() != null) {
-            for (ChatMessage m : req.history()) {
-                if ("system".equals(m.role())) {
-                    continue; // Anthropic 的 system 在顶层字段，跳过消息里的 system
-                }
-                messages.add(Map.of("role", m.role(), "content", m.content()));
-            }
+        // 多轮历史：system 已在顶层，历史与当前用户消息归一为 user/assistant 消息序列。
+        // 原生 function calling 的两跳在这里的形态与 OpenAI 不同（见 toAnthropicMessages）：
+        // assistant 的 tool_use 是 content block；工具结果**不是** role=tool，
+        // 而是塞进一条 role=user 消息的 tool_result block 里，且用 tool_use_id 对齐。
+        List<Map<String, Object>> messages = toAnthropicMessages(req.history());
+        // userMessage 允许为空：工具循环第二轮起，本轮全部消息已由 history 携带
+        if (req.userMessage() != null && !req.userMessage().isBlank()) {
+            messages.add(Map.of("role", "user", "content", req.userMessage()));
         }
-        messages.add(Map.of("role", "user", "content", req.userMessage()));
         body.put("messages", messages);
         // 工具声明（function calling）——Anthropic 格式为平铺数组：name/description/input_schema
         if (req.tools() != null && !req.tools().isEmpty()) {
@@ -235,6 +233,76 @@ public class AnthropicAdapter implements ModelAdapter {
             body.putAll(req.extra());
         }
         return body;
+    }
+
+    /**
+     * 把统一消息序列转成 Anthropic 的 {@code messages[]}。
+     *
+     * <p>与 OpenAI 的三处关键差异（写错任何一处都会被上游 400 拒绝）：</p>
+     * <ol>
+     *   <li><b>没有 {@code role="tool"}</b> —— Anthropic 只有 user / assistant 两个角色。
+     *       工具结果必须作为**一条 {@code role="user"} 消息**发送，其 content 为该消息的
+     *       {@code tool_result} block，用 {@code tool_use_id} 指回上次调用；</li>
+     *   <li><b>连续的 tool_result 必须合并进同一条 user 消息</b>（Anthropic 要求同一轮的
+     *       多个工具结果成组出现），所以这里用 pending 列表攒着、遇到非 tool 消息才 flush；</li>
+     *   <li><b>{@code input} 传对象而不是字符串</b>（与 OpenAI 的 {@code arguments} 恰好相反）。</li>
+     * </ol>
+     *
+     * <p>（包级可见而非 private：这是协议正确性最容易出错的一环，需要单测覆盖。）</p>
+     */
+    List<Map<String, Object>> toAnthropicMessages(List<ChatMessage> history) {
+        List<Map<String, Object>> messages = new ArrayList<>();
+        if (history == null) {
+            return messages;
+        }
+        List<Map<String, Object>> pendingToolResults = null;
+        for (ChatMessage m : history) {
+            if (m == null || "system".equalsIgnoreCase(m.role())) {
+                continue; // Anthropic 的 system 在顶层字段，跳过消息里的 system
+            }
+            if (m.isToolResult()) {
+                if (pendingToolResults == null) {
+                    pendingToolResults = new ArrayList<>();
+                }
+                Map<String, Object> block = new LinkedHashMap<>();
+                block.put("type", "tool_result");
+                block.put("tool_use_id", m.toolCallId() == null ? "" : m.toolCallId());
+                block.put("content", m.content() == null ? "" : m.content());
+                pendingToolResults.add(block);
+                continue;
+            }
+            // 遇到非工具消息 → 先把挂起的工具结果冲出去（保证它们成组且顺序正确）
+            if (pendingToolResults != null) {
+                messages.add(Map.of("role", "user", "content", pendingToolResults));
+                pendingToolResults = null;
+            }
+            messages.add(toAnthropicMessage(m));
+        }
+        if (pendingToolResults != null) {
+            messages.add(Map.of("role", "user", "content", pendingToolResults));
+        }
+        return messages;
+    }
+
+    /** 单条消息 → Anthropic 形态（assistant 请求工具时 content 是 block 数组）。 */
+    private Map<String, Object> toAnthropicMessage(ChatMessage m) {
+        if (m.hasToolCalls()) {
+            List<Map<String, Object>> blocks = new ArrayList<>();
+            if (m.content() != null && !m.content().isBlank()) {
+                blocks.add(Map.of("type", "text", "text", m.content()));
+            }
+            for (ModelAdapter.ToolCall c : m.toolCalls()) {
+                Map<String, Object> block = new LinkedHashMap<>();
+                block.put("type", "tool_use");
+                block.put("id", c.id() == null ? "" : c.id());
+                block.put("name", c.name());
+                // 注意：这里与 OpenAI 相反 —— input 必须是**对象**，不是 JSON 字符串
+                block.put("input", c.arguments() == null ? Map.of() : c.arguments());
+                blocks.add(block);
+            }
+            return Map.of("role", "assistant", "content", blocks);
+        }
+        return Map.of("role", m.role(), "content", m.content() == null ? "" : m.content());
     }
 
     private Response post(String url, Map<String, Object> body, String apiKey) throws IOException {
