@@ -110,7 +110,16 @@ public enum RbacPermission {
     // ****manage 刻意不进 systemCodes()**：编辑自己的画像属于个人操作，
     //    operator 也该有；viewer 作为只读角色不给（与 notice:manage 的处理一致）。
     PROFILE_READ("profile:read", "查看个人画像", "长期记忆"),
-    PROFILE_MANAGE("profile:manage", "编辑个人画像", "长期记忆");
+    PROFILE_MANAGE("profile:manage", "编辑个人画像", "长期记忆"),
+
+    // ---- 工具审批 ----
+    // 独立分组：这是"有副作用的工具调用必须经人放行"的那道闸门，
+    // 与"管理工具"（tool:write）不是一回事 —— 前者管的是**某一次调用的放行**，
+    // 后者管的是**工具本身的登记**。
+    // 读码以 :read 结尾 → 自动进 readOnlyCodes()，三个内置角色都能看**自己的**待审批。
+    // ⚠️ 与通知/画像同理："只能批自己的"靠请求身份 + 仓储方法签名强制，不靠权限码。
+    APPROVAL_READ("approval:read", "查看工具审批", "工具审批"),
+    APPROVAL_MANAGE("approval:manage", "批准或拒绝工具调用", "工具审批");
 
     private final String code;
     private final String label;

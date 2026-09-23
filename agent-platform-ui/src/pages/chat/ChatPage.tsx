@@ -5,11 +5,11 @@ import {
 import { SendOutlined, PlusOutlined, ClearOutlined, PaperClipOutlined, BookOutlined, ArrowUpOutlined } from '@ant-design/icons';
 import { listAgents } from '../../api/agents';
 import { runAgent, runAgentStream, RunMessage, MessagePart } from '../../api/run';
-import { importConversation } from '../../api/sessions';
 import { uploadFile } from '../../api/files';
 import { AgentResponse, FileAsset } from '../../api/types';
 import { useAppStore } from '../../store/appStore';
 import { useChatStore, ChatMsg } from '../../store/chatStore';
+import ToolCallList from './ToolCallList';
 import { composerCardHooks, composerSeatHooks, conversationHooks, HOST_ATTRS, SLOTS } from '../../skin/contract';
 // composerSeatHooks 用在 composer 内部（座位层），见该处说明
 import {
@@ -51,7 +51,7 @@ interface Attachment extends FileAsset {
  */
 export default function ChatPage() {
   const { tenantId } = useAppStore();
-  const { msgsOf, append, replace, reset } = useChatStore();
+  const { msgsOf, append, replace, reset, sessionOf } = useChatStore();
   const [agents, setAgents] = useState<AgentResponse[]>([]);
   const [agentId, setAgentId] = useState<string | undefined>();
   const [input, setInput] = useState('');
@@ -165,28 +165,48 @@ export default function ChatPage() {
     const rag = kbIds.length > 0 ? { useRag: true, knowledgeBaseIds: kbIds } : undefined;
     const tools = toolsEnabled ? { enabled: true, allowed: [] as string[] } : undefined;
 
+    /*
+      运行时会话 ID（**必须带上**）。
+      后端 SessionService.resolve() 在 sessionId 为空时直接返回 null，后果是连锁的：
+      消息不落库、历史不回放、短期缓存/中期摘要拿不到会话、向量记忆不索引、
+      工具审批无法按会话关联 —— 也就是"四层记忆"整条失效。
+      同一智能体跨轮复用同一个 ID（存在 store 里，刷新也还在），点「新对话」时更换。
+    */
+    const sessionId = sessionOf(agentId);
+
     setBusy(true);
     try {
       if (stream) {
         let acc = '';
         append(agentId, { role: 'assistant', content: '' });
-        await runAgentStream(agentId, payload, (delta) => {
+        const outcome = await runAgentStream(agentId, payload, (delta) => {
           acc += delta;
           const copy = [...msgsOf(agentId)];
           copy[copy.length - 1] = { role: 'assistant', content: acc };
           replace(agentId, copy);
-        }, rag, tools);
+        }, rag, tools, sessionId);
         const finalMsgs = [...msgsOf(agentId)];
-        if (finalMsgs.length > 0 && finalMsgs[finalMsgs.length - 1].content === '') {
-          finalMsgs[finalMsgs.length - 1] = { role: 'assistant', content: '(空)' };
+        const lastIdx = finalMsgs.length - 1;
+        if (lastIdx >= 0 && finalMsgs[lastIdx].role === 'assistant') {
+          const last = { ...finalMsgs[lastIdx] };
+          if (last.content === '') {
+            last.content = '(空)';
+          }
+          // 工具调用记录（可视化）：流结束时后端一次性给出，挂到最后一条助手消息上。
+          // 不用「先 append 再逐个 replace」的方式 —— 那会让界面在流式结束后再闪一次。
+          if (outcome.toolCalls.length > 0) {
+            last.toolCalls = outcome.toolCalls;
+          }
+          finalMsgs[lastIdx] = last;
           replace(agentId, finalMsgs);
         }
       } else {
-        const r = await runAgent(agentId, payload, rag, tools);
+        const r = await runAgent(agentId, payload, rag, tools, sessionId);
         append(agentId, {
           role: 'assistant',
           content: r.output?.content ?? '(空)',
           refs: r.references && r.references.length > 0 ? r.references : undefined,
+          toolCalls: r.toolCalls && r.toolCalls.length > 0 ? r.toolCalls : undefined,
         });
       }
     } catch (e) {
@@ -194,31 +214,27 @@ export default function ChatPage() {
     } finally {
       setBusy(false);
     }
-  }, [agentId, input, attachments, stream, toolsEnabled, msgsOf, append, replace, agents]);
+  }, [agentId, input, attachments, stream, toolsEnabled, msgsOf, append, replace, agents, sessionOf]);
 
-  /** 开始新对话：先把本轮保存进会话历史，再清空本地。 */
+  /**
+   * 开始新对话：清空本地记录并换一个新的运行时会话 ID。
+   *
+   * <p>⚠️ <b>2026-09-23 行为变更：不再把当前对话「导入」成一条新会话。</b>
+   * 以前消息只存在浏览器里（因为没有 sessionId，后端根本没建会话），
+   * 所以需要这一步显式归档；现在前端会把 sessionId 传给后端、
+   * 每轮消息**本身就已经落进会话**了 —— 再导入一次会得到两条内容相同的记录，
+   * 而且新会话的 ID 与后端正在用的那个也对不上。</p>
+   */
   const newConversation = useCallback(async () => {
-    const current = msgsOf(agentId);
     if (!agentId) return;
-    if (current.length > 0) {
-      try {
-        const firstUser = current.find((m) => m.role === 'user')?.content ?? '';
-        await importConversation({
-          agentId,
-          userId: 'demo-user',
-          title: firstUser.slice(0, 50) || '未命名对话',
-          messages: current.map((m) => ({ role: m.role, content: m.content })),
-        });
-        message.success(`本轮对话（${current.length} 条）已保存到会话历史`);
-      } catch (e) {
-        message.error(`保存会话失败：${(e as Error).message}`);
-        return;
-      }
+    if (msgsOf(agentId).length === 0) {
+      message.info('当前没有消息');
+      return;
     }
     reset(agentId);
     setInput('');
     setAttachments([]);
-    message.info('已开始新对话');
+    message.success('已开始新对话，上一轮可在「会话历史」中查看');
   }, [agentId, msgsOf, reset]);
 
   const discardConversation = () => {
@@ -567,7 +583,12 @@ export default function ChatPage() {
                         </Space>
                       </div>
                     )}
-                  </div>
+                  {/*
+                    工具调用可视化：让用户看到"它查过什么"，而不只是最终答案。
+                    默认折叠、且无调用时组件自身返回 null —— 见 ToolCallList 的类注释。
+                  */}
+                  {m.role === 'assistant' && <ToolCallList calls={m.toolCalls} />}
+                </div>
               </div>
             ))}
           </div>

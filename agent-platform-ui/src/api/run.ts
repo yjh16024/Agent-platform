@@ -18,6 +18,32 @@ export interface RunReference {
   score?: number;
 }
 
+/**
+ * 一次工具调用的记录（对应后端 ToolCallRecord）。
+ *
+ * <p>它解决的是"用户看不见过程"：在此之前 agent 在后台 grep 了 200 个文件、
+ * 读了 3 个、改写了 1 个，界面上只是"想了一会儿然后给出答案" ——
+ * 用户无法判断它是查过了才回答、还是压根没查就编。</p>
+ *
+ * <p>`arguments` / `output` 都已由**后端**截断（入参 2000 字符、结果 4000 字符），
+ * 前端不需要再处理体积。</p>
+ */
+export interface ToolCallInfo {
+  name: string;
+  /** 入参 JSON 文本（无参时为 "{}"）。 */
+  arguments?: string;
+  success?: boolean;
+  output?: string;
+  error?: string;
+  latencyMs?: number;
+}
+
+/** 流式运行的收尾信息。 */
+export interface StreamOutcome {
+  /** 本轮的工具调用记录；无调用时为空数组（便于调用方直接 length 判断）。 */
+  toolCalls: ToolCallInfo[];
+}
+
 export interface RunResponse {
   runId?: string;
   sessionId?: string;
@@ -27,6 +53,8 @@ export interface RunResponse {
   usage?: { promptTokens?: number; completionTokens?: number; totalCostUsd?: number };
   references?: RunReference[];
   plugins?: unknown[];
+  /** 本轮工具调用记录（工具调用可视化）；无调用时不出现。 */
+  toolCalls?: ToolCallInfo[];
 }
 
 /** RAG 请求配置：useRag 置 true 并指定知识库后，对话会自动检索并返回引用。 */
@@ -44,11 +72,26 @@ export interface ToolsRequest {
 }
 
 // 非流式：/agent/run 返回裸 JSON（不套 ApiResponse），raw=true
-export function runAgent(agentId: string, messages: RunMessage[], rag?: RagRequest, tools?: ToolsRequest) {
+export function runAgent(
+  agentId: string,
+  messages: RunMessage[],
+  rag?: RagRequest,
+  tools?: ToolsRequest,
+  /**
+   * 运行时会话 ID（**必须传**）。
+   *
+   * <p>后端 `SessionService.resolve()` 在 sessionId 为空时**直接返回 null**（不建会话），
+   * 于是消息不落库、历史不回放、短期缓存/中期摘要拿不到会话、向量记忆不索引、
+   * 工具审批无法按会话关联 —— 整个记忆体系都会失效。
+   * 该值由 `chatStore.sessionOf(agentId)` 生成并跨轮复用，点「新对话」时更换。</p>
+   */
+  sessionId?: string,
+) {
   return http.post<RunResponse>(
     '/api/v1/agent/run',
     {
       agentId,
+      sessionId,
       mode: 'agent',
       messages,
       context: rag ? { useRag: rag.useRag ?? true, rag: { knowledgeBaseIds: rag.knowledgeBaseIds ?? [], topK: rag.topK ?? 5, scoreThreshold: rag.scoreThreshold ?? 0.0 } } : undefined,
@@ -67,7 +110,9 @@ export async function runAgentStream(
   onDelta: (text: string) => void,
   rag?: RagRequest,
   tools?: ToolsRequest,
-): Promise<void> {
+  /** 运行时会话 ID（理由同 {@link runAgent}，必须传，否则记忆体系整条失效）。 */
+  sessionId?: string,
+): Promise<StreamOutcome> {
   const h: Record<string, string> = {
     'Content-Type': 'application/json',
     'X-Tenant-Id': getTenantId(),
@@ -80,6 +125,7 @@ export async function runAgentStream(
     headers: h,
     body: JSON.stringify({
       agentId,
+      sessionId,
       mode: 'agent',
       messages,
       stream: true,
@@ -94,6 +140,8 @@ export async function runAgentStream(
   const reader = res.body.getReader();
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
+  /** 本轮的工具调用记录：从 run.completed 帧取；无调用时保持空数组。 */
+  let toolCalls: ToolCallInfo[] = [];
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -119,6 +167,19 @@ export async function runAgentStream(
         }
         throw new Error(msg || '流式运行出错');
       }
+      // 结束帧：后端在工具往返跑完后一次性给出本轮的工具调用记录。
+      // 注意 continue —— 它的 data 不是文本增量，不能落进下面的 onDelta。
+      if (event === 'run.completed') {
+        try {
+          const obj = JSON.parse(data || '{}');
+          if (Array.isArray(obj?.toolCalls)) {
+            toolCalls = obj.toolCalls as ToolCallInfo[];
+          }
+        } catch {
+          /* 结束帧解析失败不影响已收到的文本 */
+        }
+        continue;
+      }
       if (!data) continue;
       try {
         const obj = JSON.parse(data);
@@ -130,4 +191,5 @@ export async function runAgentStream(
       }
     }
   }
+  return { toolCalls };
 }

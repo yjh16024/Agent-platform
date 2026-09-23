@@ -26,6 +26,7 @@ import RoleManagePage from './pages/system/RoleManagePage';
 import DictManagePage from './pages/system/DictManagePage';
 import NotificationsPage from './pages/notifications/NotificationsPage';
 import MemoryPage from './pages/memory/MemoryPage';
+import ApprovalPage from './pages/ops/ApprovalPage';
 
 export default function App() {
   return (
@@ -64,6 +65,7 @@ export default function App() {
         <Route path="/system/dicts" element={<DictManagePage />} />
         <Route path="/notifications" element={<NotificationsPage />} />
         <Route path="/memory" element={<MemoryPage />} />
+        <Route path="/approvals" element={<ApprovalPage />} />
       </Route>
     </Routes>
   );

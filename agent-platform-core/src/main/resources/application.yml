@@ -114,6 +114,31 @@ agent-platform:
   # 生产环境务必覆盖（建议 32 字节随机串）；dev 默认值仅供本地/演示，泄露则密文可解。
   secrets:
     model-key: ${MODEL_KEY_ENC_KEY:change-me-model-key-encryption-32b}
+  # ---- 智能体文件工作区（fs_* 工具的安全边界）----
+  # 智能体只能读写 root 目录内的文件，越界一律拒绝（含符号链接绕过）。
+  # 默认指向一个**空目录**，也就是"默认什么也读不到"—— 要让它帮你读改代码，
+  # 请显式指到你项目的根目录，例如：
+  #   AGENT_WORKSPACE_ROOT=D:/my-project   或   AGENT_WORKSPACE_ROOT=./  （当前目录）
+  agent:
+    workspace:
+      enabled: ${AGENT_WORKSPACE_ENABLED:true}
+      root: ${AGENT_WORKSPACE_ROOT:./data/workspace}
+      max-read-bytes: 262144         # 单文件读取上限（256KB）
+      max-entries: 500               # 单次目录列举 / glob 条目上限
+      max-matches: 200               # 单次 grep 命中上限
+      max-line-chars: 300            # grep 单行输出截断长度
+      # 改前快照目录（回滚用）。⚠️ 务必放在**工作区之外**，
+      # 否则 fs_glob / fs_grep 会把备份当成项目文件扫出来（本服务检测到会打 WARN）。
+      snapshot-dir: ${AGENT_SNAPSHOT_DIR:./data/snapshots}
+      snapshot-keep-days: 7          # 快照保留天数（撤销凭据，不是审计资料）
+    approval:
+      # 工具审批：写类工具会先提交申请，经人放行后才执行。
+      # blocking-timeout-seconds > 0 时进入「就地确认」：工具调用会阻塞等用户点确认，
+      # 界面上立刻弹出确认框，点完工具带着真实结果继续（模型侧无感）。
+      # 超时未确认则降级为两步式（工具返回"已提交待审批"，用户稍后到工具审批页处理）——
+      # 工作流 / 定时任务这类无人场景走的就是这条降级路径。
+      blocking-timeout-seconds: ${AGENT_APPROVAL_TIMEOUT:300}
+      keep-days: 7                   # 待审批保留期，超期自动作废（安全阀）
   plugin:
     artifact-dir: ${PLUGIN_ARTIFACT_DIR:./data/plugins}
   # ---- Skills 目录（Agent Skills 开放标准布局）----

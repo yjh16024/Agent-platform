@@ -5,6 +5,7 @@ import com.agentplatform.common.util.IdGenerator;
 import com.agentplatform.common.util.TraceContext;
 import com.agentplatform.core.agent.dto.AgentRunRequest;
 import com.agentplatform.core.agent.dto.AgentRunResponse;
+import com.agentplatform.core.agent.dto.RunStreamEvent;
 import com.agentplatform.core.agent.service.AgentService;
 import com.agentplatform.core.log.LogCategory;
 import com.agentplatform.core.log.LogEvent;
@@ -51,9 +52,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
+import reactor.core.scheduler.Scheduler;
+import reactor.core.scheduler.Schedulers;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.concurrent.Executors;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
@@ -94,6 +98,30 @@ public class AgentRuntimeService {
     /** 向量记忆（历史对话语义召回，可选：未注入时不召回，保持原行为与单测可用）。 */
     @Autowired(required = false)
     private com.agentplatform.core.memory.ConversationMemoryService conversationMemoryService;
+
+    /**
+     * 工具调用记录收集器（前端「工具调用可视化」的数据来源）。
+     *
+     * <p>可选注入：缺失时退化为"不记录"，**不影响运行本身** ——
+     * 它只服务于展示，不该成为能否跑通对话的条件。</p>
+     */
+    @Autowired(required = false)
+    private com.agentplatform.core.tool.executor.ToolCallCollector toolCallCollector;
+
+    /**
+     * 流式链路要切到的调度器：**每个订阅一个虚拟线程**。
+     *
+     * <p>为什么不用 {@code Schedulers.boundedElastic()}：它的线程数是
+     * {@code 10 × CPU} 且**有硬上限**。而这条链路会做**可能长时间阻塞**的事 ——
+     * 最典型的是工具审批的"就地确认"（阻塞等用户点按钮，默认最多 5 分钟）。
+     * 用固定大小的池，几个并发的待确认就能把它占满，**导致别的用户连流式都用不了** ——
+     * 一个等待用户点按钮的操作，不该有这种全局影响。</p>
+     *
+     * <p>虚拟线程按需创建、阻塞时只占极少堆外内存，而且服务端已开启
+     * {@code server.tomcat.threads.virtual.enabled}，整条链路是一致的。</p>
+     */
+    private static final Scheduler VIRTUAL_SCHEDULER =
+            Schedulers.fromExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
     /** 模型绑定解析（可选：单测中未注入时退化为全局默认，凭证走适配器默认）。 */
     @Autowired(required = false)
@@ -172,6 +200,12 @@ public class AgentRuntimeService {
         String runId = req.runId() != null ? req.runId() : IdGenerator.generate("run");
         String traceId = IdGenerator.generate("trace");
         String tenantId = req.tenantId();
+        // 工具调用记录（可视化用）：按运行开始收集。
+        // 刻意不套 try/finally —— 收集器在下次 begin 时会清理超时残留，
+        // 而给这个长方法整体加一层 try 会把几百行的缩进一起改掉，得不偿失。
+        if (toolCallCollector != null) {
+            toolCallCollector.begin(runId);
+        }
 
         return TraceContext.withContext(traceId, runId, tenantId, () -> {
             AgentDefinition agent = agentService.getOrThrow(tenantId, req.agentId());
@@ -247,7 +281,8 @@ public class AgentRuntimeService {
                     // 工具调用循环：仅当请求显式启用工具且注册中心可用时走工具链路
                     if (!toolSpecs.isEmpty() && toolExecutor != null) {
                         return runToolLoop(provider, model, effectivePrompt, msg, gc, resolved,
-                                toolSpecs, sessionHistory, traceId, runId, tenantId, agent, usageTokens, imageExtra);
+                                toolSpecs, sessionHistory, traceId, runId, tenantId, agent, usageTokens,
+                                imageExtra, session == null ? null : session.getSessionId());
                     }
                     // 普通单轮 LLM 调用（无工具）
                     logTo(LogLevel.INFO, LogCategory.llm, "llm.call provider=" + provider
@@ -306,13 +341,18 @@ public class AgentRuntimeService {
                     runId, req.sessionId(), req.mode(), pipeline.reply(), traceId, usage);
             if (rag != null && !rag.references().isEmpty()) {
                 resp = new AgentRunResponse(resp.runId(), resp.sessionId(), resp.mode(),
-                        resp.output(), resp.traceId(), resp.usage(), rag.references(), resp.plugins());
+                        resp.output(), resp.traceId(), resp.usage(), rag.references(), resp.plugins(),
+                        resp.toolCalls());
             }
             if (pipeline.extras() != null && pipeline.extras().containsKey("audio_url")) {
                 resp = new AgentRunResponse(resp.runId(), resp.sessionId(), resp.mode(),
                         new AgentRunResponse.Output("assistant", resp.output().content(),
                                 String.valueOf(pipeline.extras().get("audio_url"))),
-                        resp.traceId(), resp.usage(), resp.references(), resp.plugins());
+                        resp.traceId(), resp.usage(), resp.references(), resp.plugins(), resp.toolCalls());
+            }
+            // 工具调用记录（可视化）：从收集器取走（drain 同时清理该运行的槽位）
+            if (toolCallCollector != null) {
+                resp = resp.withToolCalls(toolCallCollector.drain(runId));
             }
             // ⑦ 保存会话记忆（user + assistant 一轮），失败不阻断主流程
             if (session != null && sessionService != null) {
@@ -499,7 +539,7 @@ public class AgentRuntimeService {
             GenerationConfig gc, ModelBindingService.ResolvedModel resolved,
             List<ModelAdapter.ToolSpec> tools, List<ModelAdapter.ChatMessage> history,
             String traceId, String runId, String tenantId, AgentDefinition agent, int[] usageTokens,
-            Map<String, Object> extraImages) {
+            Map<String, Object> extraImages, String sessionId) {
         // 本轮对话序列：会话历史 + 当前用户消息；此后每轮的 assistant(tool_calls) 与
         // tool 结果都追加在尾部，下一轮整段作为 history 发出。
         List<ModelAdapter.ChatMessage> convo = new ArrayList<>(history);
@@ -544,7 +584,7 @@ public class AgentRuntimeService {
                     tr = toolExecutor == null
                             ? ToolResult.fail("tool executor not configured")
                             : toolExecutor.run(call.name(), call.arguments(),
-                            ToolContext.of(tenantId, agent.getAgentId(), runId));
+                            ToolContext.of(tenantId, agent.getAgentId(), runId, sessionId));
                 } catch (Exception e) {
                     tr = ToolResult.fail(e.getMessage() == null ? "tool execution error" : e.getMessage());
                 }
@@ -891,10 +931,14 @@ public class AgentRuntimeService {
      *       而不是让用户盯着空白等。</li>
      * </ul>
      */
-    public Flux<AgentRunResponse.Output> runStream(AgentRunRequest req) {
+    public Flux<RunStreamEvent> runStream(AgentRunRequest req) {
         String runId = req.runId() != null ? req.runId() : IdGenerator.generate("run");
         String traceId = IdGenerator.generate("trace");
         String tenantId = req.tenantId();
+        // 工具调用记录（可视化）：与非流式同一套收集机制
+        if (toolCallCollector != null) {
+            toolCallCollector.begin(runId);
+        }
 
         return TraceContext.withContext(traceId, runId, tenantId, () -> {
             AgentDefinition agent = agentService.getOrThrow(tenantId, req.agentId());
@@ -964,7 +1008,10 @@ public class AgentRuntimeService {
                 logTo(LogLevel.INFO, LogCategory.agent, "run.completed agent=" + agent.getName()
                                 + " shortCircuit=true streaming=true", traceId, runId, tenantId, agent.getAgentId());
                 persistExchange(session, tenantId, runId, userMessage, direct, model);
-                return Flux.just(new AgentRunResponse.Output("assistant", direct, null));
+                // ⚠️ 结束帧**每个分支都必须发**：以前由 Controller 统一追加一个 run.completed，
+                // 现在它要带上工具调用记录、只能由这里给出 —— 漏一个分支，前端就一直等不到结束。
+                return Flux.just(RunStreamEvent.delta(direct),
+                        RunStreamEvent.completed(drainToolCalls(runId)));
             }
             final String streamMessage = pre.message();
 
@@ -980,7 +1027,7 @@ public class AgentRuntimeService {
                     try {
                         answer = runToolLoop(provider, model, effectivePrompt, streamMessage, gc, resolved,
                                 toolSpecs, sessionHistory, traceId, runId, tenantId, agent, usageTokens,
-                                imageExtra);
+                                imageExtra, session == null ? null : session.getSessionId());
                     } catch (Exception e) {
                         String fallback = agentPipeline.onStreamError(agent.getAgentId(), runId, streamMessage, e);
                         if (fallback == null) {
@@ -999,8 +1046,10 @@ public class AgentRuntimeService {
                     }
                     finishStream(agent, tenantId, runId, traceId, model, userMessage, answer,
                             session, usageTokens, true, req.userId());
-                    return Flux.fromIterable(chunkText(answer));
-                }).subscribeOn(reactor.core.scheduler.Schedulers.boundedElastic());
+                    // 工具记录在工具循环**跑完之后**取 —— 此刻才完整
+                    return Flux.fromIterable(chunkText(answer))
+                            .concatWith(Flux.just(RunStreamEvent.completed(drainToolCalls(runId))));
+                }).subscribeOn(VIRTUAL_SCHEDULER);
             }
 
             // ⑩ 无工具：真流式；同时累积全文用于会话持久化，并用 on_error 兜底失败
@@ -1012,14 +1061,14 @@ public class AgentRuntimeService {
                     .filter(d -> !d.finished() && d.text() != null && !d.text().isEmpty())
                     .map(d -> {
                         collected.append(d.text());
-                        return new AgentRunResponse.Output("assistant", d.text(), null);
+                        return RunStreamEvent.delta(d.text());
                     })
                     .concatWith(Flux.defer(() -> {
                         // 流正常结束后收尾：存会话 + 记日志 + 派发事件
                         final int[] usage = {0, 0};
                         finishStream(agent, tenantId, runId, traceId, model, userMessage,
                                 collected.toString(), session, usage, false, req.userId());
-                        return Flux.empty();
+                        return Flux.just(RunStreamEvent.completed(drainToolCalls(runId)));
                     }))
                     .onErrorResume(err -> {
                         // Flux 的 onErrorResume 回调给的是 Throwable，而管线与日志都按 Exception 建模
@@ -1040,7 +1089,8 @@ public class AgentRuntimeService {
                                         + " error=" + e.getMessage() + "（已由插件 on_error 兜底）",
                                 traceId, runId, tenantId, agent.getAgentId());
                         persistExchange(session, tenantId, runId, userMessage, fallback, model);
-                        return Flux.fromIterable(chunkText(fallback));
+                        return Flux.fromIterable(chunkText(fallback))
+                                .concatWith(Flux.just(RunStreamEvent.completed(drainToolCalls(runId))));
                     });
         });
     }
@@ -1095,17 +1145,26 @@ public class AgentRuntimeService {
      * 直接一次性推出整段，用户会看到长时间空白后文字突然整块出现。切成小块至少
      * 让渲染是渐进的（且前端无需区分两种来源）。</p>
      */
-    private static List<AgentRunResponse.Output> chunkText(String text) {
+    private static List<RunStreamEvent> chunkText(String text) {
         if (text == null || text.isEmpty()) {
             return List.of();
         }
         int step = 24;
-        List<AgentRunResponse.Output> out = new ArrayList<>();
+        List<RunStreamEvent> out = new ArrayList<>();
         for (int i = 0; i < text.length(); i += step) {
-            out.add(new AgentRunResponse.Output("assistant",
-                    text.substring(i, Math.min(text.length(), i + step)), null));
+            out.add(RunStreamEvent.delta(text.substring(i, Math.min(text.length(), i + step))));
         }
         return out;
+    }
+
+    /**
+     * 取走本次运行的工具调用记录（工具调用可视化）。
+     *
+     * <p>内部判空让调用方无需到处检查收集器是否装配 —— 它缺失时返回空列表，
+     * 而空列表在 {@code RunStreamEvent.completed} 里会收敛成 null（不出现在 JSON 里）。</p>
+     */
+    private List<com.agentplatform.core.tool.executor.ToolCallRecord> drainToolCalls(String runId) {
+        return toolCallCollector == null ? List.of() : toolCallCollector.drain(runId);
     }
 
     /**

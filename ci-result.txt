@@ -1,0 +1,10 @@
+TEST_EXIT=0 
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.550 s -- in com.agentplatform.core.agent.runtime.AgentRuntimeServiceTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.109 s -- in com.agentplatform.core.agent.service.AgentVersionServiceTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.039 s -- in com.agentplatform.core.rag.pipeline.DocumentParserTest
+[INFO] Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.005 s -- in com.agentplatform.core.tool.executor.ToolCallCollectorTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.078 s -- in com.agentplatform.core.tool.registry.ToolRegistrationServiceTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.004 s -- in com.agentplatform.core.tool.ToolExecutorTest
+[INFO] Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.245 s -- in com.agentplatform.core.workflow.WorkflowCanvasBackendTest
+[INFO] Tests run: 351, Failures: 0, Errors: 0, Skipped: 0
+[INFO] BUILD SUCCESS

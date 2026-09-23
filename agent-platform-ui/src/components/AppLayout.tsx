@@ -28,11 +28,13 @@ import {
   BarChartOutlined,
   BellOutlined,
   BulbOutlined,
+  AuditOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { setToken } from '../api/http';
 import { getMe } from '../api/auth';
 import { unreadCount } from '../api/notifications';
+import ToolApprovalWatcher from './ToolApprovalWatcher';
 import { preloadDicts } from '../dict/store';
 import SidebarSkinSettings from './SidebarSkinSettings';
 import { useTheme } from '../theme/ThemeProvider';
@@ -215,6 +217,9 @@ export default function AppLayout() {
         { key: '/diagnosis', icon: <BugOutlined />, label: '智能诊断', perm: 'log:read' },
         { key: '/prompt', icon: <ThunderboltOutlined />, label: '提示词优化', perm: 'agent:invoke' },
         { key: '/tools', icon: <ApiOutlined />, label: '工具调试', perm: 'tool:read' },
+        // 工具审批放在运维分组：它是"给有副作用的工具调用放行"的管控入口，
+        // 性质与运行日志/审计同类（都是需要人来盯的事）。
+        { key: '/approvals', icon: <AuditOutlined />, label: '工具审批', perm: 'approval:read' },
         { key: '/quota', icon: <SafetyCertificateOutlined />, label: '用户配额', perm: 'quota:manage' },
       ],
     },
@@ -477,6 +482,13 @@ export default function AppLayout() {
             <Outlet />
           </Content>
         </Layout>
+        {/*
+          「就地确认」弹窗监听器：挂在最外层，**任何页面**都能弹出审批确认框。
+          写工具在后端阻塞等待用户决定（默认 5 分钟），这里一发现待审批就立刻弹，
+          用户点完后端那边带着真实结果继续 —— 所以必须全局挂，不能只挂在聊天页：
+          用户完全可能在会话列表页翻历史时收到审批。
+        */}
+        <ToolApprovalWatcher />
       </Layout>
     </AntApp>
   );
