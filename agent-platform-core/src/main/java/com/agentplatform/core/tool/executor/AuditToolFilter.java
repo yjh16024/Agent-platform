@@ -1,4 +1,4 @@
-mpackage com.agentplatform.core.tool.executor;
+package com.agentplatform.core.tool.executor;
 
 import com.agentplatform.core.tool.ToolResult;
 import lombok.extern.slf4j.Slf4j;
