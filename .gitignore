@@ -44,3 +44,4 @@ docs/workflow-canvas-feasibility.md
 .codebuddy/
 # Claude Code 的**本地**配置（机器相关：权限白名单、本机路径），按其文件名的 local 语义属机器私有
 .claude/settings.local.json
+/个人简历-姚嘉昊1.docx
