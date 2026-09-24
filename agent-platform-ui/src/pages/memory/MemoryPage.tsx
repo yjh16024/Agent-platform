@@ -317,10 +317,67 @@ export default function MemoryPage() {
             重建索引
           </Button>
           <Button danger icon={<ThunderboltOutlined />} disabled={!canManage} onClick={purgeVector}>
-            清除向量记忆
+          清除向量记忆
           </Button>
-        </Space>
-      </Card>
-    </div>
-  );
-}
+          </Space>
+          </Card>
+
+          {/*
+          这个 Modal 曾经整块缺失 —— 按钮 onClick 会调 setModalOpen(true)，状态也确实变了，
+          但没有任何组件消费它，表现就是"点新增完全没反应"。而且因为 tsconfig 里
+          noUnusedLocals=false，未使用的 modalOpen / Form / Input / Select 全都不报错，
+          编译器一声不吭。补它时别顺手删掉那些 import，它们现在都在用了。
+          */}
+          <Modal
+          title={editing ? '编辑画像' : '新增画像'}
+          open={modalOpen}
+          onOk={() => void submit()}
+          onCancel={() => setModalOpen(false)}
+          confirmLoading={busy}
+          okText="保存"
+          cancelText="取消"
+          width={560}
+          // forceRender 不是可选项：antd 的 Modal 首次打开前不渲染子元素，而 openCreate /
+          // openEdit 是「先 form.setFieldsValue(...) 再 setModalOpen(true)」——
+          // Form 未挂载时 setFieldsValue 会被静默丢弃（控制台只留一句未连接的警告），
+          // 表现为"编辑"打开后字段全是空的。预先渲染即可保证 form 实例始终连着。
+          forceRender
+          >
+          <Form form={form} layout="vertical">
+          <Form.Item name="category" label="分类" rules={[{ required: true, message: '请选择分类' }]}>
+          <Select
+            options={CATEGORY_OPTIONS.map((c) => ({ value: c.value, label: c.label }))}
+          />
+          </Form.Item>
+          <Form.Item
+          name="key"
+          label="键"
+          rules={[
+            { required: true, whitespace: true, message: '请填写键名' },
+            { max: 100, message: '键名最多 100 字' },
+          ]}
+          extra="用来标识这条画像是什么，例如「职业」「常用语言」"
+          >
+          <Input placeholder="职业" maxLength={100} />
+          </Form.Item>
+          <Form.Item
+          name="value"
+          label="内容"
+          rules={[
+            { required: true, whitespace: true, message: '请填写内容' },
+            { max: 1000, message: '内容最多 1000 字' },
+          ]}
+          extra="越具体越有用，例如「Java 后端工程师，主要做微服务」"
+          >
+          <Input.TextArea
+            rows={3}
+            maxLength={1000}
+            showCount
+            placeholder="Java 后端工程师，主要做微服务"
+          />
+          </Form.Item>
+          </Form>
+          </Modal>
+          </div>
+          );
+          }

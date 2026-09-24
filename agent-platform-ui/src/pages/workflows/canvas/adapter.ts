@@ -179,7 +179,7 @@ export function toCanvas(def: BackendDefinition | null | undefined): FlowDocumen
  * 末尾必须有 End 终结节点），因此「创建工作流」时可直接把它经 `toBackend`
  * 转成后端定义入库，用户进画布后无需先修数据就能保存/试运行。
  */
-export function defaultCanvas(workflowName = '新工作流'): FlowDocumentJSON {
+export function defaultCanvas(): FlowDocumentJSON {
   return {
     nodes: [
       { id: 'start_0', type: 'start', data: { title: '开始', config: { input_key: 'input' } } },

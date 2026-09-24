@@ -5,10 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "sync:dist": "node scripts/sync-dist.mjs",
-    "build:prod": "vite build && node scripts/sync-dist.mjs"
+    "build:prod": "tsc --noEmit && vite build && node scripts/sync-dist.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.1",

@@ -48,7 +48,7 @@ export default function WorkflowsPage() {
       const def = (await getWorkflow(id)) as unknown as BackendDefinition;
       const data = def && Array.isArray(def.nodes) && def.nodes.length > 0
         ? toCanvas(def)
-        : defaultCanvas(name);
+        : defaultCanvas();
       setCanvas({ id, name, data, publishedVersion });
     } catch (e) {
       message.error(`加载工作流失败：${(e as Error).message}`);
@@ -62,7 +62,7 @@ export default function WorkflowsPage() {
   const submitCreate = async () => {
     const v = await form.validateFields();
     const definition = toBackend(
-      defaultCanvas(v.name),
+      defaultCanvas(),
       v.name,
       DEFAULT_ENTRY
     ) as unknown as Record<string, unknown>;

@@ -11,7 +11,6 @@ import {
   List,
   Modal,
   Row,
-  Select,
   Space,
   Switch,
   Table,

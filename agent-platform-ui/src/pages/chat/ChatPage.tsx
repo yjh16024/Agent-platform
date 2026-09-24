@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Card, Select, Input, Button, Space, Switch, Tag, Empty, Typography, message, Popconfirm, Alert, Upload, Tooltip,
+  Card, Select, Input, Button, Space, Switch, Tag, Typography, message, Alert, Upload, Tooltip,
 } from 'antd';
-import { SendOutlined, PlusOutlined, ClearOutlined, PaperClipOutlined, BookOutlined, ArrowUpOutlined } from '@ant-design/icons';
+import { PlusOutlined, ClearOutlined, PaperClipOutlined, BookOutlined, ArrowUpOutlined } from '@ant-design/icons';
 import { listAgents } from '../../api/agents';
 import { runAgent, runAgentStream, RunMessage, MessagePart } from '../../api/run';
 import { uploadFile } from '../../api/files';
@@ -238,6 +238,9 @@ export default function ChatPage() {
   }, [agentId, msgsOf, reset]);
 
   const discardConversation = () => {
+    // 与 newConversation 保持一致的守卫：没有选中智能体时连会话标识都不存在，
+    // reset 拿不到可用的 agentId。此处原先漏了它，是开了 strictNullChecks 才暴露出来的。
+    if (!agentId) return;
     if (messages.length === 0 && attachments.length === 0) {
       message.info('当前没有消息');
       return;

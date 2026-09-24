@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { App as AntApp, Button, Card, Col, Empty, Row, Segmented, Space, Statistic, Tag, Typography } from 'antd';
+import { App as AntApp, Button, Card, Col, Empty, Row, Segmented, Space, Statistic, Typography } from 'antd';
 import { ReloadOutlined, TeamOutlined, RobotOutlined, MessageOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { getReport, type NameCount, type ReportView } from '../../api/report';
 

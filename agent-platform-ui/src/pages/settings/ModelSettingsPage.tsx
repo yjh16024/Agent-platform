@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import {
-  Card, Form, Input, Select, AutoComplete, Button, Space, Typography, Alert, message, Divider, Row, Col,
+  Card, Form, Input, Select, AutoComplete, Button, Typography, Alert, message, Row, Col,
 } from 'antd';
 import { getModelConfig, saveEmbeddingBinding, saveChatBinding } from '../../api/modelConfig';
 import { useDict } from '../../dict/store';
