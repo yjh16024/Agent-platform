@@ -369,7 +369,9 @@ start-core.bat embedded rebuild    REM 免装 MySQL：用内置 H2（DB_MODE=emb
 ```bash
 chmod +x start-core.sh
 ./start-core.sh rebuild
-./start-core.sh embedded rebuild   # 免装 MySQL：用内置 H2
+# ⚠️ start-core.sh 只认 rebuild 参数，**不提供 embedded**（H2 免装库目前只有 Windows 的
+#    start-core.bat 支持）。Linux/macOS 要用内置 H2 请手动启动：
+java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.1.0.jar --spring.profiles.active=embedded
 ```
 
 **或手动方式（任意系统）**：
@@ -422,7 +424,7 @@ curl http://localhost:8081/actuator/health
 | `STORAGE_TYPE` | 文件存储：`local` / `minio` | `local`（本地磁盘 `./data/files`） |
 | `VECTOR_STORE` | 向量库：`in-memory` / `milvus` | `in-memory` |
 | `EVENTS_ENABLED` | Kafka 事件总线开关（broker 不可用时静默降级；桌面 embedded 强制关） | `true` |
-| `SECURITY_ENABLED` | core 侧 JWT 鉴权开关 | `false` |
+| `SECURITY_ENABLED` | core 侧 JWT 鉴权开关 | `true`（**默认开启**；关闭需显式设 `false`） |
 | `JWT_SECRET` / `MODEL_KEY_ENC_KEY` | JWT 密钥 / 模型 Key 加密主密钥 | `change-me-*`（**生产务必覆盖**） |
 | `AUTH_USERNAME` / `AUTH_PASSWORD` | 登录静态账号（配置后登录需校验） | 空（演示模式签发） |
 | `DEFAULT_PROVIDER` / `DEFAULT_MODEL` | 未配置时的模型厂商/型号 | `deepseek` / `deepseek-chat` |
@@ -540,7 +542,7 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests   # 构建可执行 jar
-mvn test                                              # 143 个单元测试（含 Spring AI 通道、内置库迁移、记忆、工具、工作流画布后端等）
+mvn test                                              # 386 个单元测试（54 个测试类；含 Spring AI 通道、内置库迁移、记忆、工具、工作流画布后端等）
 warmup.bat                                            # Windows：依赖预热，"warmup.bat verify" 校验离线构建
 cd agent-platform-ui && npm run build:prod            # 前端构建，产物同步到 core 的 static/
 ```

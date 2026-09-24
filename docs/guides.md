@@ -163,8 +163,9 @@ docker push agent-platform/agent-platform-core:1.1.0
 ### 2.2 K8s / Helm
 
 ```bash
-kubectl apply -k agent-platform-deploy/k8s/base            # kustomize（开发）
-kubectl apply -k agent-platform-deploy/k8s/overlays/prod   # 生产 overlay
+kubectl apply -k agent-platform-deploy/k8s/base            # kustomize（仓库当前只有 base/）
+# ⚠️ overlays/ 目录**尚未创建**（见 backlog 的未完成清单）—— 生产环境请自行加 overlay
+#    覆盖副本数 / 资源配额 / 镜像 tag
 
 helm template agent-platform agent-platform-deploy/helm/agent-platform --debug
 helm install agent-platform agent-platform-deploy/helm/agent-platform \
@@ -206,7 +207,7 @@ helm install agent-platform agent-platform-deploy/helm/agent-platform \
 ### 2.6 账号与权限（RBAC）
 
 **首次启动**：当某租户下**一个用户都没有**时，`RbacSeeder` 会同步内置角色（`admin` / `operator` / `viewer`）
-与 23 个权限点，并创建初始管理员 `admin`。密码来源见下 —— **桌面版把它写进了
+与 34 个权限点，并创建初始管理员 `admin`。密码来源见下 —— **桌面版把它写进了
 `application-embedded.yml`**（`admin123456`），因为桌面用户看不到启动日志。
 
 ```bash
