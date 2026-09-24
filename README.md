@@ -11,8 +11,9 @@
 开始，逐步长成一套生产可用的智能体服务。
 
 当前版本：`1.1.0`。提供统一运行入口（JSON / SSE）、多模型路由与凭证分层、
-会话记忆（短期缓存 + 中期早期摘要）、RAG 知识库、工具与 MCP、自研 DAG 工作流、
-Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉）、运行日志与三级诊断，
+会话记忆（短期缓存 + 早期摘要 + 用户画像 + 向量召回）、RAG 知识库、工具与 MCP（**四种传输**）、
+自研 DAG 工作流、Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉）、运行日志与三级诊断，
+**让智能体读写文件**（工作区约束 + 工具审批 + 改前快照回滚 + 凭证隔离 + 调用过程可视化），
 以及**皮肤（换肤）体系** —— 第三方皮肤可以在不改平台代码的前提下接管界面外观。
 
 工程层：**可选内置库**（`DB_MODE=embedded` 用 H2 免装 MySQL 直接跑）、**Spring AI 通道**
@@ -113,27 +114,63 @@ Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉�
 
 ### 工具与 MCP：注册中心统一执行
 
-`ToolRegistry` 是唯一的工具来源：内置工具、HTTP 注册工具、MCP（Streamable HTTP）接入的工具
-都注册到这里。**HTTP 工具注册会持久化**（`tool_registration` 表），重启 / 重新构建后自动恢复。
+`ToolRegistry` 是唯一的工具来源：内置工具、HTTP 注册工具、MCP 接入的工具都注册到这里。
+**HTTP 工具注册会持久化**（`tool_registration` 表），重启 / 重新构建后自动恢复。
 内置**天气工具**开箱即用：城市名自动做 URL 编码后查询 `wttr.in`。运行入口按请求里的
 `tools.enabled` 与 `allowed` 白名单决定本轮暴露哪些工具声明。
+
+MCP 支持**四种传输**，都经同一套 `McpClient` 契约与工厂：**Streamable HTTP**（接远程服务）、
+**进程内**（轻量内置）、**沙箱脚本**（子进程 + 目录隔离 + 解释器白名单）、
+以及 **stdio 子进程** —— 后者是挂 `npx` / `uvx` 拉起的官方 server（filesystem / git 等）
+的途径，注册时传启动命令数组即可，例如
+`{"command":["npx","-y","@modelcontextprotocol/server-filesystem","D:/repo"]}`。
+stdio 的 server 是常驻进程，提供断开（`POST /tools/mcp/disconnect`）与清单查询
+（`GET /tools/mcp/connections`）来回收。
 
 工具与 MCP 各自带**市场**，不必手写注册 JSON：HTTP 工具市场（`GET /api/v1/tools/market`）
 提供一份免 Key 的公开 API 清单，清单位于 `resources/tool-market.json`，**新增条目不用改代码**；
 MCP 市场（`GET /api/v1/tools/mcp/market`）直连官方 `registry.modelcontextprotocol.io`，
-**只保留 `streamable-http` 型** —— stdio 型靠 npx/uvx 本地拉起，平台目前挂不了。
+目前**只列 `streamable-http` 型**（stdio 型条目只给包名、不给可执行的启动命令，
+放开会让「一键注册」退化成「自己拼命令」，故暂缓）。
 
-工具调用默认走「结果文本回灌」的轻量闭环：模型返回 `tool_calls` → `ToolExecutor` 逐个执行 →
-结果拼进下一轮输入 → 直到模型不再要工具，最多 `MAX_TOOL_ROUNDS = 5` 轮，防止死循环。
-启用 Spring AI 通道后改为**原生 tool-role 循环**（assistant(tool_calls) → tool(result)），上限一致。
+工具循环走**原生 tool-role 协议**（`assistant(tool_calls)` → `tool(result)` → 再问一次），
+每轮只往消息序列尾部追加两条消息，轮数上限可配
+（`agent-platform.agent.tool.max-rounds`，默认 **20**）。
 所有工具声明发给模型前统一做 schema 规范化（缺省补 `type:object`），杜绝厂商侧 400。
+**过程对用户可见**：每轮回答下方给出可折叠的调用记录（调用次数 / 失败数 / 总耗时，
+逐条可展开看参数与结果）。
+
+**让智能体读写文件**是平台的一等能力（可选开启，工作区根默认是空目录）：
+**工作区根约束**（含符号链接防绕过）+ `fs` 工具组（读带行号 / 列目录 / glob / grep /
+精确串替换 / 全量写）+ **工具审批**（两步式审批页 + 等待用户确认的就地弹窗，
+超时降级为两步式）+ **改前快照与回滚** + **凭证隔离**——`.env`、密钥、`.ssh`、shell 启动文件、
+以及能让目录"伪装成 git 仓库"的顶层条目一律**读写皆拒，且刻意不参与审批**
+（读取是"已经发生"的动作，批准也收不回来）。
+
+### 项目动作：让它能跑测试，但不给它自由命令
+
+**受限动作集**（可选开启，需要一个已配置的工作区）：开箱可用 `git_status` / `git_diff` /
+`git_log`，以及按项目类型自动决定的 `run_tests` / `run_build`
+（识别 Maven / Gradle / npm / pytest / Go / Cargo）。
+项目特有的动作（代码生成、数据库迁移…）可在 `data/tool-actions.json` 里用**命令模板**注册。
+
+关键在于**模型不能构造命令**：它只能选择跑哪个动作、并填受字符白名单约束的参数。
+这样"改代码 → 跑测试 → 再改"的闭环成立，而"模型即兴拼一条命令"这个风险源**根本不存在** ——
+不是把它隔离掉，是让它不产生。
+
+> 为什么不做自由 shell：逐条审批已被数据否定（Anthropic 遥测：约 93% 的权限提示是无意识批准的），
+> 而桌面版可用的 OS 级沙箱（微软 MXC）官方明说"不应被视为安全边界"，且其 Windows 后端
+> 缺少网络隔离。详见 `docs/technology.md`。
 
 ### 插件：Hook 管线与 ClassLoader 隔离
 
-插件通过 `AgentPipeline` 挂到模型调用前后：`before_llm` 可以短路直接返回（内置「自动回复」
-插件即如此），`after_llm` 可以加工输出（内置 TTS 插件在此合成语音并返回 `audio_url`）。
+插件通过 `AgentPipeline` 挂到模型调用前后，四个钩子点各有明确约定：`before_llm` 可**短路**
+（直接返回预设答复）或**改写输入**，`after_llm` 可附加产物（如合成音频的地址），
+`before_output` 可**替换最终输出**（脱敏 / 合规改写的唯一落点），`on_error` 提供**兜底话术**。
+完整示例见 `plugin-example` 模块（4 个插件 + 4 份 manifest）。
 
-内置插件属于平台租户 `__platform__`（不可删除、对所有租户可见）；外部插件以独立
+代码里的 `@Component` 插件会由 `BuiltinPluginRegistrar` 自动同步进插件市场
+（平台租户 `__platform__`，不可删除、对所有租户可见）；外部插件以独立
 `PluginClassLoader` 加载 jar，Attach / Detach 热插拔，卸载即反注册钩子与工具。
 
 外部插件有两条进入路径：**从插件市场取**（`/plugins/marketplace`），或**从仪表盘直接上传**
@@ -460,7 +497,7 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 | 知识库 | `/knowledge-bases`、`/{id}/documents`、`/{id}/chunks`、`/documents/{docId}`、`/search` |
 | Skills | `/skills` CRUD、`/sync`、`/upload`、`/import-folder`、`/open-folder`、`/{id}/files`、`/{id}/file` |
 | 插件 | `/plugins` 市场 / 导入 / 删除 / attach / detach |
-| 工具 | `/tools` 列表 / invoke / HTTP 注册 / MCP / 卸载 |
+| 工具 | `/tools` 列表 / invoke / HTTP 注册 / MCP（四种传输）/ 断开连接 / 卸载 |
 | 模型配置 | `/model-config`（`/embedding`、`/chat`） |
 | 日志/诊断 | `/logs`（查询/导出/瀑布图/purge）、`/diagnosis` |
 | 文件/配额/提示词 | `/files`、`/quotas`、`/prompt` |

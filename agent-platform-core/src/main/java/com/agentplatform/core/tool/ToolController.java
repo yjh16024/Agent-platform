@@ -244,6 +244,85 @@ public class ToolController {
     }
 
     /**
+     * 注册 **stdio** MCP 工具（把一条本地命令作为 MCP server 拉起）。
+     *
+     * <p>这是挂 {@code npx} / {@code uvx} 拉起的官方 MCP server（filesystem / git 等）
+     * 的**唯一途径** —— 在此之前平台只有 streamable-http，于是整个 npm/uvx 生态用不上。</p>
+     *
+     * <p>body：{@code command}（**字符串数组，必填**，如
+     * {@code ["npx","-y","@modelcontextprotocol/server-filesystem","D:/repo"]}）、
+     * {@code env}（可选键值 —— server 常靠它拿配置 / 密钥）、{@code dir}（可选子进程工作目录）、
+     * {@code timeout_seconds}（可选，单次请求超时）。</p>
+     *
+     * <p>⚠️ <b>这条链路会执行本地命令</b>，且 server 是**常驻子进程**：要靠
+     * {@link #disconnectMcp} 或应用关闭来回收。命令白名单只是"防手滑"
+     * （它挡不住 {@code npx -y <任意包>} 这种参数），真正的约束是本端点继承的
+     * 类级 {@code tool:write} 权限 —— **模型无法自行发起注册**。</p>
+     */
+    @PostMapping("/mcp/stdio")
+    public ApiResponse<Map<String, Object>> connectStdioMcp(
+            @RequestBody(required = false) Map<String, Object> body) {
+        List<String> command = stringList(body == null ? null : body.get("command"));
+        Map<String, String> env = stringMap(body == null ? null : body.get("env"));
+        String dir = body == null ? null : (String) body.get("dir");
+        Long timeout = null;
+        if (body != null && body.get("timeout_seconds") != null) {
+            timeout = Long.parseLong(String.valueOf(body.get("timeout_seconds")));
+        }
+        return ApiResponse.ok(
+                mcpToolRegistry.connectStdio(command, env,
+                        dir == null || dir.isBlank() ? null : Path.of(dir), timeout),
+                "stdio MCP tools registered");
+    }
+
+    /**
+     * 断开指定的 MCP 连接（回收常驻子进程）。
+     * <p>body：{@code label} —— 即注册时返回的 {@code server_url}。</p>
+     */
+    @PostMapping("/mcp/disconnect")
+    public ApiResponse<Map<String, Object>> disconnectMcp(
+            @RequestBody(required = false) Map<String, Object> body) {
+        String label = body == null ? null : (String) body.get("label");
+        return ApiResponse.ok(mcpToolRegistry.disconnect(label), "MCP connection closed");
+    }
+
+    /**
+     * 已登记的 MCP 连接清单。
+     * <p>排障用：确认哪些 stdio server 还活着、需要断开（`@PreDestroy` 只覆盖正常关闭，
+     * 而排查"后台挂着几个 node 进程"时需要能看见它们）。</p>
+     */
+    @GetMapping("/mcp/connections")
+    public ApiResponse<List<Map<String, Object>>> listMcpConnections() {
+        return ApiResponse.ok(mcpToolRegistry.listConnections());
+    }
+
+    /** body 里的数组 → {@code List<String>}（非字符串项转成字符串，空白项丢掉）。 */
+    private static List<String> stringList(Object raw) {
+        List<String> out = new ArrayList<>();
+        if (raw instanceof List<?> list) {
+            for (Object v : list) {
+                if (v != null && !String.valueOf(v).isBlank()) {
+                    out.add(String.valueOf(v));
+                }
+            }
+        }
+        return out;
+    }
+
+    /** body 里的对象 → {@code Map<String, String>}。 */
+    private static Map<String, String> stringMap(Object raw) {
+        Map<String, String> out = new LinkedHashMap<>();
+        if (raw instanceof Map<?, ?> map) {
+            map.forEach((k, v) -> {
+                if (k != null && v != null) {
+                    out.put(String.valueOf(k), String.valueOf(v));
+                }
+            });
+        }
+        return out;
+    }
+
+    /**
      * 卸载单个工具（从注册中心移除，MCP/HTTP 自定义工具均可；内置工具受保护）。
      */
     @DeleteMapping("/{toolName}")

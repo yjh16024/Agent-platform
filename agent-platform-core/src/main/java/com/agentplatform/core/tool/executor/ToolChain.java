@@ -22,6 +22,17 @@ public class ToolChain {
     }
 
     /**
+     * 链尾要执行的工具。
+     *
+     * <p>给过滤器读取工具元信息用 —— 目前是**参数校验**需要它的 {@code inputSchema}。
+     * 让过滤器通过链去问，好过把 schema 塞进 {@code ToolInvocation}：
+     * 后者会让"每次调用都携带一份 schema 引用"成为必须，而真正需要它的只有一环。</p>
+     */
+    public Tool target() {
+        return target;
+    }
+
+    /**
      * 驱动责任链：有过滤器则逐个执行，链尾调用工具。
      */
     public ToolResult apply(ToolInvocation invocation) {

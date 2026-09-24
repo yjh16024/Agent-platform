@@ -3,7 +3,7 @@
 > **职责**：怎么扩展、怎么部署、怎么演示、怎么观测。**不重复**已实现功能清单与技术设计
 > （那两份属内部资料，不随本仓库发布）。
 > 环境变量的**完整权威清单**在 [../README.md](../README.md) 的「配置」一节，本文只列部署相关补充。
-> 最后核实：**2026-09-22**（09-22 更新钩子返回值表的"流式下"可用性一列）。
+> 最后核实：**2026-09-24**（09-24 补充 MCP **stdio 传输**的注册方式、白名单边界与连接回收）。
 
 ---
 
@@ -45,10 +45,20 @@ public class WeatherTool implements Tool {
 启动时 `ToolRegistrationConfig` 自动收集注册，LLM 经 function calling 触发。
 
 - **HTTP 工具**（动态注册，免重启）：`POST /api/v1/tools/register`，body `{"name":"get_weather","endpoint":"...","method":"GET"}`。
-- **MCP 工具**（三种传输，均经 `McpClientFactory`）：
+- **MCP 工具**（四种传输，均经 `McpClientFactory`）：
   - 远程 HTTP：`POST /api/v1/tools/mcp`（`server_url` 必填，`api_key`/`headers` 可选）→ `HttpMcpClient`
   - 本地进程内：`POST /api/v1/tools/mcp/local`（`dir` 可选）→ `LocalMcpClient`（echo / time / read_file）
   - 沙箱子进程：`POST /api/v1/tools/mcp/sandbox`（`dir`、`timeout_seconds` 可选）→ `SandboxMcpClient`（目录隔离 + 解释器白名单 + 超时 + 输出截断）
+  - **stdio 子进程**：`POST /api/v1/tools/mcp/stdio`（`command` 数组必填，`env` / `dir` / `timeout_seconds` 可选）
+    → `StdioMcpClient`。这是挂 `npx` / `uvx` 拉起的官方 server（filesystem / git …）的途径：
+    ```json
+    { "command": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "D:/repo"] }
+    ```
+    启动命令受 `agent-platform.mcp.stdio-allowed-commands` 白名单限制，但**白名单挡不住参数**
+    （`npx -y <任意包>` 照样会执行那个包的代码）—— 所以这是**管理员操作**，别让模型自行发起。
+  - **stdio 的回收**：`POST /api/v1/tools/mcp/disconnect`（body `{"label":"<注册时返回的 server_url>"}`）；
+    查看在用连接：`GET /api/v1/tools/mcp/connections`。
+    ⚠️ stdio 的 server 是**常驻子进程**，不显式断开就会一直挂在后台（应用关闭时会自动回收）。
   - 卸载：`DELETE /api/v1/tools/{toolName}`。同名覆盖即热更新。
 
 ### 1.3 新增插件
