@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type CSSProperties } from 'react';
 import { App as AntApp, Typography } from 'antd';
 import {
   approveToolCall,
@@ -8,6 +8,102 @@ import {
 } from '../api/approvals';
 
 const { Text } = Typography;
+
+/** 预览区统一样式。参数可能很长，必须能滚动，否则弹窗会被撑爆。 */
+const PRE_STYLE: CSSProperties = {
+  margin: '4px 0 10px',
+  fontSize: 12,
+  maxHeight: 180,
+  overflow: 'auto',
+  background: 'rgba(0,0,0,0.03)',
+  padding: 8,
+  borderRadius: 4,
+  whiteSpace: 'pre-wrap',
+  wordBreak: 'break-all',
+};
+
+/** 单侧预览字符上限：用户不需要在弹窗里读完整个文件。 */
+const PREVIEW_CHARS = 1500;
+
+const LABEL_STYLE: CSSProperties = {
+  marginBottom: 2,
+  fontSize: 12,
+  color: 'rgba(0,0,0,0.65)',
+};
+
+function clip(text: string) {
+  return text.length > PREVIEW_CHARS
+    ? `${text.slice(0, PREVIEW_CHARS)}\n…（已截断，全文 ${text.length} 字符）`
+    : text;
+}
+
+/**
+ * 把工具参数渲染成**人读得懂**的样子。
+ *
+ * <h3>为什么非做不可</h3>
+ * 审批弹窗存在的**全部意义**就是让人看清"到底要改什么"。直接甩一段
+ * {@code {"path":"a.md","content":"..."}} 给用户看，等于没有审批 —— 他只能盲点「批准」，
+ * 而点下去就真的会改文件。**看不懂内容的确认，不是确认。**
+ *
+ * <p>两个写工具的 args 结构是已知的（见后端 {@code FsWriteFileTool} /
+ * {@code FsEditFileTool} 的 {@code inputSchema}），所以直接摊平成「文件 + 写入内容」
+ * 或「替换前 / 替换后」两段对照。**认不出的结构退回原始 JSON** ——
+ * 宁可难看，也不能漏掉信息。</p>
+ */
+function ArgsPreview({ raw }: { raw?: string | null }) {
+  if (!raw) {
+    return null;
+  }
+  let obj: Record<string, unknown>;
+  try {
+    obj = JSON.parse(raw) as Record<string, unknown>;
+  } catch {
+    // 不是 JSON（不该发生，但不能因此吞掉信息）
+    return <pre style={PRE_STYLE}>{raw}</pre>;
+  }
+
+  const filePath = typeof obj.path === 'string' ? obj.path : '';
+  const content = typeof obj.content === 'string' ? obj.content : null;
+  const oldString = typeof obj.oldString === 'string' ? obj.oldString : null;
+  const newString = typeof obj.newString === 'string' ? obj.newString : null;
+
+  const fileLine = filePath ? (
+    <div style={{ marginBottom: 6 }}>
+      文件：<Text code>{filePath}</Text>
+    </div>
+  ) : null;
+
+  // fs_write_file：整体写入（新建或覆盖，都不是追加）
+  if (content !== null) {
+    return (
+      <>
+        {fileLine}
+        <div style={LABEL_STYLE}>
+          写入内容（<b>整体覆盖</b>，不是追加）：
+        </div>
+        <pre style={PRE_STYLE}>{clip(content)}</pre>
+      </>
+    );
+  }
+
+  // fs_edit_file：精确串替换 —— 用底色区分前后，比读两段 JSON 字符串快得多
+  if (oldString !== null && newString !== null) {
+    return (
+      <>
+        {fileLine}
+        <div style={LABEL_STYLE}>替换前：</div>
+        <pre style={{ ...PRE_STYLE, background: 'rgba(255,77,79,0.08)' }}>{clip(oldString)}</pre>
+        <div style={LABEL_STYLE}>替换后：</div>
+        <pre style={{ ...PRE_STYLE, background: 'rgba(82,196,26,0.10)' }}>
+          {newString === '' ? '（删除这段内容）' : clip(newString)}
+        </pre>
+      </>
+    );
+  }
+
+  // 未知结构：原样显示，绝不丢信息
+  return <pre style={PRE_STYLE}>{raw}</pre>;
+}
 
 /**
  * 「就地确认」的弹窗监听器 —— 挂一次（在 AppLayout 里），全应用生效。
@@ -44,8 +140,15 @@ export default function ToolApprovalWatcher() {
         width: 560,
         icon: null,
         okText: '批准并执行',
-        cancelText: '拒绝',
-        // 不设 maskClosable=false：用户可以点遮罩先放着，稍后去「工具审批」页处理
+        cancelText: '拒绝，不修改文件',
+        // ★ 三个"不能关"都要显式关掉：antd 的 onCancel 由**取消按钮 / ESC / 右上角关闭**共同触发，
+        // 而这里的 onCancel 语义是**明确的拒绝**（有副作用：留审计、模型收到"用户拒绝"并被告知别重试）。
+        // 若放任 ESC 触发它，用户想"先放着再说"时一按 ESC 就变成了拒绝 —— 决定必须是显式的。
+        // （最初那句注释写的是"点遮罩先放着"，但 Modal.confirm 的 maskClosable 默认就是 false，
+        //   遮罩本来就点不动，等于用户**根本没有"稍后处理"这个选项**，注释与行为是矛盾的。）
+        keyboard: false,
+        closable: false,
+        maskClosable: false,
         content: (
           <div style={{ marginTop: 8 }}>
             <div style={{ marginBottom: 8 }}>
@@ -55,22 +158,7 @@ export default function ToolApprovalWatcher() {
               智能体正在等待你的确认，批准后才会真正修改工作区内的文件；
               系统已留好改前快照，之后可以回滚。
             </Text>
-            {row.toolArgs && (
-              <pre
-                style={{
-                  marginTop: 10,
-                  marginBottom: 0,
-                  fontSize: 12,
-                  maxHeight: 200,
-                  overflow: 'auto',
-                  background: 'rgba(0,0,0,0.03)',
-                  padding: 8,
-                  borderRadius: 4,
-                }}
-              >
-                {row.toolArgs}
-              </pre>
-            )}
+            <ArgsPreview raw={row.toolArgs} />
           </div>
         ),
         onOk: async () => {
