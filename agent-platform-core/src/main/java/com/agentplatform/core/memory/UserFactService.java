@@ -72,6 +72,21 @@ public class UserFactService {
         return repository.countByTenantIdAndUserId(normalizeTenant(tenantId), userId);
     }
 
+    /**
+     * 按 key 取一条正式画像，没有返回 {@code null}。
+     *
+     * <p>供自动抽取链路判断"这个键是否**已经**有一条用户确认过的画像"——
+     * 若已有，就不该再生成一条候选让用户确认第二遍。</p>
+     */
+    @Transactional(readOnly = true)
+    public UserFact findByKey(String tenantId, String userId, String factKey) {
+        if (isBlank(userId) || isBlank(factKey)) {
+            return null;
+        }
+        return repository.findByTenantIdAndUserIdAndFactKey(
+                normalizeTenant(tenantId), userId, factKey.trim()).orElse(null);
+    }
+
     // ------------------------------------------------------------------ 写入
 
     /**
@@ -84,11 +99,27 @@ public class UserFactService {
      */
     @Transactional
     public UserFact save(String tenantId, String userId, String factKey, String factValue, String category) {
+        return save(tenantId, userId, factKey, factValue, category, UserFactSource.manual);
+    }
+
+    /**
+     * 新增或更新一条画像（upsert），**并指定来源**。
+     *
+     * <p>供「自动抽取 → 用户确认 → 采纳」链路使用：采纳时来源写 {@link UserFactSource#auto}，
+     * 让界面能标出"这条是系统猜的、你看过并认可了"，与用户自己手填的区分开。</p>
+     *
+     * <p>⚠️ 但**已存在同名项时仍会把来源收回 manual** —— 见下方注释：一旦值被改动过
+     * （无论改的人是谁），它就不再是"系统原样推测"，标成 auto 会误导。</p>
+     */
+    @Transactional
+    public UserFact save(String tenantId, String userId, String factKey, String factValue,
+                         String category, UserFactSource source) {
         String tenant = normalizeTenant(tenantId);
         requireUserId(userId);
         String key = requireText(factKey, "画像的键不能为空", 100);
         String value = requireText(factValue, "画像的内容不能为空", 1000);
         UserFactCategory cat = UserFactCategory.of(category);
+        UserFactSource src = source == null ? UserFactSource.manual : source;
 
         UserFact fact = repository.findByTenantIdAndUserIdAndFactKey(tenant, userId, key).orElse(null);
         if (fact == null) {
@@ -99,13 +130,16 @@ public class UserFactService {
                     .factKey(key)
                     .factValue(value)
                     .category(cat)
-                    .source(UserFactSource.manual)
+                    .source(src)
                     .build();
         } else {
             fact.setFactValue(value);
             fact.setCategory(cat);
-            // 用户手改过就把来源收回 manual —— 自动抽取写入的内容一经用户编辑，
-            // 就算"用户确认过的"，不该继续标成系统推测（见 UserFactSource 的说明）。
+            // 已存在同名项 ⇒ 这是"覆盖已有认知"而不是"新增一条推测"。
+            // 无论由谁触发（用户手改、或用户采纳了一条与旧值不同的候选），
+            // 覆盖后的内容都已被看过与认可，因此来源收回 manual ——
+            // 继续标 auto 会让人误以为"系统自己写进去的、没人看过"，
+            // 而那条路径恰恰是最危险的（见 UserFactSource 的说明）。
             fact.setSource(UserFactSource.manual);
         }
         return repository.save(fact);

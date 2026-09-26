@@ -18,6 +18,11 @@ export const CANVAS_TO_BACKEND: Record<string, string> = {
   condition: 'Condition',
   tool: 'Tool',
   transform: 'Transform',
+  // 2026-09-26 加：后端已有 LoopNodeExecutor / ParallelNodeExecutor。
+  // ⚠️ 这两个类型在 adapter 里有**独立转换逻辑**（不能用通用的"容器 → branches"那条路径），
+  //    见 adapter.ts 的 toBackend / toCanvas 注释。
+  loop: 'Loop',
+  parallel: 'Parallel',
 };
 
 /** 后端 NodeType 枚举 → 画布节点类型。 */

@@ -43,23 +43,49 @@ function pickNode(props: unknown): FlowNodeEntity | undefined {
 /**
  * 生成新节点 JSON（复用节点注册表的默认数据，保证与拖入行为一致）。
  *
- * 条件分支额外带上两个空分支槽（FlowGram 的 `block` 容器）：否则条件节点没有分支、
- * 折叠按钮与分支内加号都不会出现，用户也无处填写分支条件。
+ * <p>三种「复合节点」需要带空的分支槽（FlowGram 的 `block` 容器）：条件分支 / 循环 / 并行。
+ * 没有这些槽，节点就没有折叠按钮与分支内加号，用户无处挂载子节点 —— 而这些槽正是
+ * adapter 转换的依据（条件 → `branches`、循环 → `config.loop_body`、并行 → `next` 数组）。</p>
  */
 export function buildNodeJson(type: string) {
   const registry = CANVAS_NODE_REGISTRIES.find((r) => r.type === type);
   const base = registry?.onAdd
     ? registry.onAdd()
     : { id: `${type}_${Date.now().toString(36)}`, type, data: { title: type, config: {} } };
-  if (type !== 'condition') return base;
   const stamp = Date.now().toString(36);
-  return {
-    ...base,
-    blocks: [
-      { id: `${base.id}_branch_a_${stamp}`, type: 'block', data: { condition: 'true' }, blocks: [] },
-      { id: `${base.id}_branch_b_${stamp}`, type: 'block', data: { condition: 'false' }, blocks: [] },
-    ],
-  };
+
+  if (type === 'condition') {
+    return {
+      ...base,
+      blocks: [
+        { id: `${base.id}_branch_a_${stamp}`, type: 'block', data: { condition: 'true' }, blocks: [] },
+        { id: `${base.id}_branch_b_${stamp}`, type: 'block', data: { condition: 'false' }, blocks: [] },
+      ],
+    };
+  }
+
+  // 循环：单个"循环体"槽。它的首个可执行节点会成为后端的 config.loop_body。
+  if (type === 'loop') {
+    return {
+      ...base,
+      blocks: [
+        { id: `${base.id}_body_${stamp}`, type: 'block', data: { role: 'body' }, blocks: [] },
+      ],
+    };
+  }
+
+  // 并行：两个并发分支槽。每个槽的首个可执行节点会成为后端 next 数组的一项。
+  if (type === 'parallel') {
+    return {
+      ...base,
+      blocks: [
+        { id: `${base.id}_par_a_${stamp}`, type: 'block', data: {}, blocks: [] },
+        { id: `${base.id}_par_b_${stamp}`, type: 'block', data: {}, blocks: [] },
+      ],
+    };
+  }
+
+  return base;
 }
 
 /** 节点库面板（点击加号时弹出）。 */

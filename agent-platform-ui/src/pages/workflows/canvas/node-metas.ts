@@ -90,6 +90,20 @@ export const NODE_METAS: NodeTypeMeta[] = [
     color: '#faad14',
   },
   {
+    type: 'loop',
+    label: '循环',
+    group: '逻辑',
+    description: '重复执行循环体；有迭代上限与总超时两道安全阀',
+    color: '#c41d7f',
+  },
+  {
+    type: 'parallel',
+    label: '并行',
+    group: '逻辑',
+    description: '并发执行多个分支；各分支变量互相隔离',
+    color: '#08979c',
+  },
+  {
     type: 'transform',
     label: '变量转换',
     group: '逻辑',
@@ -250,6 +264,39 @@ export const NODE_FIELDS: Record<string, CanvasFieldSpec[]> = {
       summary: true,
     },
     { name: 'outputVar', label: '输出变量名', kind: 'text', placeholder: 'transformed' },
+  ],
+  // 循环体入口由画布上的分支块决定（转成后端的 config.loop_body），**不在表单里填** ——
+  // 让用户手打节点 id 既难用又易错。其余配置项与后端 LoopNodeExecutor 一一对应。
+  loop: [
+    {
+      name: 'config.max_iterations',
+      label: '最大迭代次数',
+      kind: 'number',
+      placeholder: '20（硬上限 1000）',
+      summary: true,
+    },
+    {
+      name: 'config.timeout_seconds',
+      label: '总超时(秒)',
+      kind: 'number',
+      placeholder: '120',
+    },
+    {
+      name: 'config.while',
+      label: '继续条件',
+      kind: 'text',
+      placeholder: '留空则跑满迭代次数；如 ${i} < 5',
+    },
+    {
+      name: 'config.index_var',
+      label: '迭代序号变量名',
+      kind: 'text',
+      placeholder: 'i（从 0 开始，供循环体引用）',
+    },
+  ],
+  // 并行无配置项：分支由画布上的多个分支块决定（转成后端的 next 数组）。
+  parallel: [
+    { name: 'outputVar', label: '分支清单变量名', kind: 'text', placeholder: 'par_info' },
   ],
 };
 

@@ -122,6 +122,17 @@ function defaultData(type: string): Record<string, unknown> {
       return { ...base, outputVar: 'decision', config: {} };
     case 'transform':
       return { ...base, outputVar: 'transformed', config: { mapping: '{}' } };
+    // 循环：**刻意不给 outputVar** —— Loop 节点本身不产生结果（它的"结果"是循环体写入的变量）。
+    // 默认条件留空 ⇒ 跑满 max_iterations 次；想按条件收敛再填 while。
+    case 'loop':
+      return {
+        ...base,
+        title: '循环',
+        config: { max_iterations: 20, timeout_seconds: 120, index_var: 'i' },
+      };
+    // 并行：产出分支清单供下游引用；分支由画布上的分支块决定。
+    case 'parallel':
+      return { ...base, title: '并行', outputVar: 'par_info', config: {} };
     default:
       return base;
   }

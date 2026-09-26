@@ -83,3 +83,73 @@ export function rebuildVectorMemory() {
 export function purgeVectorMemory() {
   return http.delete<{ deleted: number }>('/api/v1/memory/vector/purge');
 }
+
+// ---------------------------------------------------------------------------
+// 自动抽取的画像候选（2026-09-26 加）
+//
+// 这是「用户画像自动抽取」的**确认环节**：系统从对话里识别出关于用户的稳定事实后，
+// 先落成候选、**不直接生效**；用户在界面上一一采纳或忽略。
+//
+// 顺序是刻意的 —— 先让用户对这份数据有控制感（看得见、改得动、删得掉），
+// 才谈得上让系统自动往里写。抽取结果若直接生效，用户永远不会知道
+// "模型为什么突然换了口气"，也无从纠正一条记错的信息。
+// ---------------------------------------------------------------------------
+
+/** 一条待确认的画像候选。 */
+export interface FactCandidateItem {
+  candidateId: string;
+  key: string;
+  value: string;
+  category: FactCategory;
+  categoryLabel: string;
+  /** 抽取自哪个会话、由哪个模型抽取 —— 用户有权知道"你凭什么这么记我" */
+  sourceSessionId: string | null;
+  extractedBy: string | null;
+  createdAt: string;
+}
+
+/** 待确认候选列表（最新在前）。 */
+export function listCandidates() {
+  return http.get<FactCandidateItem[]>('/api/v1/memory/profile/candidates');
+}
+
+/** 待确认条数（用于角标，避免为拿计数而拉全量）。 */
+export function countCandidates() {
+  return http.get<{ pending: number }>('/api/v1/memory/profile/candidates/count');
+}
+
+/** 采纳一条候选：搬进正式画像（来源标 auto），随后参与对话上下文。 */
+export function adoptCandidate(candidateId: string) {
+  return http.post<{ factId: string; key: string }>(
+    `/api/v1/memory/profile/candidates/${encodeURIComponent(candidateId)}/adopt`,
+    {},
+  );
+}
+
+/**
+ * 忽略一条候选。
+ *
+ * <p>后端**不会删除记录**，而是打上拒绝时间戳 —— 抽取侧据此跳过该键，
+ * 否则下一轮对话又会把同一件事抽出来重新问一遍。</p>
+ */
+export function rejectCandidate(candidateId: string) {
+  return http.post<void>(
+    `/api/v1/memory/profile/candidates/${encodeURIComponent(candidateId)}/reject`,
+    {},
+  );
+}
+
+/** 采纳全部待确认候选。 */
+export function adoptAllCandidates() {
+  return http.post<{ adopted: number }>('/api/v1/memory/profile/candidates/adopt-all', {});
+}
+
+/** 忽略全部待确认候选（会记住这些键，不再重复抽取）。 */
+export function rejectAllCandidates() {
+  return http.post<{ rejected: number }>('/api/v1/memory/profile/candidates/reject-all', {});
+}
+
+/** 清除全部候选（含已忽略记录）。 */
+export function purgeCandidates() {
+  return http.delete<{ deleted: number }>('/api/v1/memory/profile/candidates/purge');
+}
