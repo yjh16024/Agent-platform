@@ -1,0 +1,23 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# 开发 / 联调环境 overlay。
+# 只声明与 base 的**差异项**，不复制 base 内容（复制会让两边日后各自漂移）。
+# 用法：kubectl apply -k agent-platform-deploy/k8s/overlays/dev
+resources:
+  - ../../base
+
+# 开发环境单副本足够，也便于看日志（多副本时 kubectl logs 要挑 pod）
+replicas:
+  - name: agent-core
+    count: 1
+  - name: agent-gateway
+    count: 1
+
+# 镜像 tag 跟随当前构建（项目版本 1.1.0）。
+# 注意这里写的是 "镜像名" 的 name 段（不含 tag），kustomize 负责替换 tag。
+images:
+  - name: agent-platform/agent-platform-core
+    newTag: 1.1.0
+  - name: agent-platform/agent-platform-gateway
+    newTag: 1.1.0

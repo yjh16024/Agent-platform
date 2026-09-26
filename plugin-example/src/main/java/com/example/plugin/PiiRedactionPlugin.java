@@ -33,7 +33,9 @@ import java.util.regex.Pattern;
  * <p>本插件在"没有命中任何敏感模式"时返回 {@code null} 而不是原文 —— 少一次无谓的替换，
  * 日志里也更容易看出哪些轮次真的被改写过。</p>
  *
- * <p>同样只在<b>非流式</b>链路触发（见 {@link KeywordReplyPlugin} 的说明）。</p>
+ * <p>⚠️ {@code before_output} 在<b>流式链路下不生效</b>（需关闭聊天页的「流式」开关）——
+ * 流式内容已逐块推给前端，事后替换会造成"钩子日志显示已脱敏、用户看到的仍是原文"。
+ * 流式下确有脱敏需求请改用 {@code before_llm} 前置改写。完整矩阵见 {@link AgentHook} 类注释。</p>
  */
 public class PiiRedactionPlugin implements AgentHook {
 

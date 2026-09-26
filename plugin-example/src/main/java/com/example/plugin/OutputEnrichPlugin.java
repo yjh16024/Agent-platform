@@ -20,7 +20,8 @@ import java.util.Map;
  *       返回 {@code null} = 不附加任何东西。</li>
  *   <li>{@link HookContext#input()} 是 LLM 的回复文本；<b>返回值里的东西不会自动出现在回复正文中</b>，
  *       它走的是响应里的 extras 通道。</li>
- *   <li>同样只在<b>非流式</b>链路触发（见 {@link KeywordReplyPlugin} 里的说明）。</li>
+ *   <li>⚠️ {@code after_llm} 在<b>流式链路下不生效</b>（需关闭聊天页的「流式」开关）。
+ *       生效范围矩阵见 {@link AgentHook} 类注释。</li>
  *   <li>这里抛异常不会打断主流程：宿主 {@code AgentPipeline.safelyInvoke} 会捕获并降级跳过。</li>
  * </ul>
  *

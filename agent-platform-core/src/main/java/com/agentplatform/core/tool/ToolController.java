@@ -5,6 +5,7 @@ import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.core.tool.executor.HttpApiTool;
 import com.agentplatform.core.tool.executor.ToolExecutor;
+import com.agentplatform.core.tool.market.McpTemplateService;
 import com.agentplatform.core.tool.market.ToolMarketService;
 import com.agentplatform.core.tool.mcp.McpMarketService;
 import com.agentplatform.core.tool.mcp.McpToolRegistry;
@@ -44,6 +45,7 @@ public class ToolController {
     private final ToolRegistrationService registrationService;
     private final McpMarketService mcpMarketService;
     private final ToolMarketService toolMarketService;
+    private final McpTemplateService mcpTemplateService;
 
     /**
      * HTTP 工具市场：内置精选的**免 Key 公开 API**（天气/汇率/IP/二维码等），可一键注册为 HTTP 工具。
@@ -76,6 +78,20 @@ public class ToolController {
             @RequestParam(required = false) String q,
             @RequestParam(required = false) Integer limit) {
         return ApiResponse.ok(mcpMarketService.list(q, limit));
+    }
+
+    /**
+     * MCP **命令模板**：常用 stdio server 的启动命令（官方 reference 系列）。
+     *
+     * <p>与 {@code /mcp/market} 的分工：market 面向**远程 HTTP** 型服务器；本端点面向
+     * **需要本地拉起进程**的 stdio 型 —— 后者在官方 registry 里只给包名、不给怎么运行，
+     * 所以这里提供**人写好并核对过包名**（npm / PyPI 可查）的命令模板。
+     * 取到后调 {@code POST /tools/mcp/stdio} 注册，命令行允许在注册前修改。</p>
+     */
+    @GetMapping("/mcp/templates")
+    @RequiresPermission("tool:read")
+    public ApiResponse<List<Map<String, Object>>> mcpTemplates() {
+        return ApiResponse.ok(mcpTemplateService.list());
     }
 
     /**

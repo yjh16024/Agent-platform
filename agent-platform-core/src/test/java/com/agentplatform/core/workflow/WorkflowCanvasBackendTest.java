@@ -59,7 +59,18 @@ class WorkflowCanvasBackendTest {
                 WorkflowNode.simple("e", NodeType.End, null, null)), null, null);
         assertDoesNotThrow(() -> validator.validate(def), "Start/End 应可用");
 
-        // 逐个类型断言"校验器不会因缺执行器而拒绝"
+        // 逐个类型断言"校验器不会因缺执行器而拒绝"。
+        // ⚠️ 每个类型都要给**最小合法 config**：本用例只想验证"有执行器"这一件事，
+        // 若 config 留空，节点会因另一条校验（必填 config）被拒 —— 那样失败原因就含混了。
+        Map<NodeType, Map<String, Object>> minConfig = Map.of(
+                NodeType.LLM, Map.of("prompt", "test"),
+                NodeType.KnowledgeBase, Map.of("kb_ids", "kb-1", "query", "test"),
+                NodeType.Skill, Map.of("skill_id", "s-1"),
+                NodeType.Http, Map.of("url", "http://localhost"),
+                NodeType.Plugin, Map.of("tool_name", "t"),
+                NodeType.Agent, Map.of("agent_id", "a-1"),
+                NodeType.Transform, Map.of());
+
         List<NodeType> canvasTypes = List.of(
                 NodeType.LLM, NodeType.KnowledgeBase, NodeType.Skill,
                 NodeType.Http, NodeType.Plugin, NodeType.Agent, NodeType.Condition, NodeType.Transform);
@@ -72,19 +83,25 @@ class WorkflowCanvasBackendTest {
                         WorkflowNode.simple("e", NodeType.End, null, null))
                     : List.of(
                         WorkflowNode.simple("s", NodeType.Start, "n", null),
-                        WorkflowNode.simple("n", type, "e", "out"),
+                        new WorkflowNode("n", type, null, "e", null, "out", null, minConfig.get(type)),
                         WorkflowNode.simple("e", NodeType.End, null, null));
             assertDoesNotThrow(() -> validator.validate(new WorkflowDefinition("t", nodes, null, null)),
                     "类型 " + type + " 应被视为已有执行器");
         }
     }
 
-    /** 未实现执行器的类型（Loop）在保存期被拒。 */
+    /**
+     * 未实现执行器的类型在保存期被拒。
+     *
+     * <p>⚠️ 这里原本用 {@code Loop} 作例子 —— <b>2026-09-26 起 Loop 与 Parallel 都有执行器了</b>，
+     * 于是它不再触发"no executor"，改报 {@code requires config.loop_body}。
+     * 现改用 {@code Function}：它是 {@code NodeType} 里唯一仍无执行器、也不在校验清单里的类型。</p>
+     */
     @Test
     @DisplayName("无执行器的节点类型保存即被拒")
     void unsupportedTypeRejectedAtSave() {
-        WorkflowDefinition def = new WorkflowDefinition("loop", List.of(
-                WorkflowNode.simple("a", NodeType.Loop, null, null)), null, null);
+        WorkflowDefinition def = new WorkflowDefinition("fn", List.of(
+                WorkflowNode.simple("a", NodeType.Function, null, null)), null, null);
         BizException ex = assertThrows(BizException.class, () -> validator.validate(def));
         assertTrue(ex.getMessage().contains("no executor"), "错误信息应说明缺少执行器，实际=" + ex.getMessage());
     }

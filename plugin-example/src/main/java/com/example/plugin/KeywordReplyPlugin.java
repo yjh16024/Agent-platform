@@ -32,9 +32,10 @@ import java.util.Map;
  * <ul>
  *   <li>{@code before_llm} 返回 {@code String} = <b>短路</b>（这一轮不再调 LLM，直接用它当回复）；
  *       返回 {@code null} = 透传继续。</li>
- *   <li><b>只有非流式链路会触发</b>：宿主的 {@code AgentPipeline} 仅在
- *       {@code AgentRuntimeService.run()} 里被调用，{@code runStream()} 完全不经过它。
- *       也就是说聊天页的「流式」开关一旦打开，本插件的钩子会静默失效。</li>
+ *   <li><b>触发范围（2026-09-22 修复后）</b>：{@code before_llm} 在<b>流式与非流式下都生效</b>。
+ *       此前 {@code runStream()} 完全不经过管线，本插件在流式下会静默失效 —— 该问题已修复。
+ *       各钩子点的完整生效矩阵见 {@link AgentHook} 类注释的「钩子的生效范围」一节
+ *       （{@code after_llm} / {@code before_output} 在流式下<b>刻意</b>不生效）。</li>
  *   <li>{@code before_llm} 返回 {@code Map{input: "..."}} = <b>改写输入</b>（2026-09-22 新增）：
  *       改写后的文本会传给 LLM，且后续钩子看到的是改写后的值。此前只有"短路"没有"改写"，
  *       但旧文档把本钩子描述成"可改写请求"，与实现不符 —— 现已补齐。</li>

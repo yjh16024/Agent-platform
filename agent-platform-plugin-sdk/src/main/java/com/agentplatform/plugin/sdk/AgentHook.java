@@ -28,8 +28,22 @@ import com.agentplatform.plugin.sdk.model.HookPoint;
  * {@code AgentPipeline}）。历史遗留：{@code after_llm} 曾被文档描述为"改写输出"，
  * 实际它只收附加产物 —— 要改输出请用 {@code before_output}。</p>
  *
- * <p><b>注意</b>：钩子只在<b>非流式</b>链路（{@code AgentRuntimeService.run()}）触发，
- * 流式（{@code runStream()}）不经过管线。</p>
+ * <h3>钩子的生效范围（2026-09-22 核实）</h3>
+ * <table border="1">
+ *   <caption>流式 / 非流式下各钩子的可用性</caption>
+ *   <tr><th>钩子点</th><th>非流式 {@code run()}</th><th>流式 {@code runStream()}</th></tr>
+ *   <tr><td>{@code before_llm}</td><td>✅ 短路 + 改写</td><td>✅ 短路 + 改写</td></tr>
+ *   <tr><td>{@code on_error}</td><td>✅ 兜底</td><td>✅ 兜底</td></tr>
+ *   <tr><td>{@code after_llm}</td><td>✅ 附加产物</td><td>❌ 不生效</td></tr>
+ *   <tr><td>{@code before_output}</td><td>✅ 替换输出</td><td>❌ 不生效</td></tr>
+ * </table>
+ *
+ * <p>⚠️ <b>本文档此前写的是"钩子只在非流式链路触发，流式不经过管线" —— 该说法已过时。</b>
+ * 当时确实是那样（表现为"一开流式开关，工具调用与插件钩子双双静默失效"），
+ * 2026-09-22 已把 {@code runStream()} 与非流式对齐。流式下 {@code after_llm} 与
+ * {@code before_output} <b>刻意</b>不生效（不是漏做）：流式内容已逐块推给前端，
+ * 事后改写只会造成"钩子日志显示成功、用户看到的仍是原文"这种最难排查的状态。
+ * 流式下需要输出治理请改用 {@code before_llm} 前置改写。</p>
  */
 public interface AgentHook extends Plugin {
 

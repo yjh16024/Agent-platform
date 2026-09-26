@@ -1,6 +1,5 @@
 package com.agentplatform.core.agent.runtime;
 
-import com.agentplatform.common.exception.BizException;
 import com.agentplatform.common.util.IdGenerator;
 import com.agentplatform.common.util.TraceContext;
 import com.agentplatform.core.agent.dto.AgentRunRequest;
@@ -12,6 +11,7 @@ import com.agentplatform.core.log.LogEvent;
 import com.agentplatform.core.log.LogLevel;
 import com.agentplatform.core.log.LogService;
 import com.agentplatform.core.notification.NotificationService;
+import com.agentplatform.core.memory.UserFactExtractor;
 import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.rag.ConversationAttachmentService;
 import com.agentplatform.core.rag.retriever.HybridRetriever;
@@ -176,6 +176,15 @@ public class AgentRuntimeService {
     private AgentPluginRepository agentPluginRepository;
 
     /**
+     * 画像自动抽取（可选：未注入时完全不抽取，保持既有行为）。
+     *
+     * <p>调用点在对话收尾处，且是 **fire-and-forget** —— 它内部有开关（默认关）、
+     * 自己吞掉全部异常，所以这里只需判空后调用，不必包 try/catch、也不该等它。</p>
+     */
+    @Autowired(required = false)
+    private UserFactExtractor userFactExtractor;
+
+    /**
      * 工具调用循环最大轮数（防止模型在 tool_calls 里死循环）。
      *
      * <p><b>2026-09-22：由写死的 5 提为可配置、默认 20。</b>旧值是为「文本注入」式回灌设的 ——
@@ -194,6 +203,121 @@ public class AgentRuntimeService {
     private String defaultModel;
 
     /**
+     * 运行前的「上下文准备」结果（仅为 {@link #prepare} 的载体，不对外暴露）。
+     *
+     * @param agent           已解析的智能体定义
+     * @param userMessage     本轮用户消息（parts[] 含 file 时已注入文件文本）
+     * @param imageExtra      图片附件（base64），无图时为 {@code Map.of()}
+     * @param session         会话（{@code sessionId} 为空时为 null，表示不持久化）
+     * @param gc              合并后的生成参数（请求级覆盖已生效）
+     * @param resolved        解析后的模型绑定（provider/model/baseUrl/apiKey/routing）
+     * @param rag             RAG 检索结果（含引用溯源；未命中时为 null）
+     * @param effectivePrompt 最终系统提示词（人格 → Skill → RAG → 中期摘要 → 长期画像 → 向量召回）
+     * @param sessionHistory  历史回放消息
+     * @param toolSpecs       本轮可用工具声明（未启用时为空列表）
+     */
+    private record PreparedRun(
+            AgentDefinition agent,
+            String userMessage,
+            Map<String, Object> imageExtra,
+            Session session,
+            GenerationConfig gc,
+            ModelBindingService.ResolvedModel resolved,
+            RagRender rag,
+            String effectivePrompt,
+            List<ModelAdapter.ChatMessage> sessionHistory,
+            List<ModelAdapter.ToolSpec> toolSpecs) {
+    }
+
+    /**
+     * 运行前的上下文准备 —— {@link #run} 与 {@link #runStream} 的**唯一**实现。
+     *
+     * <h3>为什么要抽这一步（2026-09-25）</h3>
+     * 这两个入口原本**各自复制了一套完全相同的准备逻辑**（约 70 行）：配额校验 →
+     * 会话解析 → 人格/Skill 组装 → RAG 检索 → 中期摘要 → 长期画像 → 向量召回 →
+     * 插件热挂载 → 历史回放 → 工具声明。
+     *
+     * <p>而这段流程的**顺序是设计契约**（短期 → 中期 → 长期 → 向量，见
+     * {@code ConversationMemoryService} 类注释）。两处复制意味着：只改一边就会造成
+     * <b>「流式与非流式行为不一致」</b> —— 且这种 bug 只在开流式时显现，极难排查
+     * （2026-09-22 之前的流式链路就曾长期缺失工具与钩子）。</p>
+     *
+     * <p>抽成一份之后，"改一处漏一处"在结构上不再可能。
+     * 回归保护见 {@code AgentRuntimeServicePromptParityTest}。</p>
+     *
+     * @param streaming 仅影响启动日志里是否带 {@code streaming=true} 标记，
+     *                  不改变准备结果 —— 两个入口拿到的 {@link PreparedRun} 必须等价。
+     */
+    private PreparedRun prepare(AgentRunRequest req, String runId, String traceId, String tenantId,
+                                boolean streaming) {
+        AgentDefinition agent = agentService.getOrThrow(tenantId, req.agentId());
+
+        logTo(LogLevel.INFO, LogCategory.agent, "run.start agent=" + agent.getName()
+                        + " mode=" + req.mode() + " session=" + req.sessionId()
+                        + (streaming ? " streaming=true" : ""),
+                traceId, runId, tenantId, agent.getAgentId());
+
+        // ⓪ 配额校验（多租户，流式同样计入一次调用）
+        if (quotaService != null) {
+            quotaService.checkAndIncrement(tenantId, "model_calls", null);
+        }
+
+        // ① 合并生成参数（provider/模型未配置时兜底到默认真实模型）+ 解析模型绑定
+        GenerationConfig gc = mergeGenerationConfig(agent.getGenerationConfig(), req.model());
+        ModelBindingService.ResolvedModel resolved = resolveModelBinding(agent, gc);
+
+        // ② 组装用户消息（取最后一条 user 消息；parts[] 含 file 时注入文件文本）
+        String userMessage = extractUserMessage(req, tenantId);
+        // ②.1 提取图片附件（方案 B：image part → 字节 → base64，随请求走视觉通道）
+        List<Map<String, String>> imageData = collectImageData(req, tenantId);
+        Map<String, Object> imageExtra = imageData.isEmpty() ? Map.of() : Map.of("images", imageData);
+
+        // ③ 会话解析（提前到提示词组装前：历史较长时需读取早期摘要；sessionId 为空返回 null 不持久化）
+        Session session = sessionService == null ? null
+                : sessionService.resolve(tenantId, agent.getAgentId(), req.userId(), req.sessionId(), userMessage);
+
+        // ④.1 组装基础系统提示词（人格 → 提示词合并 + 变量填充 + Skill 注入）
+        String basePrompt = withSkillPrompts(agent,
+                assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
+        // ④.2 RAG 知识库自动检索（请求/智能体绑定知识库时，把命中片段注入上下文并生成引用；
+        // 未绑定知识库/检索失败时 retrieveKnowledge 返回 null，等价于普通对话）
+        // ④.3 对话附件自动摄取（方案 C）：文档拖入 → 归入租户附件库 → 并入本次检索范围
+        String attachmentKbId = ensureAttachments(req, tenantId);
+        RagRender rag = retrieveKnowledge(agent, req, userMessage, attachmentKbId);
+        String promptWithRag = rag == null || rag.systemBlock() == null || rag.systemBlock().isBlank()
+                ? basePrompt
+                : basePrompt + rag.systemBlock();
+
+        // ④.6 早期会话摘要续接（历史被截断丢弃的早期轮次压缩进上下文，让「记忆」跨长对话保留）
+        String earlySummary = earlySummaryOf(session);
+        String promptWithSummary = earlySummary == null
+                ? promptWithRag
+                : promptWithRag + "\n\n## 早期会话摘要（较早轮次已压缩，仅作背景参考）\n" + earlySummary;
+        // 长期记忆（用户主动填写的画像）拼在中期摘要之后 ——
+        // 与设计约定的召回顺序一致：短期（会话历史）→ 中期（摘要）→ 长期（画像）→ 向量
+        String userProfile = profileOf(tenantId, req.userId());
+        String promptWithProfile = userProfile == null
+                ? promptWithSummary
+                : promptWithSummary + userProfile;
+        // 向量记忆（第四层）：按语义从该用户**其它会话**里召回相关片段
+        String recalledHistory = recallHistory(tenantId, req.userId(), userMessage,
+                session == null ? null : session.getSessionId());
+        String effectivePrompt = recalledHistory == null
+                ? promptWithProfile
+                : promptWithProfile + recalledHistory;
+
+        // ⑤ 确保插件已挂载（热加载；否则本次运行的钩子根本不存在）
+        ensurePluginsAttached(agent, tenantId);
+
+        // ⑥ 历史回放（会话已在上方解析；让对话「有记忆」）+ 工具声明
+        List<ModelAdapter.ChatMessage> sessionHistory = loadHistory(req, tenantId);
+        List<ModelAdapter.ToolSpec> toolSpecs = resolveToolSpecs(req);
+
+        return new PreparedRun(agent, userMessage, imageExtra, session, gc, resolved, rag,
+                effectivePrompt, sessionHistory, toolSpecs);
+    }
+
+    /**
      * 执行一次 Agent 运行（同步）。
      */
     public AgentRunResponse run(AgentRunRequest req) {
@@ -208,73 +332,24 @@ public class AgentRuntimeService {
         }
 
         return TraceContext.withContext(traceId, runId, tenantId, () -> {
-            AgentDefinition agent = agentService.getOrThrow(tenantId, req.agentId());
-
-            logTo(LogLevel.INFO, LogCategory.agent, "run.start agent=" + agent.getName()
-                            + " mode=" + req.mode() + " session=" + req.sessionId(),
-                    traceId, runId, tenantId, agent.getAgentId());
-
-            // ⓪ 配额校验（多租户）
-            if (quotaService != null) {
-                quotaService.checkAndIncrement(tenantId, "model_calls", null);
-            }
-
-            // ② 合并生成参数（provider/模型未配置时兜底到默认真实模型）
-            GenerationConfig gc = mergeGenerationConfig(agent.getGenerationConfig(), req.model());
-            ModelBindingService.ResolvedModel resolved = resolveModelBinding(agent, gc);
+            // 准备阶段（与非流式共用唯一实现，见 prepare 的注释）
+            final PreparedRun p = prepare(req, runId, traceId, tenantId, false);
+            final AgentDefinition agent = p.agent();
+            final String userMessage = p.userMessage();
+            final Map<String, Object> imageExtra = p.imageExtra();
+            final Session session = p.session();
+            final GenerationConfig gc = p.gc();
+            final ModelBindingService.ResolvedModel resolved = p.resolved();
             final String provider = resolved.provider();
             final String model = resolved.model();
-            // ③ 组装用户消息（取最后一条 user 消息；parts[] 含 file 时注入文件文本）
-            String userMessage = extractUserMessage(req, tenantId);
-            // ③.0 提取图片附件（方案 B：image part → 字节 → base64，随请求走 Spring AI 视觉通道）
-            final List<Map<String, String>> imageData = collectImageData(req, tenantId);
-            final Map<String, Object> imageExtra = imageData.isEmpty() ? Map.of() : Map.of("images", imageData);
-
-            // ④.0 会话解析（提前到提示词组装前：历史较长时需读取早期摘要；sessionId 为空返回 null 不持久化）
-            Session session = sessionService == null ? null
-                    : sessionService.resolve(tenantId, agent.getAgentId(), req.userId(), req.sessionId(), userMessage);
-
-            // ③.1 组装基础系统提示词（人格 → 提示词合并 + 变量填充 + Skill 注入）
-            String basePrompt = withSkillPrompts(agent,
-                    assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
-            // ③.2 RAG 知识库自动检索（请求/智能体绑定知识库时，把命中片段注入上下文并生成引用；
-            // 未绑定知识库/检索失败时 retrieveKnowledge 返回 null，等价于普通对话）
-            // ③.3 对话附件自动摄取（方案 C）：文档拖入 → 归入租户附件库 → 并入本次检索范围
-            String attachmentKbId = ensureAttachments(req, tenantId);
-            RagRender rag = retrieveKnowledge(agent, req, userMessage, attachmentKbId);
-            final String systemPrompt = rag == null || rag.systemBlock() == null || rag.systemBlock().isBlank()
-                    ? basePrompt
-                    : basePrompt + rag.systemBlock();
-
-            // ④.6 早期会话摘要续接（历史被截断丢弃的早期轮次压缩进上下文，让「记忆」跨长对话保留）
-            String earlySummary = earlySummaryOf(session);
-            final String promptWithSummary = earlySummary == null
-                    ? systemPrompt
-                    : systemPrompt + "\n\n## 早期会话摘要（较早轮次已压缩，仅作背景参考）\n" + earlySummary;
-            // 长期记忆（用户主动填写的画像）拼在中期摘要之后 ——
-            // 与设计约定的召回顺序一致：短期（会话历史）→ 中期（摘要）→ 长期（画像）→ 向量
-            final String userProfile = profileOf(tenantId, req.userId());
-            final String promptWithProfile = userProfile == null
-                    ? promptWithSummary
-                    : promptWithSummary + userProfile;
-            // 向量记忆（第四层）：按语义从该用户**其它会话**里召回相关片段
-            final String recalledHistory = recallHistory(tenantId, req.userId(), userMessage,
-                    session == null ? null : session.getSessionId());
-            final String effectivePrompt = recalledHistory == null
-                    ? promptWithProfile
-                    : promptWithProfile + recalledHistory;
-
-            // ④ 确保插件已挂载（热加载）
-            ensurePluginsAttached(agent, tenantId);
-
-            // ④.5 历史回放（会话已在上方解析；让对话「有记忆」）
-            final List<ModelAdapter.ChatMessage> sessionHistory = loadHistory(req, tenantId);
+            final RagRender rag = p.rag();
+            final String effectivePrompt = p.effectivePrompt();
+            final List<ModelAdapter.ChatMessage> sessionHistory = p.sessionHistory();
+            final List<ModelAdapter.ToolSpec> toolSpecs = p.toolSpecs();
 
             // ⑤ 经插件 Hook 管线调用模型（before_llm → LLM → after_llm）
             final long[] latency = {0L};
             final int[] usageTokens = {0, 0};
-            // ⑤.0 解析工具声明（ToolsConfig.enabled + allowed 白名单）
-            final List<ModelAdapter.ToolSpec> toolSpecs = resolveToolSpecs(req);
             PipelineResult pipeline;
             try {
                 pipeline = agentPipeline.run(agent.getAgentId(), runId, userMessage, msg -> {
@@ -365,6 +440,13 @@ public class AgentRuntimeService {
                 // 向量记忆：索引本轮用户消息，供**其它会话**将来按语义召回
                 //（放在落库之后：索引要靠回查刚写入的那条消息拿 messageId）
                 indexConversationMemory(tenantId, req.userId(), session.getSessionId(), userMessage);
+            }
+
+            // 画像自动抽取：fire-and-forget，产物是「待用户确认」的候选（不会直接生效）。
+            // 放在收尾处、且不等它 —— 抽取失败或慢都不该影响用户拿到回复。
+            if (userFactExtractor != null) {
+                userFactExtractor.extractAsync(tenantId, req.userId(), req.sessionId(),
+                        userMessage, pipeline.reply());
             }
 
             logTo(LogLevel.INFO, LogCategory.agent, "run.completed agent=" + agent.getName()
@@ -941,64 +1023,19 @@ public class AgentRuntimeService {
         }
 
         return TraceContext.withContext(traceId, runId, tenantId, () -> {
-            AgentDefinition agent = agentService.getOrThrow(tenantId, req.agentId());
-
-            logTo(LogLevel.INFO, LogCategory.agent, "run.start agent=" + agent.getName()
-                            + " mode=" + req.mode() + " session=" + req.sessionId() + " streaming=true",
-                    traceId, runId, tenantId, agent.getAgentId());
-
-            // ⓪ 配额校验（与非流式一致，流式同样计入一次调用）
-            if (quotaService != null) {
-                quotaService.checkAndIncrement(tenantId, "model_calls", null);
-            }
-
-            // ② 生成参数与模型绑定
-            GenerationConfig gc = mergeGenerationConfig(agent.getGenerationConfig(), req.model());
-            ModelBindingService.ResolvedModel resolved = resolveModelBinding(agent, gc);
+            // 准备阶段（与非流式共用唯一实现，见 prepare 的注释）
+            final PreparedRun p = prepare(req, runId, traceId, tenantId, true);
+            final AgentDefinition agent = p.agent();
+            final String userMessage = p.userMessage();
+            final Map<String, Object> imageExtra = p.imageExtra();
+            final Session session = p.session();
+            final GenerationConfig gc = p.gc();
+            final ModelBindingService.ResolvedModel resolved = p.resolved();
             final String provider = resolved.provider();
             final String model = resolved.model();
-
-            // ③ 用户消息 + 图片附件（与非流式同一条提取路径）
-            String userMessage = extractUserMessage(req, tenantId);
-            final List<Map<String, String>> imageData = collectImageData(req, tenantId);
-            final Map<String, Object> imageExtra =
-                    imageData.isEmpty() ? Map.of() : Map.of("images", imageData);
-
-            // ④ 会话解析（用于历史回放与收尾持久化）
-            final Session session = sessionService == null ? null
-                    : sessionService.resolve(tenantId, agent.getAgentId(), req.userId(),
-                    req.sessionId(), userMessage);
-
-            // ⑤ 系统提示词：人格 + Skill + RAG + 早期摘要（与非流式保持同一条组装路径）
-            String basePrompt = withSkillPrompts(agent,
-                    assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
-            String attachmentKbId = ensureAttachments(req, tenantId);
-            RagRender rag = retrieveKnowledge(agent, req, userMessage, attachmentKbId);
-            String promptWithRag = rag == null || rag.systemBlock() == null || rag.systemBlock().isBlank()
-                    ? basePrompt
-                    : basePrompt + rag.systemBlock();
-            String earlySummary = earlySummaryOf(session);
-            final String promptWithSummary = earlySummary == null
-                    ? promptWithRag
-                    : promptWithRag + "\n\n## 早期会话摘要（较早轮次已压缩，仅作背景参考）\n" + earlySummary;
-            // 长期记忆（用户画像）：与非流式保持同一顺序（短期 → 中期 → 长期 → 向量）
-            final String userProfile = profileOf(tenantId, req.userId());
-            final String promptWithProfile = userProfile == null
-                    ? promptWithSummary
-                    : promptWithSummary + userProfile;
-            // 向量记忆（第四层）：按语义召回其它会话的相关片段
-            final String recalledHistory = recallHistory(tenantId, req.userId(), userMessage,
-                    session == null ? null : session.getSessionId());
-            final String effectivePrompt = recalledHistory == null
-                    ? promptWithProfile
-                    : promptWithProfile + recalledHistory;
-
-            // ⑥ 插件热挂载（否则本次运行的钩子根本不存在）
-            ensurePluginsAttached(agent, tenantId);
-
-            // ⑦ 历史回放 + 工具声明
-            final List<ModelAdapter.ChatMessage> sessionHistory = loadHistory(req, tenantId);
-            final List<ModelAdapter.ToolSpec> toolSpecs = resolveToolSpecs(req);
+            final String effectivePrompt = p.effectivePrompt();
+            final List<ModelAdapter.ChatMessage> sessionHistory = p.sessionHistory();
+            final List<ModelAdapter.ToolSpec> toolSpecs = p.toolSpecs();
 
             // ⑧ 前置钩子 before_llm：短路则直接产出该文本，改写则用改写后的消息去调模型
             AgentPipeline.StreamHookResult pre =
@@ -1109,6 +1146,11 @@ public class AgentRuntimeService {
         // 放在落库之后：索引要靠回查刚写入的那条消息拿 messageId。
         if (session != null) {
             indexConversationMemory(tenantId, userId, session.getSessionId(), userMessage);
+        }
+        // 画像自动抽取：与非流式走同一个入口（fire-and-forget，见 UserFactExtractor 的类注释）
+        if (userFactExtractor != null) {
+            userFactExtractor.extractAsync(tenantId, userId,
+                    session == null ? null : session.getSessionId(), userMessage, answer);
         }
         logTo(LogLevel.INFO, LogCategory.agent, "run.completed agent=" + agent.getName()
                         + " model=" + model + " streaming=true toolLoop=" + toolLoop

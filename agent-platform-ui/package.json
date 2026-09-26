@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "sync:dist": "node scripts/sync-dist.mjs",
-    "build:prod": "tsc --noEmit && vite build && node scripts/sync-dist.mjs"
+    "build:prod": "tsc --noEmit && vite build && node scripts/sync-dist.mjs",
+    "test": "node scripts/test-canvas-adapter.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.1",

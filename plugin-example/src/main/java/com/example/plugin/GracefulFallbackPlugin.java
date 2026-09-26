@@ -34,7 +34,8 @@ import com.agentplatform.plugin.sdk.model.HookPoint;
  * 而用户实际收到的是兜底话术，事后排查会对不上账</b>。响应里也会带
  * {@code extras.error_handled = true} 与 {@code extras.error_message}。</p>
  *
- * <p>同样只在<b>非流式</b>链路触发（见 {@link KeywordReplyPlugin} 的说明）。</p>
+ * <p>{@code on_error} 在<b>流式与非流式下都生效</b>（2026-09-22 起；流式链路走
+ * {@code AgentPipeline.onStreamError}）。完整生效矩阵见 {@link AgentHook} 类注释。</p>
  */
 public class GracefulFallbackPlugin implements AgentHook {
 

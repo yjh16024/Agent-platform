@@ -1,0 +1,90 @@
+[
+  {
+    "id": "filesystem",
+    "title": "文件系统（官方 reference）",
+    "description": "让模型读写指定目录下的文件。注意参数里的目录就是它的安全边界 —— 该 server 只能访问这个目录及其子目录。",
+    "tags": ["官方", "文件", "npx"],
+    "commandTemplate": ["npx", "-y", "@modelcontextprotocol/server-filesystem", "{{dir}}"],
+    "parameters": [
+      {
+        "name": "dir",
+        "label": "允许访问的目录",
+        "placeholder": "/absolute/path/to/project",
+        "required": true,
+        "hint": "必须是绝对路径。这是它的权限边界，不要填 / 或用户主目录。"
+      }
+    ]
+  },
+  {
+    "id": "memory",
+    "title": "知识图谱记忆（官方 reference）",
+    "description": "基于本地文件的持久化知识图谱，模型可存取实体与关系。无需参数，数据落在进程工作目录。",
+    "tags": ["官方", "记忆", "npx"],
+    "commandTemplate": ["npx", "-y", "@modelcontextprotocol/server-memory"],
+    "parameters": []
+  },
+  {
+    "id": "sequential-thinking",
+    "title": "结构化思考（官方 reference）",
+    "description": "给模型一个可修订的逐步推理草稿本，适合拆解复杂问题。无外部依赖。",
+    "tags": ["官方", "推理", "npx"],
+    "commandTemplate": ["npx", "-y", "@modelcontextprotocol/server-sequential-thinking"],
+    "parameters": []
+  },
+  {
+    "id": "everything",
+    "title": "全功能演示（官方 reference）",
+    "description": "官方用于测试与演示的 server，把 MCP 各类能力都暴露了一遍。适合验证「stdio 通道是否打通」。",
+    "tags": ["官方", "演示", "npx"],
+    "commandTemplate": ["npx", "-y", "@modelcontextprotocol/server-everything"],
+    "parameters": []
+  },
+  {
+    "id": "fetch",
+    "title": "网页抓取（官方 reference）",
+    "description": "抓取网页并转为 Markdown 供模型阅读。基于 Python 的 mcp-server-fetch，用 uvx 拉起。",
+    "tags": ["官方", "网络", "uvx"],
+    "commandTemplate": ["uvx", "mcp-server-fetch"],
+    "parameters": []
+  },
+  {
+    "id": "git",
+    "title": "Git 仓库操作（官方 reference）",
+    "description": "查看提交历史、diff、文件内容等只读 Git 操作。基于 Python 的 mcp-server-git。",
+    "tags": ["官方", "Git", "uvx"],
+    "commandTemplate": ["uvx", "mcp-server-git", "--repository", "{{repo}}"],
+    "parameters": [
+      {
+        "name": "repo",
+        "label": "仓库路径",
+        "placeholder": "/absolute/path/to/repo",
+        "required": true,
+        "hint": "本地 Git 仓库的绝对路径。参数形式以官方 README 为准，可注册前在下方直接修改。"
+      }
+    ]
+  },
+  {
+    "id": "sqlite",
+    "title": "SQLite 查询（官方 reference）",
+    "description": "对指定 SQLite 数据库做查询与结构探测。基于 Python 的 mcp-server-sqlite。",
+    "tags": ["官方", "数据库", "uvx"],
+    "commandTemplate": ["uvx", "mcp-server-sqlite", "--db-path", "{{db}}"],
+    "parameters": [
+      {
+        "name": "db",
+        "label": "数据库文件路径",
+        "placeholder": "/absolute/path/to/data.db",
+        "required": true,
+        "hint": "SQLite 文件的绝对路径。参数形式以官方 README 为准，可注册前在下方直接修改。"
+      }
+    ]
+  },
+  {
+    "id": "custom",
+    "title": "自定义命令",
+    "description": "不从模板开始，自己写完整命令。留空模板时可用这一条 —— 命令行会被原样交给注册接口。",
+    "tags": ["自定义"],
+    "commandTemplate": ["npx", "-y", ""],
+    "parameters": []
+  }
+]

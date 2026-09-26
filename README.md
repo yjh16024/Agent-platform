@@ -16,7 +16,7 @@
 **让智能体读写文件**（工作区约束 + 工具审批 + 改前快照回滚 + 凭证隔离 + 调用过程可视化），
 以及**皮肤（换肤）体系** —— 第三方皮肤可以在不改平台代码的前提下接管界面外观。
 
-工程层：**可选内置库**（`DB_MODE=embedded` 用 H2 免装 MySQL 直接跑）、**Spring AI 通道**
+工程层：**可选内置库**（启动脚本加 `embedded` 参数即用 H2 免装 MySQL 直接跑）、**Spring AI 通道**
 （**默认开启**：模型调用 / 原生 tool-role 工具循环 / RAG 解析切分 / 可观测走 Spring AI 2.0.1；
 用 `SPRING_AI_ENABLED=false` 可一键回退自研实现，凭证三级回退与加密始终不变）。
 
@@ -297,7 +297,7 @@ flowchart TD
 |------|------|----------|------|
 | JDK | **21 或更高** | ✅ 必需 | 使用预览特性 `ScopedValue`，编译/运行均需 `--enable-preview`（脚本已自动带） |
 | Maven | 3.9+ | ✅ 必需 | 构建依赖；首次构建需联网 |
-| MySQL | 8.x | ✅（默认） | 默认必需；不想装 MySQL 可改用内置 H2：`DB_MODE=embedded`（见「快速开始」方式 C） |
+| MySQL | 8.x | ✅（默认） | 默认必需；不想装 MySQL 可改用内置 H2：启动脚本加 **`embedded` 参数**（见「快速开始」方式 C）。⚠️ **不要把 `DB_MODE` 当作环境变量** —— 那是 `start-core.bat` 的内部变量，对 `java -jar` 无效 |
 | Redis | 7 | ❌ 可选 | 缺失时仅健康检查 DOWN，配额与会话缓存走内存兜底 |
 | Node / npm | 18+ | ❌ 可选 | 仅修改前端源码并重建时需要 |
 | Docker | — | ❌ 可选 | 便捷拉起 MySQL / Redis；不使用则手动装 MySQL |
@@ -369,9 +369,7 @@ start-core.bat embedded rebuild    REM 免装 MySQL：用内置 H2（DB_MODE=emb
 ```bash
 chmod +x start-core.sh
 ./start-core.sh rebuild
-# ⚠️ start-core.sh 只认 rebuild 参数，**不提供 embedded**（H2 免装库目前只有 Windows 的
-#    start-core.bat 支持）。Linux/macOS 要用内置 H2 请手动启动：
-java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.1.0.jar --spring.profiles.active=embedded
+./start-core.sh embedded rebuild   # 免装 MySQL：用内置 H2（与 start-core.bat 语义一致）
 ```
 
 **或手动方式（任意系统）**：
@@ -542,7 +540,8 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests   # 构建可执行 jar
-mvn test                                              # 386 个单元测试（54 个测试类；含 Spring AI 通道、内置库迁移、记忆、工具、工作流画布后端等）
+mvn test                                              # 397 个单元测试（56 个测试类；含 Spring AI 通道、内置库迁移、记忆、工具、工作流画布后端等）
+cd agent-platform-ui && npm test                      # 9 个前端单测（画布 adapter 往返幂等；零新增依赖，用 esbuild + node:test）
 warmup.bat                                            # Windows：依赖预热，"warmup.bat verify" 校验离线构建
 cd agent-platform-ui && npm run build:prod            # 前端构建，产物同步到 core 的 static/
 ```
@@ -553,5 +552,5 @@ cd agent-platform-ui && npm run build:prod            # 前端构建，产物同
 ---
 
 技术栈：Java 21（虚拟线程 + ScopedValue）、Spring Boot 4.1、Spring Data JPA + Flyway、
-MySQL 8（或内置 H2，`DB_MODE=embedded`）、Redis（可选）、Milvus（可选）、Spring AI 2.0.1（可选通道）、
+MySQL 8（或内置 H2，启动加 `embedded`）、Redis（可选）、Milvus（可选）、Spring AI 2.0.1（可选通道）、
 React + Vite + antd、**FlowGram**（拖拽式工作流画布，与 Coze 同源内核）、**Electron + jlink**（桌面绿色版）。

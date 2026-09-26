@@ -1,0 +1,37 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# 生产环境 overlay。
+# 只声明与 base 的**差异项**。
+# 用法：kubectl apply -k agent-platform-deploy/k8s/overlays/prod
+resources:
+  - ../../base
+
+# 显式写出副本数（而不是"继承 base"）：万一将来有人调了 base 的 replicas，
+# 生产不会跟着被静默改变 —— 生产的容量应当是显式决策。
+replicas:
+  - name: agent-core
+    count: 3
+  - name: agent-gateway
+    count: 2
+
+# ⚠️ 发布前必须把 newTag 改成**本次发布的不可变 tag**（推荐 git sha，例如 `sha-0e089af`）。
+#    不要用 `latest`：配合 imagePullPolicy: IfNotPresent 时，节点上已有的 latest 不会被重新拉取，
+#    会出现"明明发了新版、Pod 却还是旧镜像"这种极难排查的情况。
+#    生产建议把 base 的 imagePullPolicy 改为 Always 或使用带 sha 的 tag。
+images:
+  - name: agent-platform/agent-platform-core
+    newTag: 1.1.0
+  - name: agent-platform/agent-platform-gateway
+    newTag: 1.1.0
+
+# 需要为生产单独调资源上限 / 加环境变量时，在这里追加：
+#
+# patches:
+#   - path: patch-resources.yaml
+#     target:
+#       kind: Deployment
+#       name: agent-core
+#
+# （本仓库暂未提供该 patch 文件 —— 资源配额因集群而异，应由部署方按实际容量决定；
+#   框架给一个写死的值反而会误导。）
