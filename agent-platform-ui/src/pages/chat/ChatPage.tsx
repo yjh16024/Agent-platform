@@ -10,6 +10,9 @@ import { AgentResponse, FileAsset } from '../../api/types';
 import { useAppStore } from '../../store/appStore';
 import { useChatStore, ChatMsg } from '../../store/chatStore';
 import ToolCallList from './ToolCallList';
+import WorkspacePicker from '../../components/WorkspacePicker';
+import WorkspaceSuggestBar from '../../components/WorkspaceSuggestBar';
+import { sourceDirOf } from '../../api/workspace';
 import { composerCardHooks, composerSeatHooks, conversationHooks, HOST_ATTRS, SLOTS } from '../../skin/contract';
 // composerSeatHooks 用在 composer 内部（座位层），见该处说明
 import {
@@ -60,6 +63,8 @@ export default function ChatPage() {
   const [busy, setBusy] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [dragging, setDragging] = useState(false);
+  /** 拖入文件的来源目录（用于提示"要不要设为工作区"）；null = 无需提示。 */
+  const [sourceDir, setSourceDir] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const messages: ChatMsg[] = msgsOf(agentId);
@@ -93,6 +98,12 @@ export default function ChatPage() {
       message.warning(`单次最多 ${MAX_ATTACH} 个文件`);
       return;
     }
+    /*
+     * 记录来源目录 → 交给 WorkspaceSuggestBar 决定要不要提示"把它设为工作区"。
+     * 放在这里而不是两个调用点：拖拽（onDrop）与点按钮选择（beforeUpload）**都汇聚到本方法**。
+     * 拿不到路径（浏览器环境）时置 null —— 那样就不提示，不影响上传本身。
+     */
+    setSourceDir(sourceDirOf(file));
     const isImage = file.type.startsWith('image/');
     const placeholder: Attachment = {
       fileName: file.name,
@@ -326,6 +337,11 @@ export default function ChatPage() {
            */
         }}
       >
+        {/* 文件来源目录提示：只有"当前工作区够不着"时才出现，且可一键忽略 */}
+        {sourceDir && (
+          <WorkspaceSuggestBar dir={sourceDir} onDismiss={() => setSourceDir(null)} />
+        )}
+
         {/* 附件速览 */}
         {attachments.length > 0 && (
           <Space
@@ -407,6 +423,8 @@ export default function ChatPage() {
                 <Switch size="small" checked={toolsEnabled} onChange={setToolsEnabled} />
               </Space>
             </Tooltip>
+            {/* 工作区：智能体 fs_* 工具能碰到的目录。常显目录名，因为它是"模型能看到多大范围"的唯一提示 */}
+            <WorkspacePicker />
           </Space>
 
           <Space size={6}>

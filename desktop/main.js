@@ -3,7 +3,7 @@
 // - 单实例锁；退出/窗口关闭回收后端子进程；日志写入 userData/app.log 便于排查。
 'use strict';
 
-const { app, BrowserWindow, ipcMain, nativeTheme, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeTheme, Menu, dialog } = require('electron');
 const { spawn } = require('child_process');
 const http = require('http');
 const net = require('net');
@@ -302,6 +302,21 @@ if (!gotLock) {
 } else {
   // 换肤上报：渲染层调 window.apTheme.set(...) → 落盘 + 更新窗口背景 + 原生明暗
   ipcMain.on('ap:theme', (_event, payload) => saveTheme(payload));
+
+  /*
+   * 工作区：原生目录选择框。
+   *
+   * 这里**只负责"选一个目录"**，不做任何安全判定 —— 校验一律在后端
+   * （`WorkspaceService.checkRootSafety`）。放在这里会让"绕过路径"多一条：
+   * 将来若有别的调用方去设工作区，它不会经过这个 IPC。安全判定只应有一处实现。
+   */
+  ipcMain.handle('ap:pick-directory', async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: '选择智能体可读写的工作目录',
+      properties: ['openDirectory', 'createDirectory'],
+    });
+    return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
+  });
 
   app.on('second-instance', () => {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }

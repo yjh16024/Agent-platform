@@ -1,6 +1,7 @@
 package com.agentplatform.core.tool.fs;
 
 import com.agentplatform.common.exception.BizException;
+import com.agentplatform.common.util.JsonUtils;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -8,9 +9,13 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -54,6 +59,33 @@ public class WorkspaceService {
     /** 工作区根目录（相对路径按进程工作目录解析）。 */
     @Value("${agent-platform.agent.workspace.root:./data/workspace}")
     private String rootConfig;
+
+    /**
+     * 运行时设置的工作区根（界面上选的目录）；{@code null} 表示用配置值。
+     *
+     * <h3>为什么要有它</h3>
+     * 配置值 {@code agent-platform.agent.workspace.root} 只能靠改环境变量或启动参数生效，
+     * 而**桌面版用户没有"改启动参数"的入口** —— 默认的 {@code ./data/workspace} 是个空目录，
+     * 于是"让智能体改我的文件"在界面上**无路可走**（只能改文件去骗它）。
+     * 允许在界面上点选一个目录，是让这条链路真正可用的必要一步。
+     *
+     * <h3>★ 为什么必须是"点选"而不是"自动推断"</h3>
+     * 工作区根 = 模型可读写的**全部范围**。若它随"用户拖了哪个文件"自动漂移，
+     * 用户就会在毫无察觉的情况下失去边界：拖一个 {@code C:\a.txt} 进去，根就变成 {@code C:\}，
+     * 而 {@code fs_read_file} / {@code fs_glob} / {@code fs_grep} **都是只读、不走审批的** ——
+     * **审批弹窗挡得住"写"，挡不住"读"**，用户连拒绝的机会都没有。
+     * 因此设置入口必须由人明确点选、并当场看到"我授权了哪个目录"。
+     */
+    private volatile String overrideRoot;
+
+    /**
+     * 运行时设置的持久化位置（跨重启保留）。
+     *
+     * <p>刻意用文件而不是数据库：这是**本机路径**，不是租户级配置 ——
+     * 存进 DB 会在"多个实例共用一个库"时互相覆盖（各机器的目录根本不同）。</p>
+     */
+    @Value("${agent-platform.agent.workspace.settings-file:./data/workspace.json}")
+    private String settingsFile;
 
     /** 单文件读取上限（字节）。默认 256KB —— 再大塞进上下文只会浪费 token。 */
     @Value("${agent-platform.agent.workspace.max-read-bytes:262144}")
@@ -137,17 +169,188 @@ public class WorkspaceService {
         }
         synchronized (this) {
             if (root == null) {
-                Path p = Path.of(rootConfig == null || rootConfig.isBlank()
-                        ? "./data/workspace" : rootConfig).toAbsolutePath().normalize();
-                try {
-                    Files.createDirectories(p);
-                } catch (IOException e) {
-                    log.warn("[fs] 工作区目录创建失败（{}）：{}", p, e.getMessage());
-                }
-                root = p;
-                log.info("[fs] 工作区根目录：{}", p);
+                loadPersistedOverride();
+                root = resolveRoot();
             }
             return root;
+        }
+    }
+
+    /** 解析生效的根：运行时设置优先，否则用配置值。 */
+    private Path resolveRoot() {
+        boolean overridden = overrideRoot != null && !overrideRoot.isBlank();
+        String configured = overridden ? overrideRoot : rootConfig;
+        Path p = Path.of(configured == null || configured.isBlank()
+                ? "./data/workspace" : configured).toAbsolutePath().normalize();
+        try {
+            Files.createDirectories(p);
+        } catch (IOException e) {
+            log.warn("[fs] 工作区目录创建失败（{}）：{}", p, e.getMessage());
+        }
+        log.info("[fs] 工作区根目录：{}{}", p, overridden ? "（界面设置）" : "（配置）");
+        return p;
+    }
+
+    // ------------------------------------------------------------------ 运行时切换根
+
+    /**
+     * 运行时切换工作区根（界面上点选目录后调用）。
+     *
+     * <p>会先过 {@link #checkRootSafety} 的准入校验 —— 根是安全边界的地基，
+     * 选错了后面四道防线全都建立在错的地方。</p>
+     *
+     * @param rawPath 用户选的目录（绝对路径）
+     * @return 实际生效的规范化路径
+     * @throws BizException 路径不可用、不存在或属于必须拒绝的类别时
+     */
+    public Path setRoot(String rawPath) {
+        Path checked = checkRootSafety(rawPath);
+        this.overrideRoot = checked.toString();
+        synchronized (this) {
+            this.root = null;   // 让下一次 root() 重新解析
+        }
+        persistOverride();
+        log.info("[fs] 工作区已切换：{}", checked);
+        return checked;
+    }
+
+    /** 重置为配置里的默认根（清除界面设置）。 */
+    public void resetRoot() {
+        this.overrideRoot = null;
+        synchronized (this) {
+            this.root = null;
+        }
+        persistOverride();
+        log.info("[fs] 工作区已重置为配置值");
+    }
+
+    /** 当前根是否来自"界面设置"（而非配置/环境变量）。 */
+    public boolean isOverridden() {
+        return overrideRoot != null && !overrideRoot.isBlank();
+    }
+
+    /**
+     * 工作区根的**准入校验** —— 哪些目录才允许被设为工作区。
+     *
+     * <h3>为什么以前不需要它</h3>
+     * 根以前只能由管理员通过配置/环境变量设置，那是**部署时的决定**，天然可信。
+     * 一旦允许在界面上随时改，根就变成了**用户输入**，就必须过一遍准入检查。
+     *
+     * <h3>四类必须拒绝的根</h3>
+     * <ol>
+     *   <li><b>文件系统根</b>（{@code C:\}、{@code /}）—— 等于把整块盘交出去；</li>
+     *   <li><b>系统目录</b>（{@code Windows}、{@code Program Files}、{@code /etc}、{@code /usr} …）——
+     *       改坏系统文件不可逆，且这类目录里没有任何"用户想改的项目文件"；</li>
+     *   <li><b>用户主目录本身</b>（{@code C:\Users\xxx}）—— 它包含桌面、文档、{@code AppData}
+     *       以及全部的编辑器/浏览器数据。用户通常想要的是**主目录下的某个项目目录**，
+     *       所以拒绝主目录本身不损失便利，却挡掉了"整台机器"；</li>
+     *   <li><b>凭据目录本身</b>（{@code .ssh}、{@code .aws} …）—— 复用 {@link ProtectedPaths}
+     *       的名单。注意：**根设在别处时这些目录依然会被挡**（{@code ProtectedPaths} 按相对路径的
+     *       每一段判定），这里拒绝的是"根恰好就是它"，那种情况下目录级保护会失去参照。</li>
+     * </ol>
+     *
+     * <p>校验通过后返回**真实路径**（{@code toRealPath}，解析掉符号链接）——
+     * 必须存真实路径：否则"用软链绕过准入检查"就是一条现成的绕过路径
+     * （软链叫 {@code D:\project}，实际指向 {@code C:\}）。</p>
+     */
+    public static Path checkRootSafety(String rawPath) {
+        if (rawPath == null || rawPath.isBlank()) {
+            throw BizException.badRequest("请选择一个目录");
+        }
+        Path candidate;
+        try {
+            candidate = Path.of(rawPath.trim());
+        } catch (InvalidPathException e) {
+            throw BizException.badRequest("路径不合法：" + e.getMessage());
+        }
+        if (!candidate.isAbsolute()) {
+            throw BizException.badRequest("请提供绝对路径（界面里点选目录即可）");
+        }
+        Path normalized = candidate.normalize();
+        if (!Files.exists(normalized)) {
+            throw BizException.badRequest("目录不存在：" + normalized);
+        }
+        if (!Files.isDirectory(normalized)) {
+            throw BizException.badRequest("这不是一个目录：" + normalized);
+        }
+        // 解析符号链接后再判定 —— 否则软链名字看着无害、实际指向敏感位置就能绕过
+        Path real;
+        try {
+            real = normalized.toRealPath();
+        } catch (IOException e) {
+            throw BizException.badRequest("无法解析该路径：" + e.getMessage());
+        }
+
+        // ① 文件系统根
+        if (real.getParent() == null) {
+            throw BizException.forbidden("不能把「" + real + "」整块盘设为工作区 —— "
+                    + "那样智能体就能读到你盘上的任何文件。请选一个具体项目的目录。");
+        }
+        // ②③④ 逐段判定
+        Path name = real.getFileName();
+        String leaf = name == null ? "" : name.toString().toLowerCase(Locale.ROOT);
+        if (SYSTEM_DIR_NAMES.contains(leaf)) {
+            throw BizException.forbidden("「" + real + "」是系统目录，不允许作为工作区。");
+        }
+        ProtectedPaths guard = new ProtectedPaths();
+        if (guard.isProtectedDirName(leaf)) {
+            throw BizException.forbidden("「" + real + "」是凭据目录，不允许作为工作区 —— "
+                    + "工作区本身不该是一个装密钥的地方。");
+        }
+        Path home = Path.of(System.getProperty("user.home", "")).normalize();
+        if (real.equals(home)) {
+            throw BizException.forbidden("不能把整个用户主目录设为工作区（它会包含桌面、文档与 AppData）。"
+                    + "请选主目录下的**某个项目目录**，例如 " + real.resolve("Desktop") + "\\你的项目。");
+        }
+        return real;
+    }
+
+    /** 必须拒绝的系统目录名（小写；含 Windows 与 Linux 两侧）。 */
+    private static final Set<String> SYSTEM_DIR_NAMES = Set.of(
+            "windows", "program files", "program files (x86)", "programdata", "system32",
+            "syswow64", "$recycle.bin", "recovery", "perflogs",
+            "etc", "usr", "bin", "sbin", "lib", "lib64", "boot", "dev", "proc", "sys", "var");
+
+    // ------------------------------------------------------------------ 持久化
+
+    /** 读取上次界面设置的根（只读一次，由 {@link #root()} 惰性触发）。 */
+    private void loadPersistedOverride() {
+        if (settingsFile == null || settingsFile.isBlank() || overrideRoot != null) {
+            return;
+        }
+        Path f = Path.of(settingsFile);
+        if (!Files.isRegularFile(f)) {
+            return;
+        }
+        try {
+            Map<?, ?> m = JsonUtils.fromJson(Files.readString(f), Map.class);
+            Object v = m == null ? null : m.get("root");
+            if (v instanceof String s && !s.isBlank()) {
+                overrideRoot = s;
+                log.info("[fs] 已读取界面设置的工作区：{}", s);
+            }
+        } catch (Exception e) {
+            // 配置坏了就退回配置值，不要让整个文件工具组起不来
+            log.warn("[fs] 读取工作区设置失败（退回配置值）：{}", e.getMessage());
+        }
+    }
+
+    /** 写入界面设置的根（失败只记日志：不因为它写不进去就让"设置工作区"操作失败）。 */
+    private void persistOverride() {
+        if (settingsFile == null || settingsFile.isBlank()) {
+            return;
+        }
+        try {
+            Path f = Path.of(settingsFile).toAbsolutePath().normalize();
+            if (f.getParent() != null) {
+                Files.createDirectories(f.getParent());
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("root", overrideRoot);
+            m.put("updatedAt", java.time.LocalDateTime.now().toString());
+            Files.writeString(f, JsonUtils.toJson(m));
+        } catch (Exception e) {
+            log.warn("[fs] 保存工作区设置失败（本次设置仅在内存中生效）：{}", e.getMessage());
         }
     }
 
