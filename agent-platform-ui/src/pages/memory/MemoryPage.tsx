@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Alert,
   App as AntApp,
+  Badge,
   Button,
   Card,
   Empty,
@@ -13,9 +14,12 @@ import {
   Space,
   Table,
   Tag,
+  Tooltip,
   Typography,
 } from 'antd';
 import {
+  CheckOutlined,
+  CloseOutlined,
   DeleteOutlined,
   EditOutlined,
   PlusOutlined,
@@ -25,13 +29,20 @@ import {
 } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import {
+  adoptAllCandidates,
+  adoptCandidate,
   deleteFact,
+  listCandidates,
   listFacts,
+  purgeCandidates,
   purgeFacts,
   purgeVectorMemory,
   rebuildVectorMemory,
+  rejectAllCandidates,
+  rejectCandidate,
   saveFact,
   updateFact,
+  type FactCandidateItem,
   type FactCategory,
   type UserFactItem,
 } from '../../api/memory';
@@ -50,12 +61,20 @@ const CATEGORY_OPTIONS: { value: FactCategory; label: string; color: string }[] 
 const CATEGORY_META = new Map(CATEGORY_OPTIONS.map((c) => [c.value, c]));
 
 /**
- * 记忆管理页：长期画像 + 向量记忆。
+ * 记忆管理页：长期画像 + 待确认候选 + 向量记忆。
  *
- * <p>为什么把这两块放在同一页：它们都是"对话之外、但会影响对话"的数据，
- * 用户需要能在一个地方看清"系统记住了我什么"以及"关掉它"。但两块刻意分成
- * 两个卡片而不是混在一张表里 —— 一处是<strong>我主动说的</strong>，一处是
+ * <p>为什么把这几块放在同一页：它们都是"对话之外、但会影响对话"的数据，
+ * 用户需要能在一个地方看清"系统记住了我什么"以及"关掉它"。但几块刻意分成
+ * 独立卡片而不是混在一张表里 —— 一处是<strong>我主动说的</strong>，一处是
  * <strong>系统从对话里推出来的</strong>，混淆会让用户分不清哪条是自己填的。</p>
+ *
+ * <h3>「待确认」这块为什么必须存在</h3>
+ * 自动抽取本意是省去手填的麻烦，但它同时意味着<strong>系统会在用户背后记下关于他的事</strong>。
+ * 若抽取结果直接生效，用户永远不会知道"模型为什么突然换了口气"，也无从纠正记错的信息 ——
+ * 而这份数据会一直影响之后所有对话。<b>所以顺序不能反：先让用户对这份数据有控制感
+ * （看得见、改得动、删得掉），才谈得上让系统自动往里写。</b>
+ *
+ * <p>候选也刻意<strong>不进系统提示词</strong>：只有点了「采纳」才会搬进正式画像并生效。</p>
  *
  * <p>短期（最近几轮）与中期（会话摘要）不在这里管：它们是纯服务端机制，
  * 随对话自然发生、随会话删除而消失，不需要独立开关。</p>
@@ -64,6 +83,9 @@ export default function MemoryPage() {
   const { message, modal } = AntApp.useApp();
   const [facts, setFacts] = useState<UserFactItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [candidates, setCandidates] = useState<FactCandidateItem[]>([]);
+  const [candLoading, setCandLoading] = useState(false);
+  const [candBusy, setCandBusy] = useState(false);
   // 与 AppLayout 同一套取舍：拿不到权限集（未开 RBAC / 演示模式）时视为"不限"，而不是全隐藏
   const [perms, setPerms] = useState<string[] | null>(null);
   const [editing, setEditing] = useState<UserFactItem | null>(null);
@@ -87,12 +109,29 @@ export default function MemoryPage() {
     }
   }, [message]);
 
-  useEffect(() => {
+  const loadCandidates = useCallback(async () => {
+    setCandLoading(true);
+    try {
+      setCandidates(await listCandidates());
+    } catch (e) {
+      message.error(`加载待确认画像失败：${(e as Error).message}`);
+    } finally {
+      setCandLoading(false);
+    }
+  }, [message]);
+
+  /** 刷新按钮同时刷两块：它们的数据是联动的（采纳候选会让正式画像多一条）。 */
+  const refreshAll = useCallback(() => {
     void load();
+    void loadCandidates();
+  }, [load, loadCandidates]);
+
+  useEffect(() => {
+    refreshAll();
     getMe()
       .then((me) => setPerms(me.perms ?? []))
       .catch(() => setPerms(null));
-  }, [load]);
+  }, [refreshAll]);
 
   const openCreate = () => {
     setEditing(null);
@@ -136,21 +175,104 @@ export default function MemoryPage() {
     }
   };
 
+  /**
+   * 清除全部长期记忆 —— **同时清除待确认候选**。
+   *
+   * <p>刻意合并成一个动作：用户点「全部清除」的意图是"别再记我的事了"。
+   * 若只清正式画像而把候选留着，他甚至在界面上看不出还剩东西
+   * （候选不在画像表里），会以为已经清干净 —— 那是最不该出现的结果。
+   * 确认文案里写清楚会一并清除，让他知情。</p>
+   */
   const purgeAll = () => {
+    const pending = candidates.length;
     modal.confirm({
       title: '清除全部长期记忆？',
       content:
-        '这些是你主动填写的个人信息，清除后不可恢复，智能体将不再据此调整回答。',
+        pending > 0
+          ? `将清除你填写的 ${facts.length} 条画像，以及系统识别出的 ${pending} 条待确认候选。清除后不可恢复，平台也不会再保留这些内容（包括"你曾忽略过某项"这一记录）。`
+          : '这些是你主动填写的个人信息，清除后不可恢复，智能体将不再据此调整回答。',
       okText: '全部清除',
       okButtonProps: { danger: true },
       cancelText: '取消',
       onOk: async () => {
         try {
           const r = await purgeFacts();
-          message.success(`已清除 ${r.deleted} 条`);
-          await load();
+          const c = await purgeCandidates();
+          message.success(
+            c.deleted > 0
+              ? `已清除 ${r.deleted} 条画像、${c.deleted} 条候选`
+              : `已清除 ${r.deleted} 条`,
+          );
+          await Promise.all([load(), loadCandidates()]);
         } catch (e) {
           message.error(`清除失败：${(e as Error).message}`);
+        }
+      },
+    });
+  };
+
+  // ---------------------------------------------------------------- 候选：采纳 / 忽略
+
+  const adoptOne = async (row: FactCandidateItem) => {
+    setCandBusy(true);
+    try {
+      await adoptCandidate(row.candidateId);
+      message.success(`已采纳「${row.key}」，可在上方个人画像中查看`);
+      // 采纳会同时改变两块数据（候选少一条、画像多一条），所以两块都刷
+      await Promise.all([load(), loadCandidates()]);
+    } catch (e) {
+      message.error(`采纳失败：${(e as Error).message}`);
+    } finally {
+      setCandBusy(false);
+    }
+  };
+
+  const rejectOne = async (row: FactCandidateItem) => {
+    setCandBusy(true);
+    try {
+      await rejectCandidate(row.candidateId);
+      message.success(`已忽略「${row.key}」，之后不会再提示`);
+      await loadCandidates();
+    } catch (e) {
+      message.error(`忽略失败：${(e as Error).message}`);
+    } finally {
+      setCandBusy(false);
+    }
+  };
+
+  const adoptAll = () => {
+    modal.confirm({
+      title: '采纳全部待确认画像？',
+      content: '它们会写入个人画像，并加入之后所有对话的系统提示词。',
+      okText: '全部采纳',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const r = await adoptAllCandidates();
+          message.success(`已采纳 ${r.adopted} 条`);
+          await Promise.all([load(), loadCandidates()]);
+        } catch (e) {
+          message.error(`采纳失败：${(e as Error).message}`);
+        }
+      },
+    });
+  };
+
+  const rejectAll = () => {
+    modal.confirm({
+      title: '忽略全部待确认画像？',
+      content:
+        '平台会记住"这些信息你不需要"，之后不会再从对话里抽出同样的内容来打扰你。正式画像不受影响。',
+      okText: '全部忽略',
+      okButtonProps: { danger: true },
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const r = await rejectAllCandidates();
+          message.success(`已忽略 ${r.rejected} 条`);
+          await loadCandidates();
+        } catch (e) {
+          message.error(`忽略失败：${(e as Error).message}`);
         }
       },
     });
@@ -243,15 +365,76 @@ export default function MemoryPage() {
     },
   ];
 
+  /**
+   * 候选表格。
+   *
+   * <p>刻意**不显示"发现时间"** —— 用户不关心系统是什么时候发现的，只关心"这条对不对、要不要"。
+   * 但**保留"来源"列**（哪个模型、哪个会话抽出来的）：这是可解释性，用户有权知道
+   * "你凭什么这么记我"。所以宁可挤一点也要留着。</p>
+   */
+  const candidateColumns: ColumnsType<FactCandidateItem> = [
+    {
+      title: '分类',
+      dataIndex: 'category',
+      width: 90,
+      render: (_, row) => {
+        const meta = CATEGORY_META.get(row.category);
+        return <Tag color={meta?.color}>{row.categoryLabel || meta?.label || row.category}</Tag>;
+      },
+    },
+    { title: '键', dataIndex: 'key', width: 150, ellipsis: true },
+    { title: '内容', dataIndex: 'value', ellipsis: true },
+    {
+      title: '来源',
+      dataIndex: 'extractedBy',
+      width: 150,
+      ellipsis: true,
+      render: (v: string | null, row) => (
+        <Tooltip
+          title={row.sourceSessionId ? `来源会话：${row.sourceSessionId}` : '来源会话未记录'}
+        >
+          <Text type="secondary">{v || '未知模型'}</Text>
+        </Tooltip>
+      ),
+    },
+    {
+      title: '操作',
+      width: 140,
+      render: (_, row) => (
+        <Space size="small">
+          <Button
+            size="small"
+            type="link"
+            icon={<CheckOutlined />}
+            disabled={!canManage || candBusy}
+            onClick={() => void adoptOne(row)}
+          >
+            采纳
+          </Button>
+          <Button
+            size="small"
+            type="link"
+            icon={<CloseOutlined />}
+            disabled={!canManage || candBusy}
+            onClick={() => void rejectOne(row)}
+          >
+            忽略
+          </Button>
+        </Space>
+      ),
+    },
+  ];
+
   return (
     <div style={{ padding: 16, maxWidth: 1080 }}>
       <Title level={4} style={{ marginTop: 0 }}>
         长期记忆
       </Title>
       <Paragraph type="secondary" style={{ marginBottom: 16 }}>
-        平台有四层记忆。这里管理其中两层：<b>长期画像</b>由你主动填写、跨会话长期生效；
+        平台有四层记忆。这里管理其中三层：<b>个人画像</b>由你主动填写、跨会话长期生效；
+        <b>待确认的画像</b>是系统从对话里识别出来、等你确认后才生效的；
         <b>向量记忆</b>让你在别的会话里聊过的相关内容能被按语义召回来。
-        另外两层（最近几轮对话、超长会话的早期摘要）随对话自动产生，不需要管理。
+        剩下两层（最近几轮对话、超长会话的早期摘要）随对话自动产生，不需要管理。
       </Paragraph>
 
       <Card
@@ -295,6 +478,68 @@ export default function MemoryPage() {
           dataSource={facts}
           pagination={false}
           locale={{ emptyText: <Empty description="还没有填写任何画像" /> }}
+        />
+      </Card>
+
+      <Card
+        title={
+          <Space size="small">
+            <span>待确认的画像</span>
+            {candidates.length > 0 && <Badge count={candidates.length} />}
+          </Space>
+        }
+        style={{ marginBottom: 16 }}
+        extra={
+          <Space>
+            <Button
+              icon={<CheckOutlined />}
+              disabled={!canManage || candBusy || candidates.length === 0}
+              onClick={adoptAll}
+            >
+              全部采纳
+            </Button>
+            <Button
+              icon={<CloseOutlined />}
+              danger
+              disabled={!canManage || candBusy || candidates.length === 0}
+              onClick={rejectAll}
+            >
+              全部忽略
+            </Button>
+            <Button
+              icon={<ReloadOutlined />}
+              loading={candLoading}
+              onClick={() => void loadCandidates()}
+            >
+              刷新
+            </Button>
+          </Space>
+        }
+      >
+        <Alert
+          type="info"
+          showIcon
+          style={{ marginBottom: 12 }}
+          message="这些是系统从你与智能体的对话里识别出来的，需要你确认后才生效"
+          description={
+            <>
+              采纳后会写入上方「个人画像」，并参与之后所有对话；忽略则不会再提示同类内容。
+              <b>在你确认之前，这些内容不会进入任何对话上下文。</b>
+              自动抽取默认关闭，需部署方以{' '}
+              <Text code>MEMORY_AUTO_PROFILE_ENABLED=true</Text> 开启后才会产生候选。
+            </>
+          }
+        />
+        <Table
+          rowKey="candidateId"
+          size="small"
+          loading={candLoading}
+          columns={candidateColumns}
+          dataSource={candidates}
+          pagination={false}
+          locale={{
+            emptyText: <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无待确认的画像" />,
+          }}
         />
       </Card>
 
