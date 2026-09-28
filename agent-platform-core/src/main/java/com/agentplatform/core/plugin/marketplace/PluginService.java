@@ -24,6 +24,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 /**
@@ -46,6 +47,8 @@ public class PluginService {
     private final AgentService agentService;
     private final PluginRuntime pluginRuntime;
     private final ExtensionRegistry extensionRegistry;
+    /** 配置里密钥字段的加解密与掩码（TTS 这类插件需要用户填真实的付费 API Key）。 */
+    private final PluginConfigSecrets pluginConfigSecrets;
 
     /**
      * 注册插件（上传 / 安装）。
@@ -114,11 +117,17 @@ public class PluginService {
             throw BizException.notFound("plugin", pluginId);
         }
 
-        // 持久化绑定
-        AgentPlugin binding = agentPluginRepository.findByAgentIdAndPluginId(agentId, pluginId)
+        // 持久化绑定。密钥类字段加密落库；若提交回来的是掩码或空值（= 用户没改这一栏），
+        // 沿用库里已保存的密钥 —— 否则前端回显的 "sk-***abcd" 会被当成真密钥存下来，
+        // 之后每次调用都 401，而界面上却仍显示"已配置"。
+        Optional<AgentPlugin> existingBinding = agentPluginRepository.findByAgentIdAndPluginId(agentId, pluginId);
+        Map<String, Object> previousConfig = existingBinding.map(AgentPlugin::getConfig).orElse(null);
+        Map<String, Object> sealedConfig = pluginConfigSecrets.seal(config, previousConfig);
+
+        AgentPlugin binding = existingBinding
                 .map(existing -> {
                     existing.setVersion(version);
-                    existing.setConfig(config);
+                    existing.setConfig(sealedConfig);
                     existing.setEnabled(enabled == null || enabled);
                     return existing;
                 })
@@ -126,7 +135,7 @@ public class PluginService {
                         .agentId(agentId)
                         .pluginId(pluginId)
                         .version(version)
-                        .config(config)
+                        .config(sealedConfig)
                         .enabled(enabled == null || enabled)
                         .attachedBy(tenantId)
                         .build());
@@ -143,9 +152,9 @@ public class PluginService {
                 new Capabilities(caps.knowledgeBaseIds(), caps.toolsetIds(), caps.skillIds(), pluginIds,
                         caps.workflowId(), caps.multimodal()));
 
-        // 热加载
+        // 热加载：插件拿到的是**解密后**的配置 —— 它要用真实密钥去调厂商
         if (enabled == null || enabled) {
-            pluginRuntime.attach(pluginId, agentId, tenantId, config);
+            pluginRuntime.attach(pluginId, agentId, tenantId, pluginConfigSecrets.reveal(sealedConfig));
         }
         log.info("Attached plugin {} to agent {}", pluginId, agentId);
         return binding;
@@ -236,16 +245,26 @@ public class PluginService {
 
     /**
      * 查询某 Agent 已挂载插件及其贡献。
+     *
+     * <p><b>回显 {@code config}</b>（密钥字段为掩码）：前端要据此把已填过的配置显示出来 ——
+     * 否则用户每次打开挂载弹窗都只能看到一个空白表单，无法判断"到底配没配过"，
+     * 只能凭记忆重填一遍（而重填时若他填了新的，旧的就真被覆盖了）。
+     * 也正因为要回显，密钥字段必须是掩码而非明文。</p>
      */
     @Transactional(readOnly = true)
     public List<Map<String, Object>> listAttached(String tenantId, String agentId) {
         List<AgentPlugin> bindings = agentPluginRepository.findByAgentIdAndEnabledTrue(agentId);
-        return bindings.stream().map(b -> Map.<String, Object>of(
-                "plugin_id", b.getPluginId(),
-                "version", b.getVersion() == null ? "" : b.getVersion(),
-                "tools", extensionRegistry.toolNamesOf(agentId, b.getPluginId()),
-                "enabled", b.getEnabled() != null && b.getEnabled()
-        )).toList();
+        List<Map<String, Object>> out = new ArrayList<>(bindings.size());
+        for (AgentPlugin b : bindings) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("plugin_id", b.getPluginId());
+            m.put("version", b.getVersion() == null ? "" : b.getVersion());
+            m.put("tools", extensionRegistry.toolNamesOf(agentId, b.getPluginId()));
+            m.put("enabled", b.getEnabled() != null && b.getEnabled());
+            m.put("config", pluginConfigSecrets.mask(b.getConfig()));
+            out.add(m);
+        }
+        return out;
     }
 
     /**

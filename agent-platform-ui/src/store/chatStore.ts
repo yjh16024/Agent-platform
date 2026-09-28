@@ -16,6 +16,25 @@ export interface ChatMsg {
    * "上一轮是怎么查出来的"。体积可控 —— 入参与结果都由后端截断过。</p>
    */
   toolCalls?: ToolCallInfo[];
+  /**
+   * 本轮回复的语音（TTS 插件产出），`data:audio/...;base64,...`。
+   *
+   * <h3>★ 它刻意<b>不</b>写进 localStorage</h3>
+   * 一段 150 字的语音 base64 后约 400 KB，而 localStorage 上限只有 5~10 MB ——
+   * 若跟着消息一起持久化，<b>聊十几轮就会写满，进而让整个对话历史写入失败</b>
+   * （表现是刷新后历史凭空消失，且没有任何提示）。所以 {@link partialize} 里显式剔除了它：
+   * <b>音频只在当前这次浏览有效，刷新后消失</b>，而文字与工具记录照常保留。
+   *
+   * <p>这个取舍是划算的：用户要回顾的是"它说了什么"，重听请重新发一次。</p>
+   */
+  audioUrl?: string;
+  /**
+   * 该音频是"未配置密钥时的占位音"（TTS 插件在没填 API Key 时产出的提示音）。
+   *
+   * <p>存在的意义：占位音听上去就是一声"滴"—— 用户无从判断这是<b>没配好</b>还是<b>坏了</b>。
+   * 带上这个标记后界面可以直接说明原因并指路。（它是布尔值，可以安全持久化。）</p>
+   */
+  audioMock?: boolean;
 }
 
 interface ChatState {
@@ -106,6 +125,35 @@ export const useChatStore = create<ChatState>()(
           return { byAgent: next, sessionByAgent: nextSession };
         }),
     }),
-    { name: 'ap_chat_history' },
+    {
+      name: 'ap_chat_history',
+      /**
+       * 落盘前的白名单挑选。
+       *
+       * <h3>★ 为什么必须显式挑选，而不是整份存下去</h3>
+       * {@link ChatMsg} 里的 {@code audioUrl} 是几百 KB 的 base64 音频，而 localStorage
+       * 只有 5~10 MB —— 直接 persist 的话，<b>聊十几轮就会写满配额，之后所有历史都写不进去</b>，
+       * 而用户只会看到"刷新之后聊天记录没了"，完全联想不到是音频撑爆的。
+       *
+       * <p>这里用"挑出要存的字段"而不是"删掉不要的字段"，还有一层考虑：
+       * <b>将来给 ChatMsg 加字段时，默认是不落盘的</b>（要落盘得主动加进来）。
+       * 忘加只会丢一点便利，而反过来（默认落盘、忘了排除）会丢整个历史 ——
+       * 两种默认值的失败代价差得远。</p>
+       */
+      partialize: (s) => ({
+        byAgent: Object.fromEntries(
+          Object.entries(s.byAgent).map(([agentId, msgs]) => [
+            agentId,
+            msgs.map((m) => ({
+              role: m.role,
+              content: m.content,
+              ...(m.refs ? { refs: m.refs } : {}),
+              ...(m.toolCalls ? { toolCalls: m.toolCalls } : {}),
+            })),
+          ]),
+        ),
+        sessionByAgent: s.sessionByAgent,
+      }),
+    },
   ),
 );

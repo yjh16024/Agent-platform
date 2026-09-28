@@ -176,6 +176,16 @@ public class AgentRuntimeService {
     private AgentPluginRepository agentPluginRepository;
 
     /**
+     * 插件配置里密钥字段的解密（可选：未注入时按原样使用）。
+     *
+     * <p>库中保存的密钥是密文（见 {@code PluginConfigSecrets}），而插件必须拿到<b>明文</b>
+     * 才能去调厂商。漏掉这一步的表现是「配置明明填了、插件却用不了」——
+     * 而每一段代码单独看都是对的，属于最难排查的一类问题，所以宁可在这里也判空兜住。</p>
+     */
+    @Autowired(required = false)
+    private com.agentplatform.core.plugin.marketplace.PluginConfigSecrets pluginConfigSecrets;
+
+    /**
      * 画像自动抽取（可选：未注入时完全不抽取，保持既有行为）。
      *
      * <p>调用点在对话收尾处，且是 **fire-and-forget** —— 它内部有开关（默认关）、
@@ -996,7 +1006,10 @@ public class AgentRuntimeService {
                         continue;   // 绑定已停用，不该被兜底装回来
                     }
                     if (b.getConfig() != null) {
-                        config = b.getConfig();
+                        // 库里的密钥字段是密文 —— 插件要用明文才能调厂商
+                        config = pluginConfigSecrets == null
+                                ? b.getConfig()
+                                : pluginConfigSecrets.reveal(b.getConfig());
                     }
                 }
             }
@@ -1064,15 +1077,21 @@ public class AgentRuntimeService {
                 logTo(LogLevel.INFO, LogCategory.agent, "run.completed agent=" + agent.getName()
                                 + " shortCircuit=true streaming=true", traceId, runId, tenantId, agent.getAgentId());
                 persistExchange(session, tenantId, runId, userMessage, direct, model);
+                // 短路回复同样是"一轮完整回复"：附加产物（TTS 语音等）在此一并产出
+                Map<String, Object> shortCircuitExtras = sanitizeExtras(
+                        agentPipeline.afterStream(agent.getAgentId(), runId, direct));
                 // ⚠️ 结束帧**每个分支都必须发**：以前由 Controller 统一追加一个 run.completed，
                 // 现在它要带上工具调用记录、只能由这里给出 —— 漏一个分支，前端就一直等不到结束。
                 return Flux.just(RunStreamEvent.delta(direct),
-                        RunStreamEvent.completed(drainToolCalls(runId)));
+                        RunStreamEvent.completed(drainToolCalls(runId), shortCircuitExtras));
             }
             final String streamMessage = pre.message();
 
-            // 流式下不生效的钩子点显式告警（避免"本地测试好、开流式就失效"的隐形坑）
-            agentPipeline.warnStreamingUnsupported(agent.getAgentId(), "after_llm");
+            /*
+             * 流式下真正不生效的只剩 before_output —— 它要改写的是正文，而正文已经逐块发出去了，
+             * 事后替换只会造成"日志说成功、用户看原文"。after_llm 产出的是附加产物（不改正文），
+             * 已改为在 finishStream 里执行、随结束帧下发（2026-09-28），所以不再对它告警。
+             */
             agentPipeline.warnStreamingUnsupported(agent.getAgentId(), "before_output");
 
             // ⑨ 有工具：先非流式跑完工具循环，再把最终答复分块推流
@@ -1100,11 +1119,12 @@ public class AgentRuntimeService {
                                         + " error=" + e.getMessage() + "（已由插件 on_error 兜底）",
                                 traceId, runId, tenantId, agent.getAgentId());
                     }
-                    finishStream(agent, tenantId, runId, traceId, model, userMessage, answer,
-                            session, usageTokens, true, req.userId());
+                    Map<String, Object> toolLoopExtras = finishStream(agent, tenantId, runId, traceId,
+                            model, userMessage, answer, session, usageTokens, true, req.userId());
                     // 工具记录在工具循环**跑完之后**取 —— 此刻才完整
                     return Flux.fromIterable(chunkText(answer))
-                            .concatWith(Flux.just(RunStreamEvent.completed(drainToolCalls(runId))));
+                            .concatWith(Flux.just(
+                                    RunStreamEvent.completed(drainToolCalls(runId), toolLoopExtras)));
                 }).subscribeOn(VIRTUAL_SCHEDULER);
             }
 
@@ -1120,11 +1140,11 @@ public class AgentRuntimeService {
                         return RunStreamEvent.delta(d.text());
                     })
                     .concatWith(Flux.defer(() -> {
-                        // 流正常结束后收尾：存会话 + 记日志 + 派发事件
+                        // 流正常结束后收尾：存会话 + 记日志 + 派发事件 + 附加产物（TTS 语音等）
                         final int[] usage = {0, 0};
-                        finishStream(agent, tenantId, runId, traceId, model, userMessage,
-                                collected.toString(), session, usage, false, req.userId());
-                        return Flux.just(RunStreamEvent.completed(drainToolCalls(runId)));
+                        Map<String, Object> extras = finishStream(agent, tenantId, runId, traceId, model,
+                                userMessage, collected.toString(), session, usage, false, req.userId());
+                        return Flux.just(RunStreamEvent.completed(drainToolCalls(runId), extras));
                     }))
                     .onErrorResume(err -> {
                         // Flux 的 onErrorResume 回调给的是 Throwable，而管线与日志都按 Exception 建模
@@ -1145,21 +1165,37 @@ public class AgentRuntimeService {
                                         + " error=" + e.getMessage() + "（已由插件 on_error 兜底）",
                                 traceId, runId, tenantId, agent.getAgentId());
                         persistExchange(session, tenantId, runId, userMessage, fallback, model);
+                        // 兜底回复同样是完整正文：语音等附加产物照常产出
+                        Map<String, Object> fallbackExtras = sanitizeExtras(
+                                agentPipeline.afterStream(agent.getAgentId(), runId, fallback));
                         return Flux.fromIterable(chunkText(fallback))
-                                .concatWith(Flux.just(RunStreamEvent.completed(drainToolCalls(runId))));
+                                .concatWith(Flux.just(
+                                        RunStreamEvent.completed(drainToolCalls(runId), fallbackExtras)));
                     });
         });
     }
 
     /**
-     * 流式收尾：持久化会话 + 记完成日志 + 派发领域事件。
+     * 流式收尾：持久化会话 + 记完成日志 + 派发领域事件 + <b>收集 after_llm 附加产物</b>。
      *
      * <p>抽出来是因为「工具轮」与「真流式」两条分支的收尾完全一致 ——
      * 分开写迟早会漏掉其中一条（旧实现的流式链路就既没存会话也没发事件）。</p>
+     *
+     * <h3>★ 为什么这里要跑 after_llm（2026-09-28 改）</h3>
+     * 此前流式链路对 {@code after_llm} 只打一条"不生效"的告警。但那对<b>附加产物</b>
+     * （TTS 的 {@code audio_url}）是不必要的限制：它不改动任何已推送的正文，
+     * 与随结束帧下发的 {@code toolCalls} 完全同构。禁用的后果是
+     * <b>TTS 在默认（流式）用法下彻底不可用，且用户从界面上看不出任何原因</b>。
+     *
+     * <p>{@code before_output} 仍然不跑 —— 它要改的是正文，而正文已经发出去了，
+     * 那种"日志说成功、用户看原文"的失败模式才是真正该避免的（见 {@link AgentPipeline}）。</p>
+     *
+     * @return 供结束帧下发的附加产物；无产物时为空 Map
      */
-    private void finishStream(AgentDefinition agent, String tenantId, String runId, String traceId,
-                              String model, String userMessage, String answer, Session session,
-                              int[] usageTokens, boolean toolLoop, String userId) {
+    private Map<String, Object> finishStream(AgentDefinition agent, String tenantId, String runId,
+                                             String traceId, String model, String userMessage,
+                                             String answer, Session session, int[] usageTokens,
+                                             boolean toolLoop, String userId) {
         persistExchange(session, tenantId, runId, userMessage, answer, model);
         // 向量记忆：把本轮用户消息异步索引进索引，供**其它会话**将来按语义召回。
         // 放在落库之后：索引要靠回查刚写入的那条消息拿 messageId。
@@ -1184,6 +1220,64 @@ public class AgentRuntimeService {
                         "short_circuited", Boolean.FALSE,
                         "prompt_tokens", usageTokens == null ? 0 : usageTokens[0],
                         "completion_tokens", usageTokens == null ? 0 : usageTokens[1]));
+
+        // after_llm 附加产物（TTS 语音等）。与工具记录同属"事后补发"，共用结束帧。
+        Map<String, Object> extras = agentPipeline.afterStream(agent.getAgentId(), runId, answer);
+        Map<String, Object> safe = sanitizeExtras(extras);
+        if (!safe.isEmpty()) {
+            logTo(LogLevel.INFO, LogCategory.agent, "run.extras agent=" + agent.getName()
+                            + " keys=" + safe.keySet() + " streaming=true",
+                    traceId, runId, tenantId, agent.getAgentId());
+        }
+        return safe;
+    }
+
+    /** extras 单值长度上限（字符）。语音 data URI 会很长，但它必须是完整的 —— 所以只挡明显的异常值。 */
+    private static final int EXTRA_VALUE_LIMIT = 8_000_000;
+
+    /**
+     * 把插件给的 extras 净化成**一定可 JSON 序列化**的简单结构。
+     *
+     * <h3>★ 为什么必须净化（不是"防御性编程"那么轻）</h3>
+     * 这些值来自第三方插件，类型完全不受控（可能塞进 Throwable、InputStream、自定义 Bean）。
+     * 而它们会被 Jackson 直接写进 SSE 帧 —— <b>一旦某个值序列化不了，抛异常的是整个响应流</b>：
+     * 用户看到的不是"少了段语音"，而是<b>整轮对话中断</b>。
+     *
+     * <p>所以规则是保守的：只放行 {@code String/Number/Boolean/null} 以及它们的
+     * Map/List 组合；其余一律 {@code String.valueOf} 降级（保住信息、绝不抛异常）；
+     * 超长值直接丢弃并留日志。</p>
+     *
+     * @return 可安全序列化的 Map（永不为 null）
+     */
+    private Map<String, Object> sanitizeExtras(Map<String, Object> raw) {
+        if (raw == null || raw.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (Map.Entry<String, Object> e : raw.entrySet()) {
+            String key = e.getKey();
+            if (key == null || key.isBlank()) {
+                continue;
+            }
+            Object value = e.getValue();
+            if (value instanceof CharSequence cs) {
+                String s = cs.toString();
+                if (s.length() > EXTRA_VALUE_LIMIT) {
+                    log.warn("[extras] 丢弃超长值 key={} length={}（上限 {}）", key, s.length(), EXTRA_VALUE_LIMIT);
+                    continue;
+                }
+                out.put(key, s);
+            } else if (value instanceof Number || value instanceof Boolean || value == null) {
+                out.put(key, value);
+            } else if (value instanceof Map<?, ?> || value instanceof List<?>) {
+                // 嵌套结构转成 JSON 文本：宁可前端拿到字符串，也不要冒序列化失败的风险
+                out.put(key, com.agentplatform.common.util.JsonUtils.toJson(value));
+            } else {
+                // Throwable、Stream、任意 Bean… 一律降级为字符串（保住"有个东西"这个信息）
+                out.put(key, String.valueOf(value));
+            }
+        }
+        return out;
     }
 
     /** 保存一轮对话（失败不阻断，流式与非流式共用）。 */

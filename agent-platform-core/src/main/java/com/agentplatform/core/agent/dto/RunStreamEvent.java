@@ -3,6 +3,7 @@ package com.agentplatform.core.agent.dto;
 import com.agentplatform.core.tool.executor.ToolCallRecord;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 流式运行的**事件**（SSE 帧的载荷）。
@@ -20,8 +21,13 @@ import java.util.List;
  * @param type      {@link #TYPE_DELTA} 或 {@link #TYPE_COMPLETED}
  * @param text      增量文本（仅 {@code delta}）
  * @param toolCalls 本轮的工具调用记录（仅 {@code completed}；无调用时为 null）
+ * @param extras    {@code after_llm} 钩子的附加产物（仅 {@code completed}；如 {@code audio_url}）。
+ *                  无产物时为 null。值必须<b>已是可 JSON 序列化的简单类型</b> ——
+ *                  调用方负责净化（见 {@code AgentRuntimeService} 的 extras 过滤），
+ *                  否则这一帧序列化失败会直接掐断整条 SSE 流。
  */
-public record RunStreamEvent(String type, String text, List<ToolCallRecord> toolCalls) {
+public record RunStreamEvent(String type, String text, List<ToolCallRecord> toolCalls,
+                             Map<String, Object> extras) {
 
     /** 增量文本。 */
     public static final String TYPE_DELTA = "delta";
@@ -37,13 +43,36 @@ public record RunStreamEvent(String type, String text, List<ToolCallRecord> tool
     public static final String TYPE_COMPLETED = "completed";
 
     public static RunStreamEvent delta(String text) {
-        return new RunStreamEvent(TYPE_DELTA, text, null);
+        return new RunStreamEvent(TYPE_DELTA, text, null, null);
     }
 
     /** 结束帧：没有工具调用时 {@code toolCalls} 收敛为 null（少序列化一个空数组）。 */
     public static RunStreamEvent completed(List<ToolCallRecord> toolCalls) {
+        return completed(toolCalls, null);
+    }
+
+    /**
+     * 结束帧（带 {@code after_llm} 的附加产物）。
+     *
+     * <h3>为什么附加产物可以挂在这里，而 {@code before_output} 在流式下仍然不可用</h3>
+     * 这两件事常被混为一谈，其实判据完全不同：
+     * <ul>
+     *   <li><b>改写正文</b>（{@code before_output}）在流式下做不到 —— 文本已经逐块推给前端了，
+     *       事后替换只会造成「日志显示改写成功、用户看到的仍是原文」。所以它<strong>应当</strong>继续禁用。</li>
+     *   <li><b>附加产物</b>（{@code after_llm}，典型就是 TTS 的 {@code audio_url}）不改动任何
+     *       已推送的内容，只是随结束帧多带一段数据 —— 与 {@code toolCalls} 完全同构，
+     *       而后者一直就是这么传的。</li>
+     * </ul>
+     * 所以「流式下 after_llm 一律不生效」这条旧约定对<b>附加产物</b>是不必要的限制：
+     * 它让 TTS 这类插件在默认（流式）用法下完全不可用、且用户无从知晓原因。现在改为：
+     * <b>流式下仍会执行 after_llm，但结果只走本帧，不碰正文。</b>
+     *
+     * @param extras 附加产物（可序列化的简单类型）；null 或空表示本轮无附加产物
+     */
+    public static RunStreamEvent completed(List<ToolCallRecord> toolCalls, Map<String, Object> extras) {
         return new RunStreamEvent(TYPE_COMPLETED, null,
-                toolCalls == null || toolCalls.isEmpty() ? null : toolCalls);
+                toolCalls == null || toolCalls.isEmpty() ? null : toolCalls,
+                extras == null || extras.isEmpty() ? null : extras);
     }
 
     public boolean isCompleted() {

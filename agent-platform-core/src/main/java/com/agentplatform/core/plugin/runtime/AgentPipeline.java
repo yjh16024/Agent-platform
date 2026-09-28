@@ -48,19 +48,27 @@ import java.util.function.Function;
  * 只会触发<b>挂在该智能体上</b>的插件钩子（此前是全局触发 —— 挂到 A 的插件会影响 B）。</p>
  *
  * <p><b>2026-09-22 起流式链路也接入了钩子</b>（此前 {@code runStream()} 完全不走管线，
- * 于是"开了流式开关，插件与工具一起静默失效"）。但流式的可用范围**小于**非流式，
- * 是刻意的设计取舍，不是漏做：</p>
+ * 于是"开了流式开关，插件与工具一起静默失效"）。流式的可用范围**小于**非流式，
+ * 但两者并非一刀切：</p>
  * <table border="1">
  *   <caption>流式 / 非流式下各钩子的可用性</caption>
- *   <tr><th>钩子点</th><th>非流式 {@link #run}</th><th>流式 {@link #beforeStream} + {@link #onStreamError}</th></tr>
+ *   <tr><th>钩子点</th><th>非流式 {@link #run}</th><th>流式 {@link #beforeStream} / {@link #afterStream} / {@link #onStreamError}</th></tr>
  *   <tr><td>{@code before_llm}</td><td>✅ 短路 + 改写</td><td>✅ 短路 + 改写</td></tr>
  *   <tr><td>{@code on_error}</td><td>✅ 兜底</td><td>✅ 兜底</td></tr>
- *   <tr><td>{@code after_llm}</td><td>✅ 附加产物</td><td>❌ 不生效</td></tr>
+ *   <tr><td>{@code after_llm}</td><td>✅ 附加产物（并入响应）</td>
+ *       <td>⚠️ <b>只支持附加产物</b>（{@link #afterStream}，随结束帧下发；不能借此改正文）</td></tr>
  *   <tr><td>{@code before_output}</td><td>✅ 替换输出</td><td>❌ 不生效</td></tr>
  * </table>
- * <p>原因：{@code after_llm} 与 {@code before_output} 都建立在「已拿到完整输出」之上，
- * 而流式内容正在逐块推给前端 —— 此时改写只会造成「日志显示钩子成功、用户看到的仍是原文」。
- * 流式下确有输出治理需求时，请用 {@code before_llm} 前置改写。</p>
+ * <p><b>判据是「会不会改动已经显示出去的内容」</b>，而不是「是不是事后执行」：</p>
+ * <ul>
+ *   <li>{@code before_output} 改的是<b>正文</b>，而正文已逐块推给前端 —— 事后替换只会造成
+ *       「日志显示钩子成功、用户看到的仍是原文」。<b>所以流式下应当禁用</b>，
+ *       要治理输出请改用 {@code before_llm} 前置改写。</li>
+ *   <li>{@code after_llm} 产出的是<b>附加物</b>（{@code audio_url} 等），不碰任何已推送内容，
+ *       与随结束帧下发的 {@code toolCalls} 完全同构。此前一并禁掉是过度收紧，
+ *       代价是 TTS 这类插件在默认（流式）用法下彻底不可用、且用户无从知晓原因
+ *       （2026-09-28 修复）。</li>
+ * </ul>
  */
 @Slf4j
 @Component
@@ -121,14 +129,7 @@ public class AgentPipeline {
         }
 
         // ③ after_llm：只收「附加产物」，输出文本此时仍未被改写
-        Map<String, Object> extras = new HashMap<>();
-        for (AgentHook hook : extensions.hooksAt(HookPoint.after_llm, agentId)) {
-            HookContext ctx = new HookContext(llmReply, agentId, runId, new HashMap<>());
-            Object result = safelyInvoke(hook, ctx);
-            if (result instanceof Map<?, ?> map) {
-                map.forEach((k, v) -> extras.put(String.valueOf(k), v));
-            }
-        }
+        Map<String, Object> extras = collectAfterLlm(agentId, runId, llmReply);
 
         // ④ before_output：替换最终输出（放在最后，保证"输出治理"拿到的就是用户将看到的那一版）
         String finalReply = llmReply;
@@ -186,6 +187,46 @@ public class AgentPipeline {
             }
         }
         return new StreamHookResult(effectiveMessage, null);
+    }
+
+    /**
+     * 流式链路的**收尾**钩子：文本已全部推给前端后，收集 {@code after_llm} 的附加产物。
+     *
+     * <h3>★ 为什么流式下可以跑 after_llm，而 before_output 仍然不行</h3>
+     * 两者在流式下的处境<b>根本不同</b>，旧实现把它们一起禁掉是过度收紧：
+     * <ul>
+     *   <li>{@code before_output} 是<b>改写正文</b> —— 文本已经逐块发给前端了，改不动，
+     *       硬跑只会得到「日志显示成功、用户看到的还是原文」。<b>继续禁用是对的。</b></li>
+     *   <li>{@code after_llm} 是<b>附加产物</b>（典型就是 TTS 的 {@code audio_url}）——
+     *       它不碰任何已推送的内容，只是随结束帧多带一段数据。这与 {@code toolCalls}
+     *       走的是同一条通道（见 {@code RunStreamEvent.completed}），后者一直就在这么做。</li>
+     * </ul>
+     * 所以这里放行 {@code after_llm}：<b>它让 TTS 在默认的流式用法下可用</b> ——
+     * 否则用户开了流式（默认就开着）就永远等不到语音，且从界面上完全看不出为什么。
+     *
+     * @param finalReply 本轮的完整回复文本（流式内容拼起来的结果）—— 即"要合成的文本"
+     * @return 合并后的 extras；无人贡献时为空 Map（不是 null，调用方无需判空）
+     */
+    public Map<String, Object> afterStream(String agentId, String runId, String finalReply) {
+        return collectAfterLlm(agentId, runId, finalReply);
+    }
+
+    /**
+     * 执行 {@code after_llm} 钩子并合并返回值。
+     *
+     * <p>抽出来是因为非流式（{@link #run} 第 ③ 步）与流式收尾（{@link #afterStream}）
+     * 要做的事完全相同 —— 分开写迟早会漏掉其中一条的行为差异。</p>
+     */
+    private Map<String, Object> collectAfterLlm(String agentId, String runId, String llmReply) {
+        Map<String, Object> extras = new HashMap<>();
+        for (AgentHook hook : extensions.hooksAt(HookPoint.after_llm, agentId)) {
+            HookContext ctx = new HookContext(llmReply, agentId, runId, new HashMap<>());
+            Object result = safelyInvoke(hook, ctx);
+            if (result instanceof Map<?, ?> map) {
+                map.forEach((k, v) -> extras.put(String.valueOf(k), v));
+            }
+        }
+        return extras;
     }
 
     /**

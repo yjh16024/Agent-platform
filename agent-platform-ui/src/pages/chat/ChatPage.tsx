@@ -208,6 +208,12 @@ export default function ChatPage() {
           if (outcome.toolCalls.length > 0) {
             last.toolCalls = outcome.toolCalls;
           }
+          // 语音（TTS 插件）：与工具记录同属结束帧里的"事后补发"数据，一次挂上即可。
+          // 它不会被持久化（见 chatStore.partialize 的说明：base64 音频会撑爆 localStorage）。
+          if (outcome.audioUrl) {
+            last.audioUrl = outcome.audioUrl;
+            last.audioMock = outcome.audioMock;
+          }
           finalMsgs[lastIdx] = last;
           replace(agentId, finalMsgs);
         }
@@ -218,6 +224,8 @@ export default function ChatPage() {
           content: r.output?.content ?? '(空)',
           refs: r.references && r.references.length > 0 ? r.references : undefined,
           toolCalls: r.toolCalls && r.toolCalls.length > 0 ? r.toolCalls : undefined,
+          // 非流式链路里音频挂在 output.audioUrl（走的是 after_llm 的 extras 通道）
+          audioUrl: r.output?.audioUrl,
         });
       }
     } catch (e) {
@@ -604,6 +612,30 @@ export default function ChatPage() {
                         </Space>
                       </div>
                     )}
+                  {/*
+                    语音播放（TTS 插件产出）。
+                    用原生 <audio controls>：它自带播放/进度/下载，是"能听就行"这个诉求下
+                    最省事也最不挑平台的做法。`preload="metadata"` 避免一进页面就解析整段 base64。
+                  */}
+                  {m.role === 'assistant' && m.audioUrl && (
+                    <div style={{ marginTop: 8 }}>
+                      <Space size={6} align="center">
+                        <audio
+                          controls
+                          src={m.audioUrl}
+                          preload="metadata"
+                          style={{ height: 32, maxWidth: 260, verticalAlign: 'middle' }}
+                        />
+                        {m.audioMock && (
+                          <Tooltip title="TTS 插件已挂载但还没填 API Key —— 在「插件 → 挂载配置」里填入密钥后即为真实语音">
+                            <Tag color="orange" style={{ marginInlineEnd: 0 }}>
+                              占位音
+                            </Tag>
+                          </Tooltip>
+                        )}
+                      </Space>
+                    </div>
+                  )}
                   {/*
                     工具调用可视化：让用户看到"它查过什么"，而不只是最终答案。
                     默认折叠、且无调用时组件自身返回 null —— 见 ToolCallList 的类注释。

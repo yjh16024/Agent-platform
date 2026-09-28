@@ -42,6 +42,18 @@ export interface ToolCallInfo {
 export interface StreamOutcome {
   /** 本轮的工具调用记录；无调用时为空数组（便于调用方直接 length 判断）。 */
   toolCalls: ToolCallInfo[];
+  /**
+   * 本轮回复的语音（挂了 TTS 插件时才有），`data:audio/...;base64,...`。
+   *
+   * <p>它随 {@code run.completed} 帧下发 —— 与工具记录同属"事后补发"的数据。
+   * 之所以流式也能拿到音频：语音是<b>附加产物</b>，不改动任何已经逐块显示出来的正文，
+   * 所以那条"流式下不做事后钩子"的限制对它并不适用。</p>
+   */
+  audioUrl?: string;
+  /** 附加产物里的占位音标记：为 true 表示这是"未配置 API Key"时的演示音，不是真实语音。 */
+  audioMock?: boolean;
+  /** 未配置密钥时的引导文案（后端给出，直接展示给用户即可）。 */
+  audioHint?: string;
 }
 
 export interface RunResponse {
@@ -142,6 +154,10 @@ export async function runAgentStream(
   let buffer = '';
   /** 本轮的工具调用记录：从 run.completed 帧取；无调用时保持空数组。 */
   let toolCalls: ToolCallInfo[] = [];
+  /** 本轮语音（挂了 TTS 插件时才有）。同样只在结束帧里出现。 */
+  let audioUrl: string | undefined;
+  let audioMock = false;
+  let audioHint: string | undefined;
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -167,13 +183,21 @@ export async function runAgentStream(
         }
         throw new Error(msg || '流式运行出错');
       }
-      // 结束帧：后端在工具往返跑完后一次性给出本轮的工具调用记录。
+      // 结束帧：后端在工具往返跑完后一次性给出本轮的工具调用记录与附加产物（语音）。
       // 注意 continue —— 它的 data 不是文本增量，不能落进下面的 onDelta。
       if (event === 'run.completed') {
         try {
           const obj = JSON.parse(data || '{}');
           if (Array.isArray(obj?.toolCalls)) {
             toolCalls = obj.toolCalls as ToolCallInfo[];
+          }
+          // 附加产物由后端平铺在这一层（见 AgentRunController.completedEvent）
+          if (typeof obj?.audio_url === 'string' && obj.audio_url) {
+            audioUrl = obj.audio_url;
+          }
+          audioMock = obj?.mock === true;
+          if (typeof obj?.tts_hint === 'string') {
+            audioHint = obj.tts_hint;
           }
         } catch {
           /* 结束帧解析失败不影响已收到的文本 */
@@ -191,5 +215,5 @@ export async function runAgentStream(
       }
     }
   }
-  return { toolCalls };
+  return { toolCalls, audioUrl, audioMock, audioHint };
 }

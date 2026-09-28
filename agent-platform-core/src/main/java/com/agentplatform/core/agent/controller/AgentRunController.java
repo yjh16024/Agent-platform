@@ -81,11 +81,19 @@ public class AgentRunController {
      * <p>工具调用记录挂在这里（而不是做成实时事件）：有工具的链路是"先同步跑完工具往返、
      * 再分块推流"，工具执行期间这条 Flux 还没发出任何元素，做不出实时推送。
      * 无调用时 data 为空对象，与改造前的行为一致。</p>
+     *
+     * <p>{@code audio_url} 这类 {@code after_llm} 附加产物同样挂在这一帧（见
+     * {@link RunStreamEvent#completed(java.util.List, java.util.Map)} 的说明）——
+     * 它们与工具记录属于同一类"事后补发"的数据，共用一条通道。</p>
      */
     private ServerSentEvent<Map<String, Object>> completedEvent(RunStreamEvent ev) {
         Map<String, Object> data = new LinkedHashMap<>();
         if (ev.toolCalls() != null && !ev.toolCalls().isEmpty()) {
             data.put("toolCalls", ev.toolCalls());
+        }
+        if (ev.extras() != null && !ev.extras().isEmpty()) {
+            // 合并进同一层：前端按 audio_url / mock 等 key 直接取，不必多剥一层
+            data.putAll(ev.extras());
         }
         return ServerSentEvent.<Map<String, Object>>builder()
                 .event("run.completed")
