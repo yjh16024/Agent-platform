@@ -60,7 +60,16 @@ export default function ApprovalPage() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(0);
   const [size, setSize] = useState(20);
-  const [status, setStatus] = useState<ApprovalStatus | 'all'>('pending');
+  /*
+   * 默认看「全部」而不是「待审批」。
+   *
+   * 理由：待审批这件事**已经在对话里由 ToolApprovalWatcher 弹窗就地办完了**，
+   * 用户主动打开这个页面，几乎总是为了另一件事 —— 回看"刚才那次改动到底做了什么"
+   * 或者**撤销它**。
+   * 而原先默认停在 pending，会造成一个很误导的现象：批准完回到这里，页面空空如也
+   * （那条记录已变成 approved），用户会以为"审批根本没记录"（2026-09-28 实际反馈）。
+   */
+  const [status, setStatus] = useState<ApprovalStatus | 'all'>('all');
   const [busyId, setBusyId] = useState<string | null>(null);
   // 与 AppLayout 同一套取舍：拿不到权限集时视为"不限"，而不是全隐藏
   const [perms, setPerms] = useState<string[] | null>(null);
@@ -291,7 +300,7 @@ export default function ApprovalPage() {
   return (
     <div style={{ padding: 16, maxWidth: 1200 }}>
       <Card
-        title="工具审批"
+        title="审批与回滚"
         extra={
           <Space>
             <Radio.Group
@@ -333,7 +342,19 @@ export default function ApprovalPage() {
           loading={loading}
           columns={columns}
           dataSource={items}
-          locale={{ emptyText: <Empty description={status === 'pending' ? '没有待审批的操作' : '暂无记录'} /> }}
+          locale={{
+            emptyText: (
+              <Empty
+                description={
+                  status === 'pending'
+                    ? '没有待审批的操作（待审批会在对话里直接弹窗确认）'
+                    : status === 'approved'
+                      ? '还没有已批准的记录'
+                      : '暂无记录'
+                }
+              />
+            ),
+          }}
           pagination={{
             current: page + 1,
             pageSize: size,

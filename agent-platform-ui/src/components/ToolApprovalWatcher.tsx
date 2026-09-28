@@ -168,7 +168,18 @@ export default function ToolApprovalWatcher() {
               // 批准成功但执行失败：必须说清楚，否则用户以为改成功了
               message.warning(`已批准，但执行失败：${updated.errorMsg}`);
             } else {
-              message.success(updated.result || '已批准并执行');
+              /*
+               * ★ 提示里必须带上"可以撤销"。
+               *
+               * 写文件是**不可逆操作** —— "能回滚"是用户敢点「批准」的前提。
+               * 而撤销入口在「审批与回滚」页，用户在对话里看不到它，
+               * 结果是：他改完文件根本不知道有后悔药（2026-09-28 实际反馈：
+               * 用户以为那个页面是多余的、要求删掉，而它恰恰是唯一的撤销入口）。
+               * 所以每次批准成功都提醒一句，把入口"带到"他眼前。
+               */
+              message.success(updated.result
+                ? `${updated.result}（如需撤销，可在「审批与回滚」页回滚）`
+                : '已批准并执行（如需撤销，可在「审批与回滚」页回滚）');
             }
           } catch (e) {
             message.error(`批准失败：${(e as Error).message}`);

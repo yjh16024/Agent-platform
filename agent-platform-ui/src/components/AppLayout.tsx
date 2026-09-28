@@ -14,7 +14,6 @@ import {
   BookOutlined,
   FolderOutlined,
   ApiOutlined,
-  LineChartOutlined,
   SafetyCertificateOutlined,
   HistoryOutlined,
   SettingOutlined,
@@ -24,8 +23,6 @@ import {
   TeamOutlined,
   LogoutOutlined,
   ProfileOutlined,
-  FileProtectOutlined,
-  BarChartOutlined,
   BellOutlined,
   BulbOutlined,
   AuditOutlined,
@@ -209,17 +206,31 @@ export default function AppLayout() {
       icon: <ToolOutlined />,
       label: '运维工具',
       children: [
-        { key: '/logs', icon: <FileTextOutlined />, label: '运行日志', perm: 'log:read' },
-        // 操作日志与运行日志并列：前者记"人的操作"，后者记"系统运行"
-        { key: '/audit', icon: <FileProtectOutlined />, label: '操作日志', perm: 'audit:read' },
-        { key: '/reports', icon: <BarChartOutlined />, label: '统计报表', perm: 'report:read' },
-        { key: '/observability', icon: <LineChartOutlined />, label: '智能体可观测性', perm: 'log:read' },
+        /*
+         * 2026-09-28 合并：原来的「运行日志 / 操作日志 / 统计报表 / 智能体可观测性」四项
+         * 是**同一批数据**的四种切法（`log_index` 被三个页面共读、`sys_audit_log` 被两个页面共读，
+         * 统计报表本质就是前两者的聚合）。拆成四个并列菜单，反而要用户在脑子里自己建立关系。
+         * 现在收进一个入口，内部按"明细 → 聚合"分 Tab。
+         *
+         * ⚠️ perm 写成"任一命中"：三者底层权限**刻意没有合并**（它们是三类受众：
+         * 技术日志 / 合规审计 / 业务报表，合成一个码就再也做不到
+         * "只给某人看统计、不给看审计"），所以只要拥有任意一个就该看到本入口。
+         */
+        {
+          key: '/logs',
+          icon: <FileTextOutlined />,
+          label: '日志与观测',
+          perm: 'log:read|audit:read|report:read',
+        },
         { key: '/diagnosis', icon: <BugOutlined />, label: '智能诊断', perm: 'log:read' },
         { key: '/prompt', icon: <ThunderboltOutlined />, label: '提示词优化', perm: 'agent:invoke' },
         { key: '/tools', icon: <ApiOutlined />, label: '工具调试', perm: 'tool:read' },
-        // 工具审批放在运维分组：它是"给有副作用的工具调用放行"的管控入口，
+        // 放在运维分组：它是"给有副作用的工具调用放行"的管控入口，
         // 性质与运行日志/审计同类（都是需要人来盯的事）。
-        { key: '/approvals', icon: <AuditOutlined />, label: '工具审批', perm: 'approval:read' },
+        // 2026-09-28 改名为「审批与回滚」：待审批已由对话内弹窗（ToolApprovalWatcher）就地办完，
+        // 这个页面的真实用途变成了**回看历史 + 撤销某次改动**，而"回滚"是它唯一不可替代的能力
+        // （用户当时正因为看不出这一点而要求删掉它）。
+        { key: '/approvals', icon: <AuditOutlined />, label: '审批与回滚', perm: 'approval:read' },
         { key: '/quota', icon: <SafetyCertificateOutlined />, label: '用户配额', perm: 'quota:manage' },
       ],
     },
@@ -246,7 +257,16 @@ export default function AppLayout() {
      * 演示模式下签发的 token 不带角色）都视为**不限** —— 这两种情况下后端本来就不会拦，
      * 若这里全隐藏，用户会看到一个空侧栏却找不到原因。
      */
-    const allowed = (p?: string) => !p || !perms || perms.length === 0 || perms.includes(p);
+    /**
+     * `p` 支持用 {@code |} 分隔多个权限码，**命中任一即可**。
+     *
+     * <p>用于"界面已合并、但底层权限仍独立"的入口：例如「日志与观测」内部有
+     * 运行日志（{@code log:read}）、操作日志（{@code audit:read}）、统计报表（{@code report:read}）
+     * 三个不同权限的 Tab —— 只要拥有**任意一个**，这个菜单项就该出现，
+     * 否则会出现"有权限却看不到入口"。</p>
+     */
+    const allowed = (p?: string) =>
+      !p || !perms || perms.length === 0 || p.split('|').some((x) => perms.includes(x));
 
     const keptByPerm: NavItem[] = [];
     for (const item of menuItems) {

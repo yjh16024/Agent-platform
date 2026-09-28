@@ -3,7 +3,7 @@ import { App as AntApp, Button, Card, Col, Empty, Row, Segmented, Space, Statist
 import { ReloadOutlined, TeamOutlined, RobotOutlined, MessageOutlined, SafetyCertificateOutlined } from '@ant-design/icons';
 import { getReport, type NameCount, type ReportView } from '../../api/report';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 /**
  * 统计报表。
@@ -43,10 +43,9 @@ export default function ReportsPage() {
 
   return (
     <div>
+      {/* 标题由外层「日志与观测」的 Tab 提供，这里不再重复一遍。
+          保留外层 Space 作为右侧时间窗切换控件的容器。 */}
       <Space align="center" style={{ marginBottom: 4, width: '100%', justifyContent: 'space-between' }}>
-        <Title level={4} style={{ margin: 0 }}>
-          统计报表
-        </Title>
         <Space>
           <Segmented
             value={days}

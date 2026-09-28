@@ -123,7 +123,8 @@ export default function ObservabilityPage() {
 
   return (
     <div>
-      <Card title="智能体运行可观测性" style={{ marginBottom: 16 }}>
+      {/* 标题由外层「日志与观测」的 Tab 提供，这里不再重复一遍 */}
+      <Card style={{ marginBottom: 16 }}>
         <Space wrap>
           <Select
             allowClear

@@ -3,7 +3,7 @@ import { App as AntApp, Button, Card, Input, Space, Table, Tag, Tooltip, Typogra
 import { ReloadOutlined, DeleteOutlined, UserOutlined } from '@ant-design/icons';
 import { listAudits, purgeAudits, type AuditLogView } from '../../api/audit';
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 /**
  * 操作日志（审计）。
@@ -77,9 +77,7 @@ export default function AuditPage() {
 
   return (
     <div>
-      <Title level={4} style={{ marginTop: 0 }}>
-        操作日志
-      </Title>
+      {/* 标题由外层「日志与观测」的 Tab 提供，这里不再重复一遍 */}
       <Text type="secondary">
         记录「谁、何时、对什么、做了什么、结果如何」。角色列是操作**当时**的快照；出于安全，不记录请求体。
       </Text>

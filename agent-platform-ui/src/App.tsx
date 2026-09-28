@@ -6,11 +6,10 @@ import Overview from './pages/Overview';
 import AgentList from './pages/agents/AgentList';
 import ChatPage from './pages/chat/ChatPage';
 import PluginMarketplace from './pages/plugins/PluginMarketplace';
-import LogsPage from './pages/ops/LogsPage';
+import OpsLogsPage from './pages/ops/OpsLogsPage';
 import DiagnosisPage from './pages/ops/DiagnosisPage';
 import PromptOptimizePage from './pages/ops/PromptOptimizePage';
 import ToolsPage from './pages/ops/ToolsPage';
-import ObservabilityPage from './pages/ops/ObservabilityPage';
 import QuotaPage from './pages/ops/QuotaPage';
 import KnowledgeBasePage from './pages/rag/KnowledgeBasePage';
 import SessionsPage from './pages/sessions/SessionsPage';
@@ -19,8 +18,6 @@ import WorkflowsPage from './pages/workflows/WorkflowsPage';
 import FilesPage from './pages/files/FilesPage';
 import ModelSettingsPage from './pages/settings/ModelSettingsPage';
 import SkinMarketPage from './pages/skins/SkinMarketPage';
-import AuditPage from './pages/ops/AuditPage';
-import ReportsPage from './pages/ops/ReportsPage';
 import UserManagePage from './pages/system/UserManagePage';
 import RoleManagePage from './pages/system/RoleManagePage';
 import DictManagePage from './pages/system/DictManagePage';
@@ -51,13 +48,19 @@ export default function App() {
         <Route path="/skins" element={<SkinMarketPage />} />
         <Route path="/plugins" element={<PluginMarketplace />} />
         <Route path="/files" element={<FilesPage />} />
-        <Route path="/logs" element={<LogsPage />} />
-        <Route path="/audit" element={<AuditPage />} />
-        <Route path="/reports" element={<ReportsPage />} />
+        {/*
+          「日志与观测」：运行日志 / 智能体可观测性 / 操作日志 / 统计报表
+          四个同源页面合并成一个入口（读的是同一批表，见 OpsLogsPage 的类注释）。
+          三个旧路径**重定向**过去而不是删除 —— 老书签、以及 Overview 首页
+          那个指向 /logs 的入口卡片都还在用它们。
+        */}
+        <Route path="/logs" element={<OpsLogsPage />} />
+        <Route path="/observability" element={<Navigate to="/logs?tab=observability" replace />} />
+        <Route path="/audit" element={<Navigate to="/logs?tab=audit" replace />} />
+        <Route path="/reports" element={<Navigate to="/logs?tab=reports" replace />} />
         <Route path="/diagnosis" element={<DiagnosisPage />} />
         <Route path="/prompt" element={<PromptOptimizePage />} />
         <Route path="/tools" element={<ToolsPage />} />
-        <Route path="/observability" element={<ObservabilityPage />} />
         <Route path="/quota" element={<QuotaPage />} />
         <Route path="/settings" element={<ModelSettingsPage />} />
         <Route path="/system/users" element={<UserManagePage />} />
