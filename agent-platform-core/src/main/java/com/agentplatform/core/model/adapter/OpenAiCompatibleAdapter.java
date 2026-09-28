@@ -128,11 +128,32 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
             return;
         }
         String data = line.substring(5).trim();
+        if (data.isEmpty()) {
+            // 空的 data 帧（部分网关的心跳会发 `data:`）。它不是错误，但**不能送去解析** ——
+            // Jackson 对空串抛 MismatchedInputException，会顺着 Flux 冒到调用方，
+            // 用户看到的是一条 "Failed to parse JSON"，而正文可能已经流完一大半了。
+            return;
+        }
         if ("[DONE]".equals(data)) {
             sink.complete();
             return;
         }
-        JsonNode node = JsonUtils.toJsonNode(data);
+        JsonNode node;
+        try {
+            node = JsonUtils.toJsonNode(data);
+        } catch (Exception e) {
+            /*
+             * 上游偶发非 JSON 帧（心跳、乱入的纯文本、被截断的半帧）。
+             *
+             * 这里**必须兜住**：一帧解析失败不该炸掉整个流 —— 那会让用户看到
+             * "Failed to parse JSON" 这种完全指不出问题的提示，而且已经流出的内容也白费了。
+             * 留痕后跳过这一帧继续读，是唯一合理的处理（与 AnthropicAdapter 保持一致）。
+             * 2026-09-28 实际踩到：用户测试改文件功能时报的就是这条。
+             */
+            log.warn("[model:{}] 忽略非 JSON 的 SSE 数据帧：{}",
+                    providerName, data.length() > 200 ? data.substring(0, 200) + "…" : data);
+            return;
+        }
         JsonNode delta = node.path("choices").path(0).path("delta");
         String content = delta.has("content") ? delta.path("content").asText() : "";
         if (!content.isEmpty()) {

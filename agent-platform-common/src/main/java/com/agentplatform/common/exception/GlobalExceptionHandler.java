@@ -22,7 +22,20 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(BizException.class)
     public ResponseEntity<ApiResponse<Void>> handleBizException(BizException ex) {
-        log.warn("Business exception: [{}] {}", ex.getErrorCode(), ex.getMessage());
+        /*
+         * INTERNAL_ERROR 是"平台自己出错了"，必须留下**堆栈**。
+         *
+         * 其余 errorCode（NOT_FOUND / BAD_REQUEST / FORBIDDEN …）都是"用户输入或权限问题"，
+         * 一行 message 足够定位，打栈只会淹掉日志。
+         * 但 INTERNAL_ERROR 不同 —— 它的 message 往往是笼统的（如 "Failed to parse JSON"），
+         * 只记 message 等于**知道出错了却不知道在哪出错**（2026-09-28 实际踩到：
+         * 用户报错后翻日志只有一行 warn，无从定位是哪个调用点解析了什么内容）。
+         */
+        if ("INTERNAL_ERROR".equals(ex.getErrorCode())) {
+            log.error("Business exception (internal): {}", ex.getMessage(), ex);
+        } else {
+            log.warn("Business exception: [{}] {}", ex.getErrorCode(), ex.getMessage());
+        }
         HttpStatus status = switch (ex.getErrorCode()) {
             case "NOT_FOUND" -> HttpStatus.NOT_FOUND;
             case "BAD_REQUEST", "VALIDATION_ERROR" -> HttpStatus.BAD_REQUEST;

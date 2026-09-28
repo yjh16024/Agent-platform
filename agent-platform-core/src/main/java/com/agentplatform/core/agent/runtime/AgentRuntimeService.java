@@ -584,9 +584,28 @@ public class AgentRuntimeService {
                     || (!allowAll && !allowed.contains(tool.name()))) {
                 continue;
             }
-            // schema 规范化：null / 缺 type 会让厂商直接 400（schema must be 'type: object'）
-            specs.add(new ModelAdapter.ToolSpec(tool.name(), tool.description(),
-                    ToolSchemas.orEmpty(tool.inputSchema())));
+            /*
+             * ⚠️ 单个工具的 schema 出问题**绝不能拖垮整场对话**。
+             *
+             * inputSchema() 各工具是**手写字符串**（见各 fs 工具），写错一个转义就会抛异常；
+             * 而本方法在 prepare() 里、是发起对话的必经之路 —— 不兜住的话，后果是
+             * "**对话功能整个不可用**"，用户只看到一句语焉不详的报错
+             * （2026-09-28 实际故障：FsGrepTool 少了一层转义，整轮对话直接失败，
+             * 且因为当时异常没记堆栈，定位花了很久）。
+             *
+             * 正确处置：**跳过这个工具并留痕** —— 模型少一个工具，远好过完全不能对话。
+             */
+            ModelAdapter.ToolSpec spec;
+            try {
+                // schema 规范化：null / 缺 type 会让厂商直接 400（schema must be 'type: object'）
+                spec = new ModelAdapter.ToolSpec(tool.name(), tool.description(),
+                        ToolSchemas.orEmpty(tool.inputSchema()));
+            } catch (Exception e) {
+                log.warn("[tool] 跳过 schema 非法的工具「{}」（不影响其余工具可用）：{}",
+                        tool.name(), e.getMessage());
+                continue;
+            }
+            specs.add(spec);
         }
         return specs;
     }

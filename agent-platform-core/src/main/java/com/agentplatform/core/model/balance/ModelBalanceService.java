@@ -59,10 +59,19 @@ public class ModelBalanceService {
     private record Vendor(String defaultBaseUrl, String path, boolean stripV1, String note) {
     }
 
-    /** 支持的厂商：provider（小写）→ 端点定义。 */
+    /**
+     * 支持余额查询的厂商（**当前实测可用**）：provider（小写）→ 端点定义。
+     *
+     * <p>⚠️ <b>这张表会过期，这是常态而非异常 —— 判定依据必须以厂商官方公告为准，不要以教程为准。</b>
+     * 硅基流动就是活例子：{@code /v1/user/info} 长期可用、全网教程（含 2026 年的文章）都指向它，
+     * 但它已于 <b>2026-08-14 正式下线</b>（官方 2026-08-11 公告称该接口无法适配平台用户账户体系，
+     * 并声明"后续将适时提供账户级替代 API"）。截至 2026-09-28 替代接口尚未出现，
+     * 因此它已被移到 {@link #UNSUPPORTED} —— <b>不再发那个注定失败的请求</b>。</p>
+     *
+     * <p>如果哪天官方发布了新接口：把它从 {@link #UNSUPPORTED} 移回本表并填上正确 path 即可。</p>
+     */
     private static final Map<String, Vendor> VENDORS = Map.of(
             "deepseek", new Vendor("https://api.deepseek.com", "/user/balance", true, null),
-            "siliconflow", new Vendor("https://api.siliconflow.cn/v1", "/user/info", false, null),
             "moonshot", new Vendor("https://api.moonshot.cn/v1", "/users/me/balance", false, null),
             "kimi", new Vendor("https://api.moonshot.cn/v1", "/users/me/balance", false, null)
     );
@@ -71,6 +80,15 @@ public class ModelBalanceService {
      * 明确不支持余额查询的厂商 → 说明文案（前端展示，避免用户以为是自己配置错了）。
      */
     private static final Map<String, String> UNSUPPORTED = Map.of(
+            /*
+             * siliconflow 曾长期可用（/v1/user/info），但该端点已于 2026-08-14 正式下线 ——
+             * 官方公告称其"无法适配平台用户账户体系"，并承诺"后续适时提供账户级替代 API"。
+             * 截至 2026-09-28 替代接口尚未发布（官方文档「平台系列」下只剩「获取用户模型列表」）。
+             * 放在这里而不是 VENDORS：**明确告诉用户"官方没给接口"比"发请求然后失败"更有用**，
+             * 也省掉一次必然失败的往返。官方一旦发布新接口，把这条移回 VENDORS 即可。
+             */
+            "siliconflow", "硅基流动已于 2026-08-14 下线余额查询接口（官方称将另行提供账户级 API，"
+                    + "截至 2026-09-28 尚未发布）—— 请到官网控制台查看额度",
             "openai", "OpenAI 未开放余额查询接口，只能在官网后台查看用量与额度",
             "qwen", "通义千问（DashScope）未开放余额查询接口，请在阿里云控制台查看",
             "dashscope", "通义千问（DashScope）未开放余额查询接口，请在阿里云控制台查看",
@@ -201,13 +219,41 @@ public class ModelBalanceService {
         try (Response response = httpClient.newCall(request).execute()) {
             String body = response.body() == null ? "" : response.body().string();
             if (!response.isSuccessful()) {
-                throw new IllegalStateException("HTTP " + response.code() + " " + snippet(body));
+                throw new IllegalStateException(describeStatus(response.code(), snippet(body)));
             }
             if (body.isBlank()) {
                 throw new IllegalStateException("响应为空");
             }
             return JsonUtils.toJsonNode(body);
         }
+    }
+
+    /**
+     * 把上游 HTTP 状态翻译成「用户看得懂、且有出路」的说明。
+     *
+     * <h3>★ 为什么 404 / 410 必须单独说</h3>
+     * 它们的含义是「这个**端点**不存在或已被废弃」—— 即<b>厂商改了接口</b>，
+     * 与用户填的 Key / 路径**毫无关系**。
+     *
+     * <p>此前这里原样抛出 {@code HTTP 410 {"code":20092,"message":"This endpoint is deprecated..."}}，
+     * 用户看到一串 JSON 只能猜到"是不是我配错了"（2026-09-28 实际反馈）。
+     * 而正确的话术是：**告诉你结论（接口没了）+ 给出路（去厂商后台看）**。</p>
+     *
+     * <p>原始响应仍然附在末尾 —— 它是排查的唯一线索，不能为了好看而丢掉。</p>
+     */
+    private static String describeStatus(int code, String body) {
+        if (code == 404 || code == 410) {
+            return "服务商已下线或变更余额查询接口（HTTP " + code + "）。"
+                    + "这是**接口本身没了**，与你的 API Key 配置无关 —— "
+                    + "请到服务商官网后台查看额度。原始响应：" + body;
+        }
+        if (code == 401 || code == 403) {
+            return "API Key 无效，或该 Key 没有查询额度的权限（HTTP " + code + "）：" + body;
+        }
+        if (code == 429) {
+            return "查询过于频繁，被服务商限流（HTTP 429）：" + body;
+        }
+        return "HTTP " + code + " " + body;
     }
 
     private String snippet(String body) {

@@ -64,6 +64,23 @@ public class FsGrepTool implements Tool {
                 + "可用 path 限定目录、glob 限定文件类型（如 **/*.java）。";
     }
 
+    /*
+     * ⚠️ 这个 JSON 是**手写字符串**，里面的反斜杠要过**两层**转义：
+     *   Java 文本块  →  JSON 文本  →  实际字符串
+     * 所以要表达"正则里的 \s"，JSON 里得是 \\s，**Java 源码里就得写 \\\\s**。
+     *
+     * 少写一层会发生什么：JSON 里出现 `\s` —— 而 JSON 的合法转义只有
+     * 引号、反斜杠、斜杠、b / f / n / r / t 以及 Unicode 转义，`\s` 不在其中，
+     * 于是 Jackson 直接抛 "Failed to parse JSON"。关键在于它抛在
+     * **prepare() 阶段**（见 resolveToolSpecs），于是**整场对话直接不可用**，
+     * 而用户只看到一句语焉不详的提示。
+     *
+     * 2026-09-28 真实故障就是这么来的：这里少了一层转义，且因为"工具"开关平时是关的
+     * （关着就不会调 inputSchema），这个 bug 潜伏到用户第一次开工具才爆出来。
+     * 排查代价极大 —— 后来是靠给 GlobalExceptionHandler 补堆栈才定位到这一行。
+     *
+     * **改完务必跑 ToolSchemaValidityTest**（它会解析所有已注册工具的 schema）。
+     */
     @Override
     public JsonNode inputSchema() {
         return JsonUtils.toJsonNode("""
@@ -72,7 +89,7 @@ public class FsGrepTool implements Tool {
                   "properties": {
                     "pattern": {
                       "type": "string",
-                      "description": "正则表达式，如 FsReadFileTool 或 class\\s+\\w+Service"
+                      "description": "正则表达式，如 FsReadFileTool 或 class\\\\s+\\\\w+Service"
                     },
                     "path": {
                       "type": "string",
