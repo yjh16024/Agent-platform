@@ -287,8 +287,9 @@ public class AgentRuntimeService {
                 : sessionService.resolve(tenantId, agent.getAgentId(), req.userId(), req.sessionId(), userMessage);
 
         // ④.1 组装基础系统提示词（人格 → 提示词合并 + 变量填充 + Skill 注入）
-        String basePrompt = withSkillPrompts(agent,
-                assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
+        // 顺序：人格/模板 → Skill 正文 → 输出格式说明（格式说明放最后，最不容易被长 Skill 淹没）
+        String basePrompt = withRenderGuide(withSkillPrompts(agent,
+                assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req)));
         // ④.2 RAG 知识库自动检索（请求/智能体绑定知识库时，把命中片段注入上下文并生成引用；
         // 未绑定知识库/检索失败时 retrieveKnowledge 返回 null，等价于普通对话）
         // ④.3 对话附件自动摄取（方案 C）：文档拖入 → 归入租户附件库 → 并入本次检索范围
@@ -1130,10 +1131,29 @@ public class AgentRuntimeService {
 
             // ⑩ 无工具：真流式；同时累积全文用于会话持久化，并用 on_error 兜底失败
             final StringBuilder collected = new StringBuilder();
+            /*
+             * ★ 流式用量（2026-09-29 新增）。
+             *
+             * 此前这个数组是写在下面 Flux.defer 里的 {0,0} 字面量 —— 也就是**流式链路的
+             * token 用量从来没被采集过**，只有"带工具的那条"（走非流式 call）才准。
+             * 而流式是默认用法，于是用量统计长期只在关掉流式时才是对的。
+             *
+             * 现在从流的 **done 帧**（`ChatDelta.aggregate`，见 SpringAiModelAdapter.stream）取值。
+             * ⚠️ 必须放在 defer 外面、并用 doOnNext 在 filter **之前**捕获：
+             * done 帧的 text 是空串，会被下面的 filter 滤掉 —— 一旦滤掉，它携带的用量也就丢了。
+             */
+            final int[] streamUsage = {0, 0};
             return modelRouter.route(provider, com.agentplatform.core.model.ModelCapability.TEXT)
                     .stream(new ModelAdapter.ChatRequest(
                             model, effectivePrompt, streamMessage, gc.temperature(), gc.maxTokens(),
                             imageExtra, sessionHistory, resolved.baseUrl(), resolved.apiKey()))
+                    .doOnNext(d -> {
+                        // done 帧带 usage；普通数据帧 aggregate 为 null，跳过即可
+                        if (d.finished() && d.aggregate() != null) {
+                            streamUsage[0] = d.aggregate().promptTokens();
+                            streamUsage[1] = d.aggregate().completionTokens();
+                        }
+                    })
                     .filter(d -> !d.finished() && d.text() != null && !d.text().isEmpty())
                     .map(d -> {
                         collected.append(d.text());
@@ -1141,9 +1161,8 @@ public class AgentRuntimeService {
                     })
                     .concatWith(Flux.defer(() -> {
                         // 流正常结束后收尾：存会话 + 记日志 + 派发事件 + 附加产物（TTS 语音等）
-                        final int[] usage = {0, 0};
                         Map<String, Object> extras = finishStream(agent, tenantId, runId, traceId, model,
-                                userMessage, collected.toString(), session, usage, false, req.userId());
+                                userMessage, collected.toString(), session, streamUsage, false, req.userId());
                         return Flux.just(RunStreamEvent.completed(drainToolCalls(runId), extras));
                     }))
                     .onErrorResume(err -> {
@@ -1351,6 +1370,45 @@ public class AgentRuntimeService {
                 log.warn("Failed to load skill {} for agent {}: {}", skillId, agent.getAgentId(), e.getMessage());
             }
         }
+        return sb.toString();
+    }
+
+    /**
+     * 追加「输出格式」说明：告诉模型界面上支持哪些写法。
+     *
+     * <h3>★ 为什么必须由平台主动说</h3>
+     * 前端现在会渲染 Markdown（标题/列表/表格/粗体/代码块）与 {@code ```chart} 图表围栏。
+     * 但<b>模型不会自己知道这件事</b> —— 它的先验是"我输出的是纯文本"，
+     * 于是会把数据排成一行行文字（"甲：120，乙：86"），而不会画成图。
+     * <b>能力做完了却不告诉模型，等于没做</b> —— 这类"实现了但从未被触发"的坑，
+     * 在本项目已经出现过（流式下的钩子），所以这里显式注入。
+     *
+     * <p>反过来也要克制：只说清格式与<b>使用边界</b>。
+     * 若不写"只在确有数据时使用"，模型会倾向于每段都附一张图，反而更难读。</p>
+     *
+     * <p>说明内容必须与前端实现严格对应（前端只支持 bar/line/pie 三种，
+     * 见 {@code pages/chat/markdown/ChartBlock.tsx}）—— 多写一种，模型就会输出渲染不出来的东西。</p>
+     */
+    public String withRenderGuide(String systemPrompt) {
+        StringBuilder sb = new StringBuilder(systemPrompt == null ? "" : systemPrompt);
+        sb.append("""
+
+                ## 输出格式
+
+                你的回复会按 Markdown 渲染，可以正常使用标题、有序/无序列表、表格、**粗体**、
+                行内代码与代码块 —— 用它们把内容组织清楚，不要写成一大段纯文本。
+
+                当需要展示**数据对比或趋势**（而不是罗列文字）时，用 chart 代码块，界面会画成图：
+
+                ```chart
+                { "type": "bar", "title": "各渠道询盘量",
+                  "data": [ {"label": "阿里巴巴", "value": 120}, {"label": "独立站", "value": 86} ] }
+                ```
+
+                - `type`：`bar`（柱状，默认）/ `line`（折线，适合趋势）/ `pie`（占比）
+                - `data`：每项是 `{"label": "名称", "value": 数字}`，至少一项
+                - 只在**确实有数据**要展示时才用；没有数据时不要为了排版好看而画图
+                - ⚠️ 必须是合法 JSON（双引号，不能有注释或多余逗号），否则界面只能显示原文""");
         return sb.toString();
     }
 

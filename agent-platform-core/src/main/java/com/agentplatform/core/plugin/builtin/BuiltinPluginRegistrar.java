@@ -1,15 +1,19 @@
 package com.agentplatform.core.plugin.builtin;
 
+import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.plugin.runtime.PluginRuntime;
 import com.agentplatform.model.entity.AgentPlugin;
 import com.agentplatform.model.entity.PluginDef;
 import com.agentplatform.model.repository.AgentPluginRepository;
 import com.agentplatform.model.repository.PluginRepository;
 import com.agentplatform.plugin.sdk.AgentHook;
+import com.agentplatform.plugin.sdk.ConfigFieldDef;
 import com.agentplatform.plugin.sdk.Plugin;
 import com.agentplatform.plugin.sdk.PluginDescriptor;
 import com.agentplatform.plugin.sdk.PluginTool;
 import com.agentplatform.plugin.sdk.ToolProvider;
+import com.agentplatform.plugin.sdk.UiProvider;
+import com.agentplatform.plugin.sdk.model.PluginManifest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -198,6 +202,49 @@ public class BuiltinPluginRegistrar {
                         plugin.id(), e.getMessage());
             }
             contributes.put("tools", tools);
+        }
+        /*
+         * 界面贡献：转成 Map 存进 manifest，与外部插件的 `contributes.ui` 保持同一结构 ——
+         * 这样"读 UI 声明"的代码（PluginService.listUiContributions）对内置与外部一视同仁，
+         * 不必写两条分支。用 convertValue 而不是手工 put：UiDef 里的 action/dataSource
+         * 是嵌套 record，手工搬容易漏字段（而漏掉 action 的表现是"按钮点了没反应"）。
+         */
+        if (plugin instanceof UiProvider uiProvider) {
+            try {
+                List<Map<String, Object>> ui = new ArrayList<>();
+                for (PluginManifest.Contributes.UiDef def : uiProvider.provideUi()) {
+                    ui.add(JsonUtils.mapper().convertValue(def, Map.class));
+                }
+                contributes.put("ui", ui);
+            } catch (Exception e) {
+                log.warn("[plugin] 内置插件 {} 的 provideUi() 执行失败，贡献清单将缺少界面项：{}",
+                        plugin.id(), e.getMessage());
+            }
+        }
+        /*
+         * 配置项声明：写进 contributes.config，前端据此自动生成挂载表单。
+         *
+         * 放在 manifest 里而不是新开一个接口，有三个好处：
+         *   ① 详情接口（GET /plugins/{id}）本来就返回 manifest，前端零改动就能拿到；
+         *   ② 结构与外部插件的 plugin.yaml 对齐（将来外部插件也能声明 config）；
+         *   ③ 每次启动都会重写，声明改了即时生效，不存在"库里存着旧声明"的问题。
+         * 同样用 convertValue 而不是手工搬：ConfigFieldDef 有 12 个字段，
+         * 手工搬漏一个的表现是"某个控件类型退化成了文本框"，很难注意到。
+         */
+        if (plugin instanceof PluginDescriptor descriptor) {
+            try {
+                List<ConfigFieldDef> fields = descriptor.configFields();
+                if (fields != null && !fields.isEmpty()) {
+                    List<Map<String, Object>> config = new ArrayList<>();
+                    for (ConfigFieldDef def : fields) {
+                        config.add(JsonUtils.mapper().convertValue(def, Map.class));
+                    }
+                    contributes.put("config", config);
+                }
+            } catch (Exception e) {
+                log.warn("[plugin] 内置插件 {} 的 configFields() 执行失败，挂载界面将退回自由 JSON 输入：{}",
+                        plugin.id(), e.getMessage());
+            }
         }
         m.put("contributes", contributes);
         return m;

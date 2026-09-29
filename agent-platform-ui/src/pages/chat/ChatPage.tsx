@@ -10,6 +10,10 @@ import { AgentResponse, FileAsset } from '../../api/types';
 import { useAppStore } from '../../store/appStore';
 import { useChatStore, ChatMsg } from '../../store/chatStore';
 import ToolCallList from './ToolCallList';
+import { Markdown } from './markdown/render';
+import SlotOutlet from '../../slots/SlotOutlet';
+import { SLOT_IDS } from '../../slots/registry';
+import { useUiSlotStore } from '../../store/uiSlotStore';
 import WorkspacePicker from '../../components/WorkspacePicker';
 import WorkspaceSuggestBar from '../../components/WorkspaceSuggestBar';
 import { sourceDirOf } from '../../api/workspace';
@@ -87,6 +91,16 @@ export default function ChatPage() {
   useEffect(() => {
     loadAgents();
   }, [loadAgents, tenantId]);
+
+  /*
+   * 上报"当前智能体"给全局槽位（侧栏底部那些）。
+   * 插件是按智能体挂载的，而侧栏/页面级槽位不在本页里、拿不到这个 state —— 所以在这里登记。
+   * 切换智能体时 store 会顺手拉一次界面贡献，全局槽位随即可用。
+   */
+  const setCurrentAgent = useUiSlotStore((s) => s.setCurrentAgent);
+  useEffect(() => {
+    setCurrentAgent(agentId ?? null);
+  }, [agentId, setCurrentAgent]);
 
   useEffect(() => {
     listRef.current?.scrollTo({ top: listRef.current.scrollHeight });
@@ -390,6 +404,8 @@ export default function ChatPage() {
         {/* 底部工具条 */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginTop: 6 }}>
           <Space size={8} wrap>
+            {/* 插件注入的输入区动作（与「上传 / 选智能体 / 发送」并列） */}
+            <SlotOutlet slot={SLOT_IDS.composerActions} agentId={agentId} />
             <Upload
               multiple
               showUploadList={false}
@@ -501,7 +517,13 @@ export default function ChatPage() {
        * 值域与 DSH 一致：hero（空态）/ settling / active（对话中）。
        */
       {...{ [HOST_ATTRS.phase]: hasConversation ? 'active' : 'hero' }}
-      title={<span {...{ [HOST_ATTRS.slot]: SLOTS.conversationSessionHeader }}>对话运行</span>}
+      title={
+        <Space size={8} align="center">
+          <span {...{ [HOST_ATTRS.slot]: SLOTS.conversationSessionHeader }}>对话运行</span>
+          {/* 插件注入的会话级动作（导出/分享/清空这类"针对整场会话"的按钮） */}
+          <SlotOutlet slot={SLOT_IDS.sessionHeaderActions} agentId={agentId} />
+        </Space>
+      }
       styles={{
         body: {
           display: 'flex',
@@ -520,6 +542,11 @@ export default function ChatPage() {
           message={`本轮对话共 ${messages.length} 条。切换页面不会丢失；点右上角「+」将自动保存到会话历史。`}
         />
       )}
+
+      {/* 插件注入的会话级横幅（如用量/额度提示）。无内容时渲染 null，不留空隙 */}
+      <div style={{ flex: '0 0 auto' }}>
+        <SlotOutlet slot={SLOT_IDS.conversationAboveList} agentId={agentId} />
+      </div>
 
       {/*
        * DSH 宿主契约：可滚动的会话区必须**在两种形态下都存在**。
@@ -589,10 +616,24 @@ export default function ChatPage() {
                   ) : (
                     <Typography.Paragraph
                       className={frag(CLASS_ROW_TEXT, CLASS_MARKDOWN)}
-                      style={{ whiteSpace: 'pre-wrap', marginBottom: 0 }}
+                      style={{ whiteSpace: m.role === 'assistant' ? 'normal' : 'pre-wrap', marginBottom: 0 }}
                       copyable={false}
                     >
-                      {m.content}
+                      {/*
+                        **只对助手消息做 Markdown 渲染，用户消息保持纯文本。**
+
+                        理由是用户敲进来的东西就该原样显示：他写 `2 * 3 * 4` 或 `_underscore_`
+                        时，若被解析成斜体，看到的内容就和自己输入的不一样了 —— 这很吓人，
+                        而且用户会觉得"我打的东西被改了"。模型输出相反：它本来就在按 Markdown 写。
+
+                        done 的判据与 flowKindAt 一致：只有"最后一条 + 正在流式"才是没写完的。
+                        图表要等它变 true 才渲染（半截的 JSON 渲不出东西，只会闪）。
+                      */}
+                      {m.role === 'assistant' ? (
+                        <Markdown content={m.content} done={!(busy && i === messages.length - 1)} />
+                      ) : (
+                        m.content
+                      )}
                     </Typography.Paragraph>
                   )}
                   {m.role === 'assistant' && m.refs && m.refs.length > 0 && (

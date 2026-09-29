@@ -1,5 +1,6 @@
 import { http, getTenantId, getToken } from './http';
 import { PluginDef } from './types';
+import { configFieldsOf as configFieldsFromManifest } from '../pages/plugins/plugin-config';
 
 export function marketplace() {
   return http.get<PluginDef[]>('/api/v1/plugins/marketplace');
@@ -45,10 +46,41 @@ export function pluginAttachments(pluginId: string) {
   return http.get<PluginAttachment[]>(`/api/v1/plugins/${encodeURIComponent(pluginId)}/attachments`);
 }
 
+/** 某智能体上的一条挂载（含已保存的配置，密钥为掩码）。 */
+export interface AgentPluginBinding {
+  plugin_id?: string;
+  pluginId?: string;
+  version?: string;
+  tools?: string[];
+  enabled?: boolean;
+  /** 已保存的配置；密钥字段后端只回掩码（如 `sk-***abcd`）。 */
+  config?: Record<string, unknown>;
+}
+
 export function attachments(agentId: string) {
-  return http.get<Record<string, unknown>[]>(
+  return http.get<AgentPluginBinding[]>(
     `/api/v1/plugins/attachments?agentId=${encodeURIComponent(agentId)}`,
   );
+}
+
+/**
+ * 插件声明的配置项 —— 后端 `ConfigFieldDef` 的镜像。
+ *
+ * <p>实现在 `pages/plugins/plugin-config.ts`（零依赖纯函数，便于单测），这里只做转发，
+ * 让调用方继续从 api 层取类型，不必知道 UI 目录的组织方式。</p>
+ */
+export type { PluginConfigField } from '../pages/plugins/plugin-config';
+export { configFieldsOf as configFieldsFromManifest } from '../pages/plugins/plugin-config';
+
+/**
+ * 从插件详情里取出配置声明。
+ *
+ * <p>声明藏在 {@code manifest.contributes.config}（后端注册内置插件时写入）。</p>
+ *
+ * @return 声明列表；没有声明或结构不可识别时返回空数组（调用方据此退回自由 JSON 输入）
+ */
+export function configFieldsOf(detail?: PluginDef | null) {
+  return configFieldsFromManifest(detail?.manifest);
 }
 
 /**

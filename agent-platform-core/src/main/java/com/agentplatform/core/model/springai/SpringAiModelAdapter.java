@@ -111,12 +111,38 @@ public class SpringAiModelAdapter implements ModelAdapter {
                 usage[0], usage[1], 0.0, System.currentTimeMillis() - t0, List.of());
     }
 
+    /**
+     * 流式对话。
+     *
+     * <h3>★ done 帧为什么要带上 usage（2026-09-29）</h3>
+     * 上游的用量只能从流的<b>末尾</b>拿到（OpenAI 兼容协议在最后一块带 usage，或由 metadata 给出）。
+     * 而改造前这里给 done 帧传的是 {@code null}，于是所有流式调用在平台侧<b>用量恒为 0</b> ——
+     * 而流式恰恰是默认用法，结果是"用量统计只在关掉流式时才准确"这种没人会想到的表现
+     * （见 {@code AgentRuntimeService} 里 {@code final int[] usage = {0, 0}} 的由来）。
+     *
+     * <p>修法很轻：{@link ChatDelta} 本来就有 {@code aggregate} 字段可承载完整响应，
+     * 只是没人填。这里在流的末尾把累积到的 prompt/completion tokens 装进去。</p>
+     *
+     * <p><b>拿不到时仍是 0</b>：不少兼容网关在流式下不返回 usage（上游行为，平台无法控制）。
+     * 所以消费方（用量统计）应当把 token 视为"尽力而为"，别把 0 当成"没消耗"。</p>
+     */
     @Override
     public Flux<ChatDelta> stream(ChatRequest request) {
         ChatModel model = modelFor(request);
+        // 累积用量：流是逐块到来的，只有把每块的 metadata 累加起来才能得到一轮的总量
+        final int[] usage = new int[]{0, 0};
         return model.stream(new Prompt(messages(request), options(request, false)))
-                .map(r -> new ChatDelta(textOf(r), false, null))
-                .concatWith(Flux.just(new ChatDelta("", true, null)))
+                .map(r -> {
+                    usage[0] += promptTokens(r);
+                    usage[1] += completionTokens(r);
+                    return new ChatDelta(textOf(r), false, null);
+                })
+                .concatWith(Flux.defer(() -> {
+                    // 用 defer 是为了拿到**此时**的累积值 —— 直接 Flux.just(...) 会在订阅前求值，
+                    // 那时流还没跑，usage 还是 0。
+                    ChatResponse agg = new ChatResponse("", usage[0], usage[1], 0.0, 0L, List.of());
+                    return Flux.just(new ChatDelta("", true, agg));
+                }))
                 .onErrorResume(e -> Flux.just(new ChatDelta("", true, null)));
     }
 

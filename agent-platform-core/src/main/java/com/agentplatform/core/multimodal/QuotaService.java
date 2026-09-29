@@ -153,6 +153,38 @@ public class QuotaService {
     }
 
     /**
+     * 记录一笔用量（按数量原子递增，**不检查上限**）。
+     *
+     * <h3>★ 与 {@link #checkAndIncrement} 的分工（2026-09-29 补）</h3>
+     * <ul>
+     *   <li>{@code checkAndIncrement} 是<b>进入前的闸门</b>：每次计数 <b>+1</b>，超限就抛异常拦住业务。
+     *       它适合"次数"这类一次一件的计量（模型调用数、工具调用数）。</li>
+     *   <li>本方法是<b>事后的记账</b>：按<b>数量</b>递增，且不拦 —— 因为用量已经发生了。
+     *       它适合 token 这类"一次消耗很多、且拦不住"的计量。</li>
+     * </ul>
+     *
+     * <p>补它的直接原因：{@code DEFAULT_QUOTA} 里早就声明了 {@code tokens}（默认 1 亿），
+     * 但全仓<b>没有任何地方递增它</b> —— 于是"token 配额"看着有、实际永不生效。
+     * 而 {@code checkAndIncrement} 每次只加 1，用它计 token 是没有意义的。</p>
+     *
+     * <p>⚠️ 调用方需自行判断是否要基于用量做预警/拦截 —— 本方法只负责把数记上。</p>
+     *
+     * @param amount 本次用量（如一轮对话消耗的 token 数）；{@code <= 0} 时不做任何改动
+     * @return 递增后的累计用量
+     */
+    public long recordUsage(String tenantId, String quotaType, long amount) {
+        return recordUsage(tenantId, quotaType, amount, DEFAULT_PERIOD);
+    }
+
+    /** 记录一笔用量（指定周期）。 */
+    public long recordUsage(String tenantId, String quotaType, long amount, String period) {
+        if (amount <= 0) {
+            return usage(tenantId, quotaType, period);
+        }
+        return incrementBy(tenantId, quotaType, period, amount);
+    }
+
+    /**
      * 查询当前周期用量（Redis → 内存 → DB 三级回退）。
      */
     public long usage(String tenantId, String quotaType) {
@@ -265,6 +297,29 @@ public class QuotaService {
         }
         AtomicLong c = counters.computeIfAbsent(memKey(tenantId, quotaType, period), k -> new AtomicLong(0));
         return c.incrementAndGet();
+    }
+
+    /**
+     * 原子递增任意数量：优先 Redis，异常回退内存。
+     *
+     * <p>TTL 的判定用 {@code v == delta} 而不是 {@code v == 1} —— 按数量递增时首次就是
+     * {@code delta}（之前为 0），沿用 {@code == 1} 会让 TTL 永不设置，计数永久累积、周期永不重置。</p>
+     */
+    private long incrementBy(String tenantId, String quotaType, String period, long delta) {
+        if (redisTemplate != null) {
+            try {
+                String key = redisKey(tenantId, quotaType, period);
+                Long v = redisTemplate.opsForValue().increment(key, delta);
+                if (v != null && v == delta) {
+                    redisTemplate.expire(key, java.time.Duration.ofSeconds(periodTtlSeconds(period)));
+                }
+                return v == null ? 0 : v;
+            } catch (Exception e) {
+                log.debug("Redis incrementBy failed, fallback to memory: {}", e.getMessage());
+            }
+        }
+        AtomicLong c = counters.computeIfAbsent(memKey(tenantId, quotaType, period), k -> new AtomicLong(0));
+        return c.addAndGet(delta);
     }
 
     /** 尝试读取 Redis 计数；不可用返回 -1 表示回退。 */

@@ -34,6 +34,9 @@ import { unreadCount } from '../api/notifications';
 import ToolApprovalWatcher from './ToolApprovalWatcher';
 import { preloadDicts } from '../dict/store';
 import SidebarSkinSettings from './SidebarSkinSettings';
+import SlotOutlet from '../slots/SlotOutlet';
+import { SLOT_IDS } from '../slots/registry';
+import { useUiSlotStore } from '../store/uiSlotStore';
 import { useTheme } from '../theme/ThemeProvider';
 import { HOST_ATTRS, SLOTS, sidebarHooks } from '../skin/contract';
 import {
@@ -109,6 +112,13 @@ export default function AppLayout() {
   const [skinSettingsOpen, setSkinSettingsOpen] = useState(false);
   // 换肤：外壳颜色全部走 --ap-* CSS 变量（主题由皮肤市场决定，未装皮肤时用默认外观）
   const { siderTheme } = useTheme();
+
+  /*
+   * 当前对话的智能体 —— **只用于插槽**（决定侧栏底部该显示谁的插件界面元素）。
+   * 插件是按智能体挂载的，而侧栏自己拿不到对话页的 agentId 状态，
+   * 所以由对话页上报（见 uiSlotStore.currentAgentId 的说明）。为 null 时插槽渲染 null，不占位。
+   */
+  const currentAgentId = useUiSlotStore((s) => s.currentAgentId);
 
   /**
    * 当前用户的权限码；`null` = 还没拿到。
@@ -440,6 +450,13 @@ export default function AppLayout() {
                 `components/TenantSelector.tsx` 都原样保留），需要时直接装回来即可。
               */}
               <Space size={4} {...{ [HOST_ATTRS.slot]: SLOTS.sidebarFooterAction }} style={{ alignItems: 'center' }}>
+                {/*
+                  插件注入的常驻入口（如告警状态角标）。
+                  agentId 取自 uiSlotStore —— 插件是**按智能体挂载**的，侧栏自己拿不到对话页的状态，
+                  所以由对话页在切换时上报（见 uiSlotStore.currentAgentId 的说明）。
+                  没有当前智能体时它渲染成 null（不占位）。
+                */}
+                <SlotOutlet slot={SLOT_IDS.sidebarFooterAction} agentId={currentAgentId ?? undefined} />
                 <Button
                   size="small"
                   type="text"

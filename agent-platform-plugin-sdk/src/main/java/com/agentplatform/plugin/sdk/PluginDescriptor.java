@@ -1,5 +1,7 @@
 package com.agentplatform.plugin.sdk;
 
+import java.util.List;
+
 /**
  * 插件自描述元信息（可选实现）。
  *
@@ -26,5 +28,25 @@ public interface PluginDescriptor {
     /** 作者 / 来源；内置插件默认标为 builtin。 */
     default String author() {
         return "builtin";
+    }
+
+    /**
+     * 本插件需要用户填写的配置项（<b>可选实现</b>）。
+     *
+     * <h3>为什么要声明</h3>
+     * 在此之前，挂载插件时只有一个自由 JSON 文本框 —— 而插件说明里写着
+     * "在挂载配置里填入 API Key"。用户<b>不知道该写什么字段名</b>，
+     * 结果是"功能看着有、却永远配不起来"。声明之后界面会自动生成表单。
+     *
+     * <h3>⚠️ 键名必须与插件实际读取的键一致</h3>
+     * 声明 {@code apiKey} 而代码读 {@code api_key}，表现是"填了不生效"，
+     * 而两边单独看都对。**声明时直接从自己的 {@code of(JsonNode)} 里抄键名。**
+     *
+     * <h3>向后兼容</h3>
+     * default 方法：不实现即返回空列表，界面退回「自由 JSON 文本框」的旧形态 ——
+     * 既有的外部 jar 插件完全不受影响。
+     */
+    default List<ConfigFieldDef> configFields() {
+        return List.of();
     }
 }

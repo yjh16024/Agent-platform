@@ -137,6 +137,19 @@ public class PluginController {
     }
 
     /**
+     * 查询某 Agent 上所有生效插件的**界面贡献**（前端插槽的数据源）。
+     *
+     * <p>前端在切智能体时拉一次，把结果按 {@code slot} 分发给各处的 {@code <SlotOutlet>}。
+     * 详见 {@code PluginService.listUiContributions} 的说明（为什么单独开接口、校验了什么）。</p>
+     */
+    @GetMapping("/ui-contributions")
+    public ApiResponse<List<Map<String, Object>>> uiContributions(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @RequestParam String agentId) {
+        return ApiResponse.ok(pluginService.listUiContributions(tenantId, agentId));
+    }
+
+    /**
      * 删除插件（物理删除 + 从所有智能体卸载）。
      * <p>仅租户自有插件可删；内置平台插件（{@code __platform__}）返回 403。</p>
      */

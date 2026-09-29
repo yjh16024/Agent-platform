@@ -2,6 +2,7 @@ package com.agentplatform.core.plugin.builtin;
 
 import com.agentplatform.plugin.sdk.AgentHook;
 import com.agentplatform.plugin.sdk.HookContext;
+import com.agentplatform.plugin.sdk.ConfigFieldDef;
 import com.agentplatform.plugin.sdk.PluginContext;
 import com.agentplatform.plugin.sdk.PluginDescriptor;
 import com.agentplatform.plugin.sdk.model.HookPoint;
@@ -17,6 +18,7 @@ import tools.jackson.databind.JsonNode;
 import java.time.Duration;
 import java.util.Base64;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -154,10 +156,41 @@ public class BuiltinTtsPlugin implements AgentHook, PluginDescriptor {
                 + "默认对接硅基流动（CosyVoice2）—— 在挂载配置里填入 API Key 即可使用，"
                 + "换服务商只需改 baseUrl / model / voice。未配置密钥时会产出一段占位音"
                 + "（带 mock 标记），以便区分「没配」与「配了但坏了」。";
-    }
+                }
 
-    /**
-     * 读取并缓存该智能体的配置。
+                /**
+                * 配置项声明（键名与 {@link TtsConfig#of} 读取的完全一致）。
+                *
+                * <p>用户只填 {@code API Key} 就能用，其余项保持默认即可 —— 所以只有它标了必填。
+                * 服务商相关项给出默认值（指向硅基流动），这样"不填也能看到填的是什么"，
+                * 想换服务商时直接改这几栏即可。</p>
+                */
+                @Override
+                public List<ConfigFieldDef> configFields() {
+                return List.of(
+                ConfigFieldDef.secret(CFG_API_KEY, "API Key")
+                        .withRequired()
+                        .ph("sk-...")
+                        .hint("必填。平台若已配了硅基流动的模型密钥，填同一个即可出声（注意：该 Key 只用于语音合成，不会被别的功能读到）"),
+                ConfigFieldDef.text(CFG_BASE_URL, "服务地址")
+                      .def(DEFAULT_BASE_URL)
+                      .hint("OpenAI 兼容协议；换服务商通常只需改这一项"),
+                ConfigFieldDef.text(CFG_MODEL, "模型").def(DEFAULT_MODEL),
+                ConfigFieldDef.text(CFG_VOICE, "音色")
+                      .def(DEFAULT_VOICE)
+                      .hint("写法由服务商决定，一般形如 模型名:音色名"),
+                ConfigFieldDef.select(CFG_FORMAT, "音频格式", List.of("mp3", "wav", "opus", "aac"))
+                      .def(DEFAULT_FORMAT),
+                ConfigFieldDef.number(CFG_SPEED, "语速", 0.25, 4.0, 0.25).def(String.valueOf(DEFAULT_SPEED)),
+                ConfigFieldDef.number(CFG_MAX_CHARS, "单轮字数上限", 1, HARD_MAX_CHARS)
+                      .def(String.valueOf(DEFAULT_MAX_CHARS))
+                      .hint("成本闸门：回复超过这个长度就不合成，避免长文产生意外费用"),
+                ConfigFieldDef.number(CFG_TIMEOUT_MS, "超时（毫秒）", 500, HARD_MAX_TIMEOUT_MS)
+                      .def(String.valueOf(DEFAULT_TIMEOUT_MS)));
+                }
+
+                /**
+                * 读取并缓存该智能体的配置。
      *
      * <p>配置只在挂载时刻可见（{@code HookContext} 里没有 config），所以必须在这里解析并留存 ——
      * 钩子每次执行时拿不到配置。</p>

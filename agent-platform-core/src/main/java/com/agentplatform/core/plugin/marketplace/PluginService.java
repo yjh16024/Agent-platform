@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -122,7 +123,28 @@ public class PluginService {
         // 之后每次调用都 401，而界面上却仍显示"已配置"。
         Optional<AgentPlugin> existingBinding = agentPluginRepository.findByAgentIdAndPluginId(agentId, pluginId);
         Map<String, Object> previousConfig = existingBinding.map(AgentPlugin::getConfig).orElse(null);
-        Map<String, Object> sealedConfig = pluginConfigSecrets.seal(config, previousConfig);
+
+        /*
+         * ★ 合并「已有配置」与「本次提交」，而不是整体替换。
+         *
+         * 起因：界面改成"按插件声明生成表单"之后，表单只会提交**声明过的**字段。
+         * 若这里直接替换，用户此前用自由 JSON 写的额外键（或插件新版新增、而界面尚未声明的键），
+         * 会在一次普通的"改个开关"中**被静默抹掉** —— 这是最难查的一类数据丢失：
+         * 用户没做错任何事，配置却少了。
+         *
+         * ⚠️ 合并必须用**解密后**的旧配置。previousConfig 里的敏感值是密文，
+         * 若直接把它合进去，seal 会当成"新的密钥"再加密一次，库里就变成双层密文；
+         * 插件的 reveal 只解一层，拿到的仍以 enc:v1: 开头 —— 表现为"密钥明明没动却失效了"。
+         */
+        Map<String, Object> merged = new LinkedHashMap<>();
+        Map<String, Object> previousPlain = pluginConfigSecrets.reveal(previousConfig);
+        if (previousPlain != null) {
+            merged.putAll(previousPlain);
+        }
+        if (config != null) {
+            merged.putAll(config);   // 本次提交的值覆盖旧的
+        }
+        Map<String, Object> sealedConfig = pluginConfigSecrets.seal(merged, previousConfig);
 
         AgentPlugin binding = existingBinding
                 .map(existing -> {
@@ -265,6 +287,158 @@ public class PluginService {
             out.add(m);
         }
         return out;
+    }
+
+    /**
+     * 支持的界面组件类型白名单。
+     *
+     * <p><b>刻意是白名单，而不是"把插件写的东西原样交给前端"</b>：这是声明式 UI 的安全边界 ——
+     * 只有宿主认识、且能安全渲染的组件才允许出现。插件写了个新类型时，
+     * 后果应当是"这一项不显示"，而不是"界面出问题"。</p>
+     *
+     * <p>⚠️ 新增类型时要与前端 {@code src/slots/registry.ts} 的渲染器同步 ——
+     * 两边不一致的表现是"声明了但永远不显示"，且没有任何报错。</p>
+     */
+    private static final Set<String> UI_TYPES = Set.of("button", "badge", "card", "list", "link");
+
+    /**
+     * 汇总某智能体上所有**生效插件**的界面贡献（前端插槽的数据源）。
+     *
+     * <h3>★ 为什么单独开一个接口，而不是让前端自己读 manifest</h3>
+     * 前端确实能从 {@code pluginDetail} 拿到 manifest，但要靠它自己做三件事，每件都容易漏：
+     * <ol>
+     *   <li><b>确定"哪些插件在这台智能体上生效"</b> —— 要交叉 capabilities 与绑定表的 enabled 开关；</li>
+     *   <li><b>校验引用的工具真的存在</b> —— 见下；</li>
+     *   <li><b>按插件聚合与排序</b> —— 每个插件内部还有自己的 order。</li>
+     * </ol>
+     *
+     * <h3>★ 校验 action / dataSource 引用的工具是否存在</h3>
+     * 一个界面按钮声明了 {@code action.tool = "export_chat"}，而插件根本没这个工具 ——
+     * 后果是<b>用户点了没反应，且没有任何错误提示</b>（最难排查的一类）。
+     * 所以这里把引用了未声明工具的界面项<b>直接丢弃</b>，并记 WARN 让插件作者能发现自己的错。
+     *
+     * <p>校验依据是 manifest 的 {@code contributes.tools}：外部插件由作者声明、
+     * 内置插件由 {@code BuiltinPluginRegistrar} 从 {@code provideTools()} 生成，结构一致，
+     * 所以这里不必区分来源。</p>
+     *
+     * <p><b>槽位（slot）刻意不在这里校验</b> —— 槽位是前端的渲染位置，前端最清楚自己有哪些。
+     * 认不出的槽位由前端忽略（这样后端加新槽位不必改插件，插件用新槽位也不会让旧前端报错）。</p>
+     *
+     * @return 扁平化的界面贡献（每条带 pluginId / pluginName，便于前端分组与做 React key）
+     */
+    @Transactional(readOnly = true)
+    public List<Map<String, Object>> listUiContributions(String tenantId, String agentId) {
+        if (agentId == null || agentId.isBlank()) {
+            return List.of();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+
+        for (AgentPlugin binding : agentPluginRepository.findByAgentIdAndEnabledTrue(agentId)) {
+            Map<String, Object> manifest = manifestOfPlugin(tenantId, binding.getPluginId());
+            if (manifest == null) {
+                continue;
+            }
+            if (!(manifest.get("contributes") instanceof Map<?, ?> contributes)) {
+                continue;
+            }
+            if (!(contributes.get("ui") instanceof List<?> uiList)) {
+                continue;   // 该插件没有界面贡献：正常情况，不是错误
+            }
+
+            Set<String> declaredTools = declaredToolNames(contributes.get("tools"));
+            String pluginName = asString(manifest.get("name"));
+
+            for (Object item : uiList) {
+                if (!(item instanceof Map<?, ?> m)) {
+                    continue;
+                }
+                String type = asString(m.get("type"));
+                if (type == null || !UI_TYPES.contains(type)) {
+                    log.warn("[plugin-ui] 跳过插件 {} 的界面项：不支持的组件类型 {}（支持：{}）",
+                            binding.getPluginId(), type, UI_TYPES);
+                    continue;
+                }
+                Map<String, Object> action = asMap(m.get("action"));
+                Map<String, Object> dataSource = asMap(m.get("dataSource"));
+                if (!toolExists(action, declaredTools) || !toolExists(dataSource, declaredTools)) {
+                    log.warn("[plugin-ui] 跳过插件 {} 的界面项「{}」：引用了未声明的工具"
+                                    + "（action={} dataSource={} 已声明工具={}）",
+                            binding.getPluginId(), asString(m.get("label")),
+                            action == null ? null : action.get("tool"),
+                            dataSource == null ? null : dataSource.get("tool"), declaredTools);
+                    continue;
+                }
+
+                Map<String, Object> one = new LinkedHashMap<>();
+                one.put("pluginId", binding.getPluginId());
+                one.put("pluginName", pluginName);
+                one.put("id", asString(m.get("id")));
+                one.put("slot", asString(m.get("slot")));
+                one.put("type", type);
+                one.put("label", asString(m.get("label")));
+                one.put("order", m.get("order") instanceof Number n ? n.intValue() : 0);
+                one.put("href", asString(m.get("href")));
+                one.put("action", action);
+                one.put("dataSource", dataSource);
+                out.add(one);
+            }
+        }
+        return out;
+    }
+
+    /** 取插件 manifest（外部与内置统一从 {@code plugin_def} 读，两者结构一致）。 */
+    private Map<String, Object> manifestOfPlugin(String tenantId, String pluginId) {
+        return pluginRepository.findByTenantIdAndPluginId(tenantId, pluginId)
+                .or(() -> pluginRepository.findByTenantIdAndPluginId(PLATFORM_TENANT, pluginId))
+                .map(PluginDef::getManifest)
+                .orElse(null);
+    }
+
+    /** manifest 的 {@code contributes.tools[].name} 集合。 */
+    private static Set<String> declaredToolNames(Object toolsRaw) {
+        if (!(toolsRaw instanceof List<?> list)) {
+            return Set.of();
+        }
+        Set<String> names = new HashSet<>();
+        for (Object t : list) {
+            if (t instanceof Map<?, ?> m) {
+                String n = asString(m.get("name"));
+                if (n != null) {
+                    names.add(n);
+                }
+            }
+        }
+        return names;
+    }
+
+    /**
+     * 检查一段声明里引用的工具是否存在。
+     *
+     * <p>声明为 null 视为合法 —— 它的含义是"这一项不调工具"（例如纯展示的 link）。</p>
+     */
+    private static boolean toolExists(Map<String, Object> decl, Set<String> declaredTools) {
+        if (decl == null) {
+            return true;
+        }
+        String tool = asString(decl.get("tool"));
+        return tool == null || declaredTools.contains(tool);
+    }
+
+    private static Map<String, Object> asMap(Object raw) {
+        if (!(raw instanceof Map<?, ?> m)) {
+            return null;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        m.forEach((k, v) -> out.put(String.valueOf(k), v));
+        return out;
+    }
+
+    private static String asString(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        String s = String.valueOf(raw);
+        return s.isBlank() ? null : s;
     }
 
     /**
