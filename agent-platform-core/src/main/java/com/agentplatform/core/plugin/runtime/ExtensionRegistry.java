@@ -204,7 +204,19 @@ public class ExtensionRegistry implements ExtensionRegistrar {
         List<String> names = new ArrayList<>();
         for (PluginTool pt : tools) {
             PluginToolAdapter adapter = new PluginToolAdapter(pt, ctx);
-            toolRegistry.register(adapter);
+            /*
+             * ★ 显式标来源为 "plugin"（2026-09-29）。
+             *
+             * 此前走的是单参 register()，来源落成默认的 "external" —— 于是插件工具
+             * 与其它外部来源在工具页里长得一模一样，并且**可以在工具页被删除**：
+             * 删除只从全局注册表摘掉，而插件侧的记账（pluginToolNames）不同步，
+             * 且 attach 按 (agentId, pluginId) 幂等、ensurePluginsAttached 见已挂载即跳过，
+             * ⇒ **工具不会自动补回**，用户看到的是"某台智能体的工具凭空消失"。
+             *
+             * 标出来源之后，工具页才能识别它、把删除改为指引到插件页
+             * （插件的卸载是有级联语义的，本来就该从插件页做）。
+             */
+            toolRegistry.register(adapter, ToolRegistry.SOURCE_PLUGIN);
             adapters.add(adapter);
             names.add(pt.name());
         }

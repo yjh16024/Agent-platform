@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Drawer, Descriptions, Button, Modal, Select, Input, Switch, message, Space, Tag,
 } from 'antd';
@@ -18,6 +19,7 @@ export default function PluginDetailDrawer({
   pluginId: string | null;
   onClose: () => void;
 }) {
+  const navigate = useNavigate();
   const [detail, setDetail] = useState<PluginDef | null>(null);
   const [agents, setAgents] = useState<AgentResponse[]>([]);
   const [selAgentId, setSelAgentId] = useState<string | undefined>();
@@ -263,6 +265,28 @@ export default function PluginDetailDrawer({
                 </Space>
               ) : (
                 <Tag>未挂载</Tag>
+              )}
+            </Descriptions.Item>
+            {/*
+              该插件往这台智能体贡献了哪些工具。
+              后端一直在返回这个数组（PluginService.listAttached 里的 tools），前端此前没有渲染 ——
+              于是用户挂完插件也不知道它到底给了什么能力，只能去工具页猜。
+              这里同时给出"去试跑"的出口：工具页是唯一能试调用插件工具的地方。
+            */}
+            <Descriptions.Item label="贡献的工具">
+              {attached?.tools && attached.tools.length > 0 ? (
+                <Space size={4} wrap>
+                  {attached.tools.map((t) => (
+                    <Tag key={t} color="cyan">{t}</Tag>
+                  ))}
+                  <a style={{ fontSize: 12 }} onClick={() => navigate('/tools')}>
+                    去「工具调试」试跑 →
+                  </a>
+                </Space>
+              ) : (
+                <span style={{ fontSize: 12, color: 'rgba(0,0,0,0.45)' }}>
+                  {attached ? '该插件不贡献工具' : '挂载后可查看'}
+                </span>
               )}
             </Descriptions.Item>
           </Descriptions>

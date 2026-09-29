@@ -15,8 +15,24 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class ToolRegistry {
 
+    /** 来源：内置工具（代码提供，不可删）。 */
+    public static final String SOURCE_BUILTIN = "builtin";
+    /** 来源：用户注册的 HTTP API 工具（可编辑、可删）。 */
+    public static final String SOURCE_HTTP = "http";
+    /** 来源：MCP Server 提供的工具。 */
+    public static final String SOURCE_MCP = "mcp";
+    /**
+     * 来源：插件贡献的工具。
+     *
+     * <p>它的生命周期<b>跟着插件走</b>：随 {@code attach} 出现、随 {@code detach} 消失。
+     * 所以在工具页里要单独表达 —— 既不能像 HTTP 工具那样编辑，也不能在那删除
+     * （删了插件不会补回，见 {@code ExtensionRegistry.registerTools} 的说明），
+     * 而应指引用户去「插件」页卸载。</p>
+     */
+    public static final String SOURCE_PLUGIN = "plugin";
+
     private final Map<String, Tool> tools = new ConcurrentHashMap<>();
-    /** 工具来源标记：builtin（内置）/ http（自定义 HTTP API）/ mcp（MCP Server）。 */
+    /** 工具来源标记：见本类的 SOURCE_* 常量。 */
     private final Map<String, String> sources = new ConcurrentHashMap<>();
 
     /**
@@ -38,9 +54,12 @@ public class ToolRegistry {
 
     /**
      * 查询工具来源（未记录时按内置处理）。
+     *
+     * <p>「未记录即内置」是有意的兜底：内置工具由 Spring 容器直接注册、不带来源标签，
+     * 而把未知来源当内置更安全 —— 内置在界面上是受保护的一类（不可删）。</p>
      */
     public String sourceOf(String name) {
-        return sources.getOrDefault(name, "builtin");
+        return sources.getOrDefault(name, SOURCE_BUILTIN);
     }
 
     /**

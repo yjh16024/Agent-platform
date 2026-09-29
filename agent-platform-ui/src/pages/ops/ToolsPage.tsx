@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Table, Space, Button, Input, Select, Modal, Form, message, Card, Typography, Tag, Popconfirm,
 } from 'antd';
@@ -12,10 +13,22 @@ const SOURCE_COLOR: Record<string, string> = {
   builtin: 'blue',
   http: 'green',
   mcp: 'purple',
+  // 插件工具单独一色：它与其它"外部"来源的生命周期完全不同（跟着插件的挂载/卸载走）
+  plugin: 'cyan',
   external: 'default',
 };
 
+/** 来源显示名。 */
+const SOURCE_TEXT: Record<string, string> = {
+  builtin: '内置',
+  http: 'HTTP',
+  mcp: 'MCP',
+  plugin: '插件',
+  external: '外部',
+};
+
 export default function ToolsPage() {
+  const navigate = useNavigate();
   const [items, setItems] = useState<ToolInfo[]>([]);
   const [loading, setLoading] = useState(false);
   const [toolName, setToolName] = useState<string>();
@@ -128,11 +141,23 @@ export default function ToolsPage() {
 
   const sourceLabel = (s?: string) => {
     const key = s ?? 'external';
-    const text: Record<string, string> = { builtin: '内置', http: 'HTTP', mcp: 'MCP', external: '外部' };
-    return <Tag color={SOURCE_COLOR[key] ?? 'default'}>{text[key] ?? key}</Tag>;
+    return <Tag color={SOURCE_COLOR[key] ?? 'default'}>{SOURCE_TEXT[key] ?? key}</Tag>;
   };
 
-  const isBuiltin = (t: ToolInfo) => t.source === 'builtin';
+  /**
+   * 该工具是否**不归工具页管辖**。
+   *
+   * <h3>★ 为什么插件工具也要保护（2026-09-29）</h3>
+   * 插件工具挂在前端时会被注册进全局注册表（来源标 {@code plugin}），于是会出现在这里 ——
+   * 但它的生命周期**跟着插件走**。此前它和普通"外部"工具长得一样、也能删，
+   * 而删除只从全局注册表摘掉、插件侧记账不同步，且 attach 按 (agentId, pluginId) 幂等
+   * ⇒ **插件不会把工具补回来**，用户看到的是"某台智能体的工具凭空消失"，
+   * 还查不出原因（他只是在工具页点了个删除）。
+   *
+   * <p>所以判据不是"是不是内置"，而是"<b>它的增删是否由别处负责</b>"：
+   * 内置由代码提供、插件由插件页的挂载关系决定 —— 都不该在这里删。</p>
+   */
+  const isManagedElsewhere = (t: ToolInfo) => t.source === 'builtin' || t.source === 'plugin';
 
   const columns = [
     { title: '工具名', dataIndex: 'name', width: 180 },
@@ -143,13 +168,24 @@ export default function ToolsPage() {
       title: '操作', width: 180,
       render: (_: unknown, r: ToolInfo) => (
         <Space>
-          <Popconfirm title={`删除工具 ${r.name}？`} onConfirm={() => doDelete(r.name!)}>
+          {/* Popconfirm 也要一起禁用 —— 只禁按钮的话，弹窗照样会弹出来 */}
+          <Popconfirm
+            title={`删除工具 ${r.name}？`}
+            onConfirm={() => doDelete(r.name!)}
+            disabled={isManagedElsewhere(r)}
+          >
             <Button
               size="small"
               danger
               icon={<DeleteOutlined />}
-              disabled={isBuiltin(r)}
-              title={isBuiltin(r) ? '内置工具不可删除' : undefined}
+              disabled={isManagedElsewhere(r)}
+              title={
+                r.source === 'plugin'
+                  ? '插件工具不能在这里删除 —— 请到「插件」页卸载对应插件'
+                  : r.source === 'builtin'
+                    ? '内置工具不可删除'
+                    : undefined
+              }
             >
               删除
             </Button>
@@ -163,6 +199,15 @@ export default function ToolsPage() {
           >
             编辑
           </Button>
+          {/*
+            插件工具在这页只能"看"（试跑仍可用 —— 那是这页的主要价值），
+            但增删要去插件页。给一个直接出口，省得用户凭"请到插件页"这句话自己找。
+          */}
+          {r.source === 'plugin' && (
+            <a style={{ fontSize: 12 }} onClick={() => navigate('/plugins')}>
+              去插件页
+            </a>
+          )}
         </Space>
       ),
     },

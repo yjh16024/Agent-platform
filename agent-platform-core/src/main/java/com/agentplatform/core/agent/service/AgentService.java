@@ -14,6 +14,7 @@ import com.agentplatform.model.entity.AgentDefinition;
 import com.agentplatform.model.enums.AgentStatus;
 import com.agentplatform.model.enums.Visibility;
 import com.agentplatform.model.record.Capabilities;
+import com.agentplatform.model.record.EffectiveConfig;
 import com.agentplatform.model.record.GenerationConfig;
 import com.agentplatform.model.record.Persona;
 import com.agentplatform.model.repository.AgentDefinitionRepository;
@@ -30,6 +31,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -58,6 +60,50 @@ public class AgentService {
 
     @Autowired(required = false)
     private AgentPluginRepository agentPluginRepository;
+
+    /**
+     * 可选：插件扩展注册表（读"某插件的工具名"用它，纯内存查询）。
+     *
+     * <p>用 {@code required = false} 保持既有的构造签名 —— 单测里不注入也能跑，
+     * 只是"已挂插件"里的工具清单会是空的。</p>
+     */
+    @Autowired(required = false)
+    private com.agentplatform.core.plugin.runtime.ExtensionRegistry extensionRegistry;
+
+    /**
+     * 组装「该智能体实际拥有的插件及其贡献」。
+     *
+     * <h3>★ 为什么这里一个库都不查</h3>
+     * 这个方法被 {@link #toResponse} 调用，而 {@link #list} 是
+     * {@code PageResult.from(result, this::toResponse)} —— <b>列表里每一条都会走一遍</b>。
+     * 在这里查 {@code agent_plugin} 表就是典型的 N+1：一页 100 条 = 100 次查询，
+     * 而用户只是想看个列表。
+     *
+     * <p>好消息是需要的信息<b>本来就在手边</b>：</p>
+     * <ul>
+     *   <li>插件 id —— {@code capabilities.pluginIds}（已在实体里，0 查询）；</li>
+     *   <li>贡献的工具名 —— {@code ExtensionRegistry} 的内存记账（0 查询）。</li>
+     * </ul>
+     *
+     * <p>因此 {@code version} 留 null、{@code contributedHooks} 留空 —— 这两项要么得查库、
+     * 要么注册表里没有按插件维度的现成查询。它们的价值远不及"每次列表都多查一轮"的代价，
+     * 而用户真正要看的「这台智能体因为挂了插件而多了哪些工具」是完整的。</p>
+     */
+    private List<EffectiveConfig.ResolvedPlugin> resolveEffectivePlugins(AgentDefinition def) {
+        Capabilities caps = def.getCapabilities();
+        if (caps == null || caps.pluginIds() == null || caps.pluginIds().isEmpty()) {
+            return List.of();
+        }
+        String agentId = def.getAgentId();
+        List<EffectiveConfig.ResolvedPlugin> out = new ArrayList<>(caps.pluginIds().size());
+        for (String pluginId : caps.pluginIds()) {
+            List<String> tools = extensionRegistry == null
+                    ? List.of()
+                    : extensionRegistry.toolNamesOf(agentId, pluginId);
+            out.add(new EffectiveConfig.ResolvedPlugin(pluginId, null, tools, List.of()));
+        }
+        return out;
+    }
 
     /**
      * 创建智能体（返回 agent_id + draft 版本）。
@@ -283,7 +329,7 @@ public class AgentService {
                 def.getStatus() == null ? null : def.getStatus().name(),
                 def.getVisibility() == null ? null : def.getVisibility().toDb(),
                 def.getCurrentVersion(),
-                List.of(),   // 插件贡献能力在 Phase 4 填充
+                resolveEffectivePlugins(def),
                 AgentResponse.ValidationResult.pass(),
                 def.getCreatedAt(),
                 def.getUpdatedAt()

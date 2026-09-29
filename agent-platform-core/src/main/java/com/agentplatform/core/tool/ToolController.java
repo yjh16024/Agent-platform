@@ -348,7 +348,23 @@ public class ToolController {
         if (!registry.contains(toolName)) {
             return ApiResponse.error("NOT_FOUND", "tool not found: " + toolName);
         }
-        if ("builtin".equals(registry.sourceOf(toolName))) {
+        /*
+         * ★ 插件工具不能在这里删（2026-09-29）。
+         *
+         * 它虽然确实躺在全局注册表里，但生命周期**跟着插件走**：这里删掉的只是注册表里那一条，
+         * 插件侧的记账（ExtensionRegistry.pluginToolNames）不会同步，而 attach 按
+         * (agentId, pluginId) 幂等、ensurePluginsAttached 见"已挂载"即跳过
+         * ⇒ **插件不会把工具补回来**，用户看到的是"某台智能体的工具凭空消失"。
+         * 所以拒绝，并指向正确的入口（插件页的卸载是有级联语义的，本来就该从那儿做）。
+         *
+         * 前端已把该按钮置灰；这里是**真防线** —— 直接调接口同样会被拦住。
+         */
+        String source = registry.sourceOf(toolName);
+        if (ToolRegistry.SOURCE_PLUGIN.equals(source)) {
+            return ApiResponse.error("BAD_REQUEST",
+                    "插件工具不能单独删除 —— 请到「插件」页卸载贡献它的插件（工具会随之移除）");
+        }
+        if (ToolRegistry.SOURCE_BUILTIN.equals(source)) {
             return ApiResponse.error("BAD_REQUEST",
                     "内置工具（calc/search 等）由代码注册，不可删除；如确需移除请修改代码后重启");
         }
