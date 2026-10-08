@@ -27,8 +27,7 @@
 - 桌面应用（Electron 壳 + jlink 运行时，**绿色版免安装**）：[desktop/](desktop/)（构建与分发见 [docs/guides.md](docs/guides.md) §2.7）
 - 可观测栈（Loki / Tempo / Prometheus / Grafana）：[docker-compose.observability.yml](docker-compose.observability.yml)
 
-> 需求现状、技术选型依据、待办与路线决策、阶段验收报告等属于**内部资料**，不随本仓库发布 ——
-> 本仓库只保留这份 README 与扩展/部署指南。
+> 
 
 ## 它解决什么问题
 
