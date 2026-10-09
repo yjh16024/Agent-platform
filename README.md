@@ -11,9 +11,12 @@
 开始，逐步长成一套生产可用的智能体服务。
 
 当前版本：`1.1.0`。提供统一运行入口（JSON / SSE）、多模型路由与凭证分层、
-会话记忆（短期缓存 + 早期摘要 + 用户画像 + 向量召回）、RAG 知识库、工具与 MCP（**四种传输**）、
-自研 DAG 工作流、Skills 开放标准目录、插件热插拔、多模态输入（含图片视觉）、运行日志与三级诊断，
+会话记忆（**四层：短期缓存 + 早期摘要 + 用户画像 + 向量召回**）、RAG 知识库、
+工具与 MCP（**四种传输**，每次调用过**五环责任链**）、自研 DAG 工作流（含循环 / 并行复合节点）、
+Skills 开放标准目录、插件体系（**7 个内置插件 + 声明式配置 + 声明式界面插槽**）、
+多模态输入（含图片视觉）、运行日志与三级诊断，
 **让智能体读写文件**（工作区约束 + 工具审批 + 改前快照回滚 + 凭证隔离 + 调用过程可视化），
+**回复渲染与生成式 UI**（自研 Markdown 解析器 + 图表，流式安全且不落 HTML），
 以及**皮肤（换肤）体系** —— 第三方皮肤可以在不改平台代码的前提下接管界面外观。
 
 工程层：**可选内置库**（启动脚本加 `embedded` 参数即用 H2 免装 MySQL 直接跑）、**Spring AI 通道**
@@ -86,17 +89,25 @@
 
 任一层读取失败都只降级跳过，不阻断本轮对话。
 
-### 记忆：短期缓存 + 中期早期摘要
+### 记忆：四层体系（短期 / 中期 / 长期 / 向量）
 
 会话与消息落在数据库，运行结束后由 `SessionService.recordExchange` 写入本轮
 `user + assistant` 交换；下一轮按 `maxHistoryTurns`（默认 10 轮）回放历史，让对话「有记忆」。
 
-近期上下文额外走 `SessionRecentCache`（Redis List，25 轮 / 50 条 / 24h）：读优先缓存、miss
-回 DB 回填、写后追加裁剪。Redis 缺失时全程降级到 DB，功能不减，只是少一层加速。
+**四层各管一段，不是同一种东西的四种存法**：
 
-**中期记忆（早期摘要）**：会话超过 40 轮后，上下文窗口开始截断最早轮次——`SessionSummaryService`
-会把这段「即将被丢弃」的早期消息懒压缩成要点，续接进系统提示词（`session_def.summary`，幂等）。
-长对话因此仍「记得开头」；摘要当前为离线要点式，可平滑替换为 LLM 语义摘要。
+- **短期**：近期上下文走 `SessionRecentCache`（Redis List，25 轮 / 50 条 / 24h）——
+  读优先缓存、miss 回 DB 回填、写后追加裁剪。Redis 缺失时全程降级到 DB，功能不减，只是少一层加速。
+- **中期（早期摘要）**：会话超过 40 轮后，上下文窗口开始截断最早轮次 —— `SessionSummaryService`
+  会把这段「即将被丢弃」的早期消息懒压缩成要点，续接进系统提示词（`session_def.summary`，幂等）。
+  长对话因此仍「记得开头」；摘要当前为离线要点式，可平滑替换为 LLM 语义摘要。
+- **长期（用户画像）**：`sys_user_fact` 存「用户是什么样的人」，跨会话生效；
+  **自动抽取的候选不直接写入** —— 而是另建一张待确认表，用户在前端一键采纳或忽略后才进入长期层。
+  这样「用户主动填写优先于自动抽取」这条原则是**结构保证**的，不是靠提示词约束。
+- **向量（跨会话语义召回）**：把历史消息索引进向量库，其它会话可按语义召回相关片段。
+
+四层之外还有一道**防污染设计**：长期层坚持「用户主动填写」先于「自动抽取」，
+且自动抽取的候选进的是**待确认表**而非画像表本身 —— 用户不点确认，它就不会影响后续对话。
 
 ### RAG：摄取 → 混合检索 → 引用溯源
 
@@ -113,10 +124,24 @@
 
 ### 工具与 MCP：注册中心统一执行
 
-`ToolRegistry` 是唯一的工具来源：内置工具、HTTP 注册工具、MCP 接入的工具都注册到这里。
-**HTTP 工具注册会持久化**（`tool_registration` 表），重启 / 重新构建后自动恢复。
-内置**天气工具**开箱即用：城市名自动做 URL 编码后查询 `wttr.in`。运行入口按请求里的
+`ToolRegistry` 是唯一的工具来源：内置工具、HTTP 注册工具、MCP 接入的工具、插件贡献的工具
+都注册到这里（后者的来源会被标记为 `plugin`，便于工具页区分）。**HTTP 工具注册会持久化**
+（`tool_registration` 表），重启 / 重新构建后自动恢复；启动时还会自动注册一个**天气工具**
+作为 HTTP 工具的示例（城市名做 URL 编码后查询 `wttr.in`，支持中文）。运行入口按请求里的
 `tools.enabled` 与 `allowed` 白名单决定本轮暴露哪些工具声明。
+
+**每个工具调用都会经过五环责任链**（顺序本身是安全属性，所以用 `@Order` 显式声明而不是手工排序）：
+
+| 环 | 顺序 | 作用 |
+|----|------|------|
+| 鉴权 | `@Order(10)` | 校验调用者是否有权使用该工具 |
+| 参数校验 | `@Order(20)` | 按入参 Schema 校验，挡住模型给的畸形参数 |
+| 限流 | `@Order(30)` | 按租户计数，防模型陷入调用循环 |
+| 审计 | `@Order(40)` | 记录调用与结果（**失败也要记**） |
+| 统一超时 | `@Order(50)` | 兜住卡死的工具，避免拖垮整轮对话 |
+
+顺序不能换：限流若排在鉴权之前，未授权的请求也会消耗配额；审计若排在超时之后，
+超时的调用就留不下痕迹。
 
 MCP 支持**四种传输**，都经同一套 `McpClient` 契约与工厂：**Streamable HTTP**（接远程服务）、
 **进程内**（轻量内置）、**沙箱脚本**（子进程 + 目录隔离 + 解释器白名单）、
@@ -161,16 +186,29 @@ MCP 市场（`GET /api/v1/tools/mcp/market`）直连官方 `registry.modelcontex
 > 而桌面版可用的 OS 级沙箱（微软 MXC）官方明说"不应被视为安全边界"，且其 Windows 后端
 > 缺少网络隔离。详见 `docs/technology.md`。
 
-### 插件：Hook 管线与 ClassLoader 隔离
+### 插件：Hook 管线、声明式配置与 ClassLoader 隔离
 
 插件通过 `AgentPipeline` 挂到模型调用前后，四个钩子点各有明确约定：`before_llm` 可**短路**
 （直接返回预设答复）或**改写输入**，`after_llm` 可附加产物（如合成音频的地址），
 `before_output` 可**替换最终输出**（脱敏 / 合规改写的唯一落点），`on_error` 提供**兜底话术**。
-完整示例见 `plugin-example` 模块（4 个插件 + 4 份 manifest）。
+完整示例见 `plugin-example` 模块（8 个插件 + 8 份 manifest）。
 
-代码里的 `@Component` 插件会由 `BuiltinPluginRegistrar` 自动同步进插件市场
-（平台租户 `__platform__`，不可删除、对所有租户可见）；外部插件以独立
-`PluginClassLoader` 加载 jar，Attach / Detach 热插拔，卸载即反注册钩子与工具。
+**声明式配置**：插件实现 `PluginDescriptor.configFields()` 声明自己需要哪些配置
+（键名 / 标签 / 控件类型 / 取值范围 / 是否密钥），挂载界面据此**自动生成表单** ——
+加插件不需要改前端，外部插件将来也能用同一套声明。密钥类字段加密落库、接口只回掩码；
+用户不动密钥框直接保存时，后端识别出掩码并保留原值。
+
+**声明式界面插槽**：插件可实现 `UiProvider.provideUi()` 往约定槽位注入受控元素
+（`button` / `badge` / `card` / `list` / `link`），**动作与数据都走已有的工具调用通道** ——
+不新增机制、插件不碰前端代码；文本一律纯文本渲染，认不出的槽位或类型静默跳过。
+
+平台代码里的 `@Component` 插件会由 `BuiltinPluginRegistrar` 自动同步进插件市场
+（平台租户 `__platform__`，不可删除、对所有租户可见），**目前有 7 个内置插件**：
+时间助手、文本转语音、联网搜索、图片生成、多渠道告警推送、余额查询、用量统计与预警。
+
+外部插件以独立 `PluginClassLoader` 加载 jar，Attach / Detach 热插拔，卸载即反注册钩子与工具。
+插件贡献的工具会注册进全局工具表（来源标记为 `plugin`），因此可以在工具页试跑，
+但**不能在工具页删除** —— 它的生命周期跟着插件走，删除请从插件页卸载。
 
 外部插件有两条进入路径：**从插件市场取**（`/plugins/marketplace`），或**从仪表盘直接上传**
 （`POST /plugins/upload`，multipart 提交 manifest + jar；也支持 `/import?artifactUri=`）。
@@ -210,8 +248,22 @@ Skills 采用 Agent Skills 开放标准布局 `skills/<name>/SKILL.md`（可选 
 （表单随类型变化），底部「试运行」会按节点展示执行轨迹（状态 / 耗时 / 入出参）。「发布」生成已发布
 快照并递增版本号，草稿可继续编辑、支持一键回滚。
 
-引擎侧是自研 `DagEngine`：条件分支 + 虚拟线程并行，节点带 Schema 校验（含"类型必须有执行器"——
+引擎侧是自研 `DagEngine`：条件分支 + 虚拟线程并行（Java 21 的虚拟线程在「大量等待 I/O 的节点」
+场景下不用调池大小、也不会因池满而排队），节点带 Schema 校验（含「类型必须有执行器」——
 **缺执行器的节点在保存时就被拦下**，不会等到运行时才炸）。
+
+**复合节点（条件分支 / 并行 / 循环）在画布上都是 `block` 容器，但映射到后端是三样不同的东西** ——
+这也是画布适配层唯一需要自己控制的地方：
+
+| 画布节点 | blocks 的含义 | 转成后端 |
+|---|---|---|
+| `condition` | 每个块一个分支 | `branches[].target`（此时该节点不用 `next`） |
+| `parallel` | 每个块一条并发分支 | **`next` 数组**（后端靠「多下游」触发并行） |
+| `loop` | 唯一块 = 循环体 | **`config.loop_body`**（不能用 `next`：会成环、被校验器拒） |
+
+⚠️ `loop` **不是**容器型节点 —— 它必须参与顶层 `next` 链（`next` 指向「循环结束后去哪」）。
+早期把它归进容器型，会导致 `next` 被置空、**循环结束后流程就断了**。画布适配层因此配了
+**往返幂等的单测**（画布 → 后端 → 画布，两次结果必须一致）。
 
 ### 多模态：parts[] 消息模型
 
@@ -224,6 +276,14 @@ Skills 采用 Agent Skills 开放标准布局 `skills/<name>/SKILL.md`（可选 
 运行日志统一经 `LogService` 落 MySQL，并通过 `LogEventSink` 出口外推：Micrometer 指标、
 Loki 日志、Tempo / Jaeger Span。故障排查有三级诊断（规则 → 向量 → LLM），提示词另有 6 维评分
 与优化建议。
+
+前端把**运行日志、链路观测、操作审计、统计报表**四个同源页面合并成了一个
+「日志与观测」入口（用 Tab 切换）—— 它们的数据源高度重叠，分成四个菜单只会让人来回找。
+
+**用量统计与配额预警**：`model_calls` 由核心在每轮对话**开始时**计数（闸门），
+`tokens` 由用量插件在每轮**结束时**记账（实际消耗）—— 两者口径不同，不能混为一谈。
+达到配额阈值时可通过 webhook 预警（见内置插件「用量统计与预警」），
+把一个 `get_usage` 工具交给模型，用户直接问「今天用了多少」即可。
 
 ### 皮肤：把界面交给第三方
 
@@ -495,10 +555,14 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 | 对话运行 | `/agent/run`（JSON 或 SSE） |
 | 知识库 | `/knowledge-bases`、`/{id}/documents`、`/{id}/chunks`、`/documents/{docId}`、`/search` |
 | Skills | `/skills` CRUD、`/sync`、`/upload`、`/import-folder`、`/open-folder`、`/{id}/files`、`/{id}/file` |
-| 插件 | `/plugins` 市场 / 导入 / 删除 / attach / detach |
+| 插件 | `/plugins` 市场 / 导入 / 上传 / 删除 / attach / detach / attachments / **ui-contributions**（界面插槽） |
 | 工具 | `/tools` 列表 / invoke / HTTP 注册 / MCP（四种传输）/ 断开连接 / 卸载 |
 | 模型配置 | `/model-config`（`/embedding`、`/chat`） |
-| 日志/诊断 | `/logs`（查询/导出/瀑布图/purge）、`/diagnosis` |
+| **模型额度** | `/model-balance`（平台绑定的账户余额）、`/vendors`（支持查询的厂商） |
+| **记忆** | `/memory`（用户画像与待确认候选） |
+| **工具审批** | `/approvals`（待审批的动作与历史） |
+| **通知** | `/notifications`（站内通知） |
+| 日志/诊断 | `/logs`（运行日志 / 链路观测 / 审计 / **报表**，四合一）、`/diagnosis` |
 | 文件/配额/提示词 | `/files`、`/quotas`、`/prompt` |
 
 ## 日志与排查
@@ -539,8 +603,8 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests   # 构建可执行 jar
-mvn test                                              # 397 个单元测试（56 个测试类；含 Spring AI 通道、内置库迁移、记忆、工具、工作流画布后端等）
-cd agent-platform-ui && npm test                      # 9 个前端单测（画布 adapter 往返幂等；零新增依赖，用 esbuild + node:test）
+mvn test                                              # 552 个单元测试（含 Spring AI 通道、内置库迁移、记忆、工具、工作流画布后端、插件与配置声明等）
+cd agent-platform-ui && npm test                      # 67 个前端单测（画布 adapter 往返幂等 / Markdown 解析器 / 插件配置表单；零新增依赖，用 esbuild + node:test）
 warmup.bat                                            # Windows：依赖预热，"warmup.bat verify" 校验离线构建
 cd agent-platform-ui && npm run build:prod            # 前端构建，产物同步到 core 的 static/
 ```
