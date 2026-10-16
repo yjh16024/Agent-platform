@@ -65,6 +65,12 @@ interface ChatState {
   msgsOf: (agentId: string | undefined) => ChatMsg[];
   /** 开始新对话：清空该智能体的本地历史，并换一个新的会话 ID。 */
   reset: (agentId: string) => void;
+  /**
+   * 载入一条历史会话（2026-10-16，会话历史抽屉用）：
+   * 把消息与运行时会话 ID **一起**换成目标会话 —— 两者必须同进同出，
+   * 只换一半的后果是"界面上是旧会话的内容、后端却把它续写进另一条会话"。
+   */
+  resume: (agentId: string, sessionId: string, msgs: ChatMsg[]) => void;
 }
 
 const EMPTY: ChatMsg[] = [];
@@ -124,6 +130,11 @@ export const useChatStore = create<ChatState>()(
           delete nextSession[agentId];
           return { byAgent: next, sessionByAgent: nextSession };
         }),
+      resume: (agentId, sessionId, msgs) =>
+        set((s) => ({
+          byAgent: { ...s.byAgent, [agentId]: msgs },
+          sessionByAgent: { ...s.sessionByAgent, [agentId]: sessionId },
+        })),
     }),
     {
       name: 'ap_chat_history',

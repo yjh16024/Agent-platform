@@ -66,7 +66,7 @@ export default function RequireAuth({ children }: { children: ReactNode }) {
   }
 
   if (decision === 'needLogin') {
-    // 记住来路，登录成功后可以回到原页面（LoginPage 目前统一回 /overview，够用）
+    // 记住来路，登录成功后可以回到原页面（LoginPage 目前统一回 /chat，够用）
     return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   }
 

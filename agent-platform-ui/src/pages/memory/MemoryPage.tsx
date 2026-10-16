@@ -463,13 +463,6 @@ export default function MemoryPage() {
           </Space>
         }
       >
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message="这些内容会作为背景加入系统提示词"
-          description="智能体会据此调整称呼、语气与专业深度，但不会主动复述。填写越具体越有用，例如「职业：Java 后端工程师」比「懂技术」更好。"
-        />
         <Table
           rowKey="factId"
           size="small"
@@ -516,20 +509,6 @@ export default function MemoryPage() {
           </Space>
         }
       >
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message="这些是系统从你与智能体的对话里识别出来的，需要你确认后才生效"
-          description={
-            <>
-              采纳后会写入上方「个人画像」，并参与之后所有对话；忽略则不会再提示同类内容。
-              <b>在你确认之前，这些内容不会进入任何对话上下文。</b>
-              自动抽取默认关闭，需部署方以{' '}
-              <Text code>MEMORY_AUTO_PROFILE_ENABLED=true</Text> 开启后才会产生候选。
-            </>
-          }
-        />
         <Table
           rowKey="candidateId"
           size="small"
@@ -549,7 +528,6 @@ export default function MemoryPage() {
           showIcon
           style={{ marginBottom: 12 }}
           message="桌面版重启后索引会清空，需要点「重建索引」"
-          description="默认向量库是进程内的，应用重启即丢失。重建会把你历史会话中的发言重新索引一遍（只索引你发的消息，不索引模型回复），之后跨会话的语义召回才能生效。"
         />
         <Space>
           <Button

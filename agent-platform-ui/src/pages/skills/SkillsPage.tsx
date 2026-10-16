@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
-  Table, Space, Button, Modal, Form, Input, Tag, message, Popconfirm, Divider, Select, Alert,
+  Table, Space, Button, Modal, Form, Input, Tag, message, Popconfirm, Divider, Select,
   Drawer, Typography, List, Upload, Tooltip, Spin,
 } from 'antd';
 import {
@@ -272,21 +272,15 @@ export default function SkillsPage() {
 
   return (
     <div>
-      <Alert
-        type="info"
-        showIcon
-        style={{ marginBottom: 12 }}
-        message="Skills 采用 Agent Skills 开放标准目录存储：每个 Skill 是一个目录，内含 SKILL.md（YAML 头 + 提示词正文），可附带 scripts/ references/ assets/。"
-        description={
-          <Space wrap style={{ marginTop: 6 }}>
-            <Typography.Text code style={{ fontSize: 12 }}>{skillsDir || '加载中…'}</Typography.Text>
-            <Button size="small" icon={<CopyOutlined />} onClick={() => {
-              navigator.clipboard?.writeText(skillsDir);
-              message.success('目录路径已复制');
-            }}>复制路径</Button>
-          </Space>
-        }
-      />
+      {/* 只保留"目录路径 + 复制"（功能性）。原来的标准格式说明条是"讲产品自己怎么工作"的解释文本，已删 */}
+      <Space wrap style={{ marginBottom: 12 }}>
+        <Typography.Text type="secondary" style={{ fontSize: 12 }}>技能目录：</Typography.Text>
+        <Typography.Text code style={{ fontSize: 12 }}>{skillsDir || '加载中…'}</Typography.Text>
+        <Button size="small" icon={<CopyOutlined />} onClick={() => {
+          navigator.clipboard?.writeText(skillsDir);
+          message.success('目录路径已复制');
+        }}>复制路径</Button>
+      </Space>
 
       <Space style={{ marginBottom: 16 }} wrap>
         <Button type="primary" icon={<SyncOutlined />} loading={syncing} onClick={doSync}>扫描同步目录</Button>

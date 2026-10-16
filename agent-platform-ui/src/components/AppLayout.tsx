@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Layout, Menu, Button, Input, Space, Badge, App as AntApp } from 'antd';
+import { Layout, Menu, Button, Input, Space, App as AntApp } from 'antd';
 import {
-  DashboardOutlined,
   RobotOutlined,
   MessageOutlined,
   AppstoreOutlined,
@@ -11,11 +10,9 @@ import {
   ThunderboltOutlined,
   DatabaseOutlined,
   BranchesOutlined,
-  BookOutlined,
   FolderOutlined,
   ApiOutlined,
   SafetyCertificateOutlined,
-  HistoryOutlined,
   SettingOutlined,
   SkinOutlined,
   SearchOutlined,
@@ -23,15 +20,14 @@ import {
   TeamOutlined,
   LogoutOutlined,
   ProfileOutlined,
-  BellOutlined,
   BulbOutlined,
   AuditOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { setToken } from '../api/http';
 import { getMe } from '../api/auth';
-import { unreadCount } from '../api/notifications';
 import ToolApprovalWatcher from './ToolApprovalWatcher';
+import NotificationBell from './NotificationBell';
 import { preloadDicts } from '../dict/store';
 import SidebarSkinSettings from './SidebarSkinSettings';
 import SlotOutlet from '../slots/SlotOutlet';
@@ -59,45 +55,16 @@ export default function AppLayout() {
   const location = useLocation();
   /** 侧栏折叠：DSH 皮肤用 rail/wide 两态做造型，这个状态必须真实存在。 */
   const [collapsed, setCollapsed] = useState(false);
-  /** 未读通知数（侧栏角标）。0 时不渲染角标。 */
-  const [unread, setUnread] = useState(0);
 
   /*
-    未读数轮询（侧栏角标的数据来源）。
-    两个节流措施缺一不可：
-      1) 30 秒间隔 —— 通知没有强实时要求，更密只是白耗后端；
-      2) document.hidden 时跳过 —— 页面在后台还发请求纯属浪费（桌面版最小化时尤其明显）。
-    只查 count 不拉列表，单次代价极小。
-
-    另外监听 ap:notice-changed：通知页做完"标记已读/删除"后会派发它，
-    让角标立刻更新 —— 否则"点了全部已读、角标却还挂着数字"会停留 30 秒，
-    看起来像没生效。
+    对话页打开「会话历史」抽屉时会派发 ap:sidebar-collapse —— 把全局侧栏折叠，
+    让"同一时间只展开一个面板"（否则两层侧栏同时铺开很臃肿）。
+    刻意**只缩不还原**：关掉抽屉后侧栏自动弹回来才是真的晃眼，用户要用导航自己点开即可。
   */
   useEffect(() => {
-    let stopped = false;
-    const tick = async () => {
-      if (document.hidden) {
-        return;
-      }
-      try {
-        const r = await unreadCount();
-        if (!stopped) {
-          setUnread(r?.count ?? 0);
-        }
-      } catch {
-        // 未登录 / 后端未开 RBAC 时这里会失败：静默即可 ——
-        // 角标只是提示，不该为此弹一个错误提示打扰用户。
-      }
-    };
-    const onChanged = () => void tick();
-    void tick();
-    const timer = window.setInterval(() => void tick(), 30_000);
-    window.addEventListener('ap:notice-changed', onChanged);
-    return () => {
-      stopped = true;
-      window.clearInterval(timer);
-      window.removeEventListener('ap:notice-changed', onChanged);
-    };
+    const onCollapse = () => setCollapsed(true);
+    window.addEventListener('ap:sidebar-collapse', onCollapse);
+    return () => window.removeEventListener('ap:sidebar-collapse', onCollapse);
   }, []);
   /**
    * 侧栏搜索。
@@ -181,34 +148,24 @@ export default function AppLayout() {
    * 每加一个受管控的页面，记得两边一起加。</p>
    */
   const menuItems: NavItem[] = [
-    { key: '/overview', icon: <DashboardOutlined />, label: '概览' },
     /*
-      消息通知放在高频位置（紧跟概览）：它是"待办式"入口，用户需要主动来看，
-      藏进分组里就失去了提醒的意义。
-      角标数字来自 unreadCount 轮询（见下方 effect），不是静态值。
+      2026-10-16 导航收敛：
+      ① 默认落对话页（/ → /chat），导航也把「对话」放第一位 —— 开门见山（DSH 式）；
+      ② 原「概览」下线（纯静态导航看板，没有行动价值，/overview 重定向到 /chat）；
+      ③ 原「消息通知」从侧栏一级入口降级为右下角铃铛（components/NotificationBell）——
+         "平时无感、有事才看"的能力不该占一级位，红点照样随时可见。
     */
-    {
-      key: '/notifications',
-      icon: <BellOutlined />,
-      label: (
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-          消息通知
-          {unread > 0 && <Badge count={unread} size="small" overflowCount={99} />}
-        </span>
-      ),
-      perm: 'notice:read',
-    },
-    // 与「消息通知」并列放在顶部高频区：两者都是"每个人自己的"功能，
-    // 塞进「运维工具」分组会让它在权限树里显得像管理员专属（同通知的处理）。
+    { key: '/chat', icon: <MessageOutlined />, label: '对话', perm: 'agent:invoke' },
     { key: '/memory', icon: <BulbOutlined />, label: '长期记忆', perm: 'profile:read' },
     { key: '/agents', icon: <RobotOutlined />, label: '智能体', perm: 'agent:read' },
-    { key: '/chat', icon: <MessageOutlined />, label: '对话', perm: 'agent:invoke' },
-    { key: '/sessions', icon: <HistoryOutlined />, label: '会话历史', perm: 'session:read' },
     { key: '/knowledge-bases', icon: <DatabaseOutlined />, label: '知识库', perm: 'kb:read' },
     { key: '/workflows', icon: <BranchesOutlined />, label: '工作流', perm: 'workflow:read' },
-    { key: '/skills', icon: <BookOutlined />, label: 'Skills', perm: 'skill:manage' },
-    { key: '/skins', icon: <SkinOutlined />, label: '皮肤市场', perm: 'skin:manage' },
-    { key: '/plugins', icon: <AppstoreOutlined />, label: '插件', perm: 'plugin:manage' },
+    /*
+      2026-10-16 三合一：插件 / Skills / 皮肤市场 → 「扩展」。
+      三者是同一件事的三个作用域（从市场安装第三方能力：运行时 / 智能体 / 界面），
+      权限码**各自保留**，入口按"任一命中"显示（与「日志与观测」同一取舍）。
+    */
+    { key: '/extensions', icon: <AppstoreOutlined />, label: '扩展', perm: 'plugin:manage|skill:manage|skin:manage' },
     { key: '/files', icon: <FolderOutlined />, label: '文件', perm: 'file:read' },
     { key: '/settings', icon: <SettingOutlined />, label: '平台设置', perm: 'platform:manage' },
     {
@@ -526,6 +483,8 @@ export default function AppLayout() {
           用户完全可能在会话列表页翻历史时收到审批。
         */}
         <ToolApprovalWatcher />
+        {/* 右下角通知铃铛（2026-10-16）：红点随时可见，点击弹窗看全部 —— 替代原侧栏一级入口 */}
+        <NotificationBell />
       </Layout>
     </AntApp>
   );

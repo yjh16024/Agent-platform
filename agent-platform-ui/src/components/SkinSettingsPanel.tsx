@@ -7,7 +7,6 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   Button,
   Checkbox,
   ColorPicker,
@@ -116,14 +115,6 @@ export default function SkinSettingsPanel({ skinId, compact = false }: Props) {
         );
       })}
 
-      {def.settings.some((s) => s.type === 'visibility-schedule') && (
-        <Alert
-          type="info"
-          showIcon
-          style={{ fontSize: 12 }}
-          message="时间段的判定由平台按本机时间实时计算，每分钟刷新一次"
-        />
-      )}
     </Space>
   );
 }

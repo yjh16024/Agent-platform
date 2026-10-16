@@ -204,7 +204,7 @@ export default function ToolsPage() {
             但增删要去插件页。给一个直接出口，省得用户凭"请到插件页"这句话自己找。
           */}
           {r.source === 'plugin' && (
-            <a style={{ fontSize: 12 }} onClick={() => navigate('/plugins')}>
+            <a style={{ fontSize: 12 }} onClick={() => navigate('/extensions?tab=plugins')}>
               去插件页
             </a>
           )}

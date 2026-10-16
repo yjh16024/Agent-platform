@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Alert,
   App as AntApp,
   Button,
   Card,
@@ -329,13 +328,6 @@ export default function ApprovalPage() {
           </Space>
         }
       >
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 12 }}
-          message="智能体改文件前会先提交申请，只有在这里批准后才会真正执行"
-          description="工作区约束能挡住往工作区外写，但挡不住把工作区里的东西改坏 —— 所以写操作必须由人放行。批准后立即执行且不可撤销；拒绝则不会改动任何文件。"
-        />
         <Table
           rowKey="approvalId"
           size="small"
@@ -388,11 +380,7 @@ export default function ApprovalPage() {
         />
       </Card>
       <Paragraph type="secondary" style={{ marginTop: 12, fontSize: 12 }}>
-        提示：模型调用写工具后只会提交申请并告诉你"等待确认"，不会直接改文件。
-        批准后会在<b>同一次对话内立即执行</b>，模型当场拿到结果继续 —— 不需要再发一句话。
-        正常情况你其实不用来这个页面：写工具执行时会阻塞等待，聊天页**自动弹出确认框**，
-        在那里点「批准」即可。只有等待超过 5 分钟未处理时才会降级成两步式（工作流 / 定时任务这类
-        无人场景走的就是这条分支），那时才需要来这里手动批准，结果也才要到下一轮对话才可见。
+        正常无需来此页：写工具时聊天页会弹出确认框、批准后当场执行。这里用于回看历史与撤销改动。
       </Paragraph>
     </div>
   );

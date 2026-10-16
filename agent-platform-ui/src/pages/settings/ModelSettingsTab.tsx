@@ -1,12 +1,10 @@
 import { useEffect, useState } from 'react';
 import {
-  Card, Form, Input, Select, AutoComplete, Button, Typography, Alert, message, Row, Col,
+  Card, Form, Input, Select, AutoComplete, Button, Alert, message, Row, Col,
 } from 'antd';
 import { getModelConfig, saveEmbeddingBinding, saveChatBinding } from '../../api/modelConfig';
 import { useDict } from '../../dict/store';
 import { DICT } from '../../api/dict';
-
-const { Text } = Typography;
 
 /*
  * 服务商清单原先在这里各写一份（EMBEDDING_PROVIDERS / CHAT_PROVIDERS）。
@@ -128,16 +126,10 @@ export default function ModelSettingsTab() {
 
   return (
     <div>
-      <Text type="secondary">
-        平台级默认绑定：① 嵌入模型用于 RAG 向量化；② 默认对话模型供「未单独配置模型的智能体」回退使用。
-        两者都是可选的，填写 API Key 即直连云端（AES-GCM 加密落库、接口只回掩码）。
-      </Text>
-
       <Alert
         type="warning"
         showIcon
-        style={{ marginTop: 12 }}
-        message="仅需配置一次。新建智能体时若未勾选「自定义模型」，会自动使用这里的默认对话模型；切换嵌入模型会改变向量维度（Milvus 自动重建，旧文档需重新上传）。"
+        message="切换嵌入模型会改变向量维度：已上传的旧文档需要重新上传后才会按新维度检索。"
       />
 
       <Row gutter={16} style={{ marginTop: 16 }}>

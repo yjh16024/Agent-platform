@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  Card, Select, Input, Button, Space, Switch, Tag, Typography, message, Alert, Upload, Tooltip,
+  Card, Select, Input, Button, Space, Switch, Tag, Typography, message, Upload, Tooltip,
 } from 'antd';
-import { PlusOutlined, ClearOutlined, PaperClipOutlined, BookOutlined, ArrowUpOutlined } from '@ant-design/icons';
+import { PlusOutlined, ClearOutlined, PaperClipOutlined, BookOutlined, ArrowUpOutlined, HistoryOutlined } from '@ant-design/icons';
 import { listAgents } from '../../api/agents';
 import { runAgent, runAgentStream, RunMessage, MessagePart } from '../../api/run';
 import { uploadFile } from '../../api/files';
-import { AgentResponse, FileAsset } from '../../api/types';
+import { getSession } from '../../api/sessions';
+import { AgentResponse, FileAsset, SessionSummary } from '../../api/types';
 import { useAppStore } from '../../store/appStore';
 import { useChatStore, ChatMsg } from '../../store/chatStore';
 import ToolCallList from './ToolCallList';
+import SessionHistoryDrawer from './SessionHistoryDrawer';
 import { Markdown } from './markdown/render';
 import SlotOutlet from '../../slots/SlotOutlet';
 import { SLOT_IDS } from '../../slots/registry';
@@ -58,7 +60,7 @@ interface Attachment extends FileAsset {
  */
 export default function ChatPage() {
   const { tenantId } = useAppStore();
-  const { msgsOf, append, replace, reset, sessionOf } = useChatStore();
+  const { msgsOf, append, replace, reset, sessionOf, resume } = useChatStore();
   const [agents, setAgents] = useState<AgentResponse[]>([]);
   const [agentId, setAgentId] = useState<string | undefined>();
   const [input, setInput] = useState('');
@@ -66,12 +68,16 @@ export default function ChatPage() {
   const [toolsEnabled, setToolsEnabled] = useState(false);
   const [busy, setBusy] = useState(false);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
+  /** 会话历史抽屉（方案 C：点历史按钮 → 全局侧栏自动收起 + 抽屉展开）。 */
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [dragging, setDragging] = useState(false);
   /** 拖入文件的来源目录（用于提示"要不要设为工作区"）；null = 无需提示。 */
   const [sourceDir, setSourceDir] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const messages: ChatMsg[] = msgsOf(agentId);
+  /** 当前会话 ID（会话历史抽屉的高亮依据）。**直读 store** —— 不能用 sessionOf()：它会在缺失时生成并落盘，渲染期不该有副作用。 */
+  const currentSessionId = useChatStore((s) => (agentId ? s.sessionByAgent[agentId] : undefined));
   /** 是否已进入对话（决定输入框居中还是沉底）。 */
   const hasConversation = messages.length > 0;
 
@@ -267,8 +273,71 @@ export default function ChatPage() {
     reset(agentId);
     setInput('');
     setAttachments([]);
-    message.success('已开始新对话，上一轮可在「会话历史」中查看');
+    message.success('已开始新对话，上一轮可在「历史」抽屉中查看');
   }, [agentId, msgsOf, reset]);
+
+  /**
+   * 打开会话历史（方案 C）。
+   *
+   * <p>先派发 `ap:sidebar-collapse` 把全局侧栏折叠（AppLayout 监听）——
+   * **同一时间只展开一个面板**，避免"两层侧栏同时铺开"的臃肿；
+   * 关闭抽屉后**不自动还原**：缩了又弹回来才是真的晃眼，用户要用导航自己点开即可。</p>
+   */
+  const openHistory = useCallback(() => {
+    window.dispatchEvent(new CustomEvent('ap:sidebar-collapse'));
+    setHistoryOpen(true);
+  }, []);
+
+  /** 载入一条历史会话：拉消息 → 写 store（消息与 sessionId 一起换）→ 必要时切换智能体。 */
+  const switchToSession = useCallback(
+    async (s: SessionSummary) => {
+      const sid = s.sessionId;
+      const target = s.agentId || agentId;
+      if (!sid || !target) {
+        message.warning('该会话缺少会话 ID 或智能体，无法载入');
+        return;
+      }
+      try {
+        const d = await getSession(sid);
+        const msgs: ChatMsg[] = (d.messages ?? [])
+          .filter((m) => m.role === 'user' || m.role === 'assistant')
+          .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content ?? '' }));
+        resume(target, sid, msgs);
+        if (target !== agentId) {
+          setAgentId(target);
+        }
+        setHistoryOpen(false);
+        message.success('已载入该会话');
+      } catch (e) {
+        message.error(`载入会话失败：${(e as Error).message}`);
+      }
+    },
+    [agentId, resume],
+  );
+
+  /**
+   * 被删/被清的正是当前会话时，同步本地状态。
+   * 不同步的后果是"本地还在聊、后端那条已经没了"——下一轮消息会写进一条不存在的会话。
+   */
+  const onCurrentSessionDeleted = useCallback(
+    (s: SessionSummary) => {
+      const target = s.agentId || agentId;
+      if (target) {
+        reset(target);
+      }
+      message.info('当前会话已删除，已为你开始新对话');
+    },
+    [agentId, reset],
+  );
+  const onCurrentSessionCleared = useCallback(
+    (s: SessionSummary) => {
+      const target = s.agentId || agentId;
+      if (target) {
+        replace(target, []);
+      }
+    },
+    [agentId, replace],
+  );
 
   const discardConversation = () => {
     // 与 newConversation 保持一致的守卫：没有选中智能体时连会话标识都不存在，
@@ -283,6 +352,17 @@ export default function ChatPage() {
       setAttachments([]);
     }
   };
+
+  /** 会话历史抽屉的组标题用：agentId → 智能体名。 */
+  const agentNames = useMemo(() => {
+    const m: Record<string, string> = {};
+    for (const a of agents) {
+      if (a.agentId) {
+        m[a.agentId] = a.name ?? a.agentId;
+      }
+    }
+    return m;
+  }, [agents]);
 
   const agentOptions = useMemo(
     () =>
@@ -452,6 +532,9 @@ export default function ChatPage() {
           </Space>
 
           <Space size={6}>
+            <Tooltip title="会话历史（切换 / 重命名 / 删除）">
+              <Button size="small" type="text" icon={<HistoryOutlined />} onClick={openHistory} />
+            </Tooltip>
             <Tooltip title="丢弃当前对话（不保存）">
               <Button size="small" type="text" icon={<ClearOutlined />} onClick={discardConversation} />
             </Tooltip>
@@ -534,15 +617,6 @@ export default function ChatPage() {
         },
       }}
     >
-      {hasConversation && (
-        <Alert
-          type="info"
-          showIcon
-          style={{ marginBottom: 8, flex: '0 0 auto' }}
-          message={`本轮对话共 ${messages.length} 条。切换页面不会丢失；点右上角「+」将自动保存到会话历史。`}
-        />
-      )}
-
       {/* 插件注入的会话级横幅（如用量/额度提示）。无内容时渲染 null，不留空隙 */}
       <div style={{ flex: '0 0 auto' }}>
         <SlotOutlet slot={SLOT_IDS.conversationAboveList} agentId={agentId} />
@@ -734,6 +808,20 @@ export default function ChatPage() {
 
       {/* 对话中：输入框沉底（空态时 composer 已在滚动区内居中） */}
       {hasConversation && <div style={{ flex: '0 0 auto', marginTop: 10 }}>{composer}</div>}
+
+      {/*
+        会话历史抽屉：antd Drawer 自己 portal 到 body，放在 Card 内部**不影响** DOM 结构与皮肤契约
+        （`data-slot='conversation'` 仍挂在 Card 上，直接子元素没有变化）。
+      */}
+      <SessionHistoryDrawer
+        open={historyOpen}
+        onClose={() => setHistoryOpen(false)}
+        currentSessionId={currentSessionId}
+        agentNames={agentNames}
+        onSwitch={switchToSession}
+        onCurrentDeleted={onCurrentSessionDeleted}
+        onCurrentCleared={onCurrentSessionCleared}
+      />
     </Card>
   );
 }

@@ -36,7 +36,7 @@ export default function LoginPage() {
       setToken(res.token);
       setTenantId(res.tenant_id || tenantId);
       message.success(res.display_name ? `欢迎，${res.display_name}` : '登录成功');
-      navigate('/overview', { replace: true });
+      navigate('/chat', { replace: true });
     } catch (e) {
       message.error(e instanceof Error ? e.message : '登录失败');
     } finally {
