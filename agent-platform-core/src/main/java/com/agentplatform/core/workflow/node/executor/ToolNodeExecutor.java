@@ -33,28 +33,34 @@ public class ToolNodeExecutor implements NodeExecutor {
 
     @Override
     public Object execute(WorkflowNode node, WorkflowContext ctx) {
-        String toolName = (String) node.config().get("tool_name");
-        if (toolName == null) {
+        String toolName = NodeConfigs.str(node, "tool_name", "toolName");
+        if (NodeConfigs.blank(toolName)) {
             throw new IllegalArgumentException("Tool node " + node.id() + " requires config.tool_name");
         }
-        // 解析入参（静态参数或 ${var} 引用）
+        /*
+         * ★ 必须用 NodeConfigs.map，不能手写 `instanceof Map`（2026-10-12 修）。
+         *
+         * 画布上的「参数(JSON)」是一个**文本框**，`NODE_FIELDS` 里声明为 textarea，
+         * 所以存进 `config.arguments` 的是**字符串**（`"{\"city\":\"北京\"}"`），
+         * 不是 Map。原先这里只认 `instanceof Map`，于是：
+         *   ⇒ **界面上填的参数被静默丢弃** —— 不报错、不提示，
+         *     只是工具收到一个空对象，然后要么返回默认结果、要么报"缺少参数"，
+         *     而用户看着界面上明明填了。
+         *
+         * `NodeConfigs.map` 同时支持两种形态（它的注释里就写着"支持 Map，或 JSON 字符串"），
+         * 插件节点一直在用它 —— 两个同类型的执行器用两套解析方式，本身就是隐患。
+         */
         Map<String, Object> resolvedArgs = new LinkedHashMap<>();
-        Object args = node.config().get("arguments");
-        if (args instanceof Map<?, ?> map) {
-            map.forEach((k, v) -> resolvedArgs.put(String.valueOf(k), resolveArg(v, ctx)));
-        }
+        NodeConfigs.map(node, "arguments", "args").forEach((k, v) ->
+                // 值里可以嵌 `${变量}`；用 resolveString 而非"整值恰好是个变量"的判断，
+                // 这样 "城市：${city}" 这种带前缀的写法也生效（PluginNodeExecutor 同此约定）
+                resolvedArgs.put(k, v instanceof String s ? ctx.resolveString(s) : v));
+
         JsonNode argsJson = mapper.valueToTree(resolvedArgs);
         ToolResult result = toolExecutor.run(toolName, argsJson, ToolContext.of("default", null, null));
         if (!result.success()) {
             return Map.of("ok", false, "error", result.error() == null ? "unknown" : result.error());
         }
         return Map.of("ok", true, "output", result.output());
-    }
-
-    private Object resolveArg(Object v, WorkflowContext ctx) {
-        if (v instanceof String s && s.trim().matches("\\$\\{[^}]+}")) {
-            return ctx.resolve(s.trim());
-        }
-        return v;
     }
 }

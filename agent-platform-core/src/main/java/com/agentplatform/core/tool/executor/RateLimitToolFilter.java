@@ -2,6 +2,8 @@ package com.agentplatform.core.tool.executor;
 
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.core.multimodal.QuotaService;
+import com.agentplatform.core.settings.PlatformSettingRegistry;
+import com.agentplatform.core.settings.PlatformSettingService;
 import com.agentplatform.core.tool.ToolResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -41,6 +43,20 @@ public class RateLimitToolFilter implements ToolFilter {
     private boolean enabled = true;
 
     /**
+     * 平台设置服务（「平台设置」页可热切换开关与阈值）。
+     * <p>字段注入 {@code required=false}：单测 / 最小环境里没有它时回落到上面的配置值。</p>
+     */
+    @Autowired(required = false)
+    private PlatformSettingService platformSettings;
+
+    /** 总开关的**运行期**取值：页面（覆盖文件）优先，其次配置文件 / 环境变量。 */
+    private boolean enabled() {
+        return platformSettings == null
+                ? enabled
+                : platformSettings.bool(PlatformSettingRegistry.TOOL_RATE_LIMIT_ENABLED, enabled);
+    }
+
+    /**
      * 每租户**每分钟**的工具调用上限。
      *
      * <p>默认 600 偏宽松，是刻意的：先拦"明显失控"（模型循环），
@@ -50,9 +66,18 @@ public class RateLimitToolFilter implements ToolFilter {
     @Value("${agent-platform.tool.rate-limit.per-minute:600}")
     private long perMinute = 600L;
 
+    /** 阈值的**运行期**取值（「平台设置」页可热切换）：页面优先，其次配置值。 */
+    private long perMinute() {
+        return platformSettings == null
+                ? perMinute
+                : platformSettings.longValue(PlatformSettingRegistry.TOOL_RATE_LIMIT_PER_MINUTE, perMinute);
+    }
+
     @Override
     public ToolResult doFilter(ToolInvocation invocation, ToolChain chain) {
-        if (!enabled || quotaService == null || perMinute <= 0) {
+        // 取一次快照：限流判断与拒绝文案必须用同一个值（否则用户看到的"上限"可能与实际拦截的不一致）
+        long limit = perMinute();
+        if (!enabled() || quotaService == null || limit <= 0) {
             return chain.apply(invocation);
         }
         String tenantId = invocation.ctx() == null ? null : invocation.ctx().tenantId();
@@ -61,11 +86,11 @@ public class RateLimitToolFilter implements ToolFilter {
             return chain.apply(invocation);
         }
         try {
-            quotaService.checkAndIncrement(tenantId, "tool_calls", perMinute, "minute");
+            quotaService.checkAndIncrement(tenantId, "tool_calls", limit, "minute");
         } catch (BizException e) {
             log.warn("[tool] 触发限流：tenant={} tool={} limit={}/min",
-                    tenantId, invocation.toolName(), perMinute);
-            return ToolResult.fail("工具调用过于频繁，已被限流（上限 " + perMinute + " 次/分钟）。"
+                    tenantId, invocation.toolName(), limit);
+            return ToolResult.fail("工具调用过于频繁，已被限流（上限 " + limit + " 次/分钟）。"
                     + "请减少不必要的工具调用，或在任务确实需要时告知用户稍后重试。");
         }
         return chain.apply(invocation);

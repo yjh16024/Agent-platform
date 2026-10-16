@@ -10,9 +10,10 @@
     "preview": "vite preview",
     "sync:dist": "node scripts/sync-dist.mjs",
     "build:prod": "tsc --noEmit && vite build && node scripts/sync-dist.mjs",
-    "test": "node scripts/test-canvas-adapter.mjs && node scripts/test-markdown.mjs && node scripts/test-plugin-config.mjs",
+    "test": "node scripts/test-canvas-adapter.mjs && node scripts/test-markdown.mjs && node scripts/test-plugin-config.mjs && node scripts/test-tool-args.mjs",
     "test:markdown": "node scripts/test-markdown.mjs",
-    "test:plugin-config": "node scripts/test-plugin-config.mjs"
+    "test:plugin-config": "node scripts/test-plugin-config.mjs",
+    "test:tool-args": "node scripts/test-tool-args.mjs"
   },
   "dependencies": {
     "@ant-design/icons": "^5.5.1",

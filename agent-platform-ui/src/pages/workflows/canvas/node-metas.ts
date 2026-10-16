@@ -6,15 +6,67 @@
  */
 import type { NodeTypeMeta } from './types';
 
+/**
+ * 字段选项的**动态来源** —— 从平台已有内容读取，而不是让用户手填 id。
+ *
+ * <h3>为什么要有它（2026-10-12）</h3>
+ * 在此之前，Agent / 知识库 / Skill / 工具这些字段都是**纯文本框**，要求用户
+ * 手打 `agent_xxx` / `kb_xxx` —— 而那些 id 只在列表页的 URL 里能见到，
+ * 用户的做法通常是"回列表页点开、从地址栏抄一段回来"。
+ * 更糟的是**抄错了不报错**：保存能过，跑起来才说"找不到该智能体"。
+ *
+ * <p>改成下拉之后，用户看到的是名字、选的是对象，id 由系统填 ——
+ * 抄错的可能从根上消失了。文本框仍然保留（下拉允许自由输入），
+ * 因为有些场景（脚本批量建工作流、填变量引用 `${kb_id}`）确实要手写。</p>
+ */
+export type FieldSource =
+  /** 平台智能体（`agents` 列表，值取 agentId） */
+  | 'agents'
+  /** 工具注册中心（内置 / HTTP / MCP / 插件工具，值取工具名） */
+  | 'tools'
+  /** 知识库（值取 kbId） */
+  | 'knowledgeBases'
+  /** Skills（值取 skillId） */
+  | 'skills'
+  /** 模型服务商（值取 provider 标识，如 deepseek） */
+  | 'providers'
+  /** 模型名（取决于同节点的 config.provider，取不到就退回全部模型） */
+  | 'models';
+
 export interface CanvasFieldSpec {
   /** 相对 node.data 的路径 */
   name: string;
   label: string;
-  kind: 'text' | 'textarea' | 'number' | 'select' | 'switch';
+  /**
+   * 控件类型。
+   *
+   * <p>`multiSelect` 是给**多值字段**用的（目前只有知识库的 `kb_ids`）：
+   * 它存的仍然是**一个字符串**（逗号分隔），因为后端读的就是这个形式
+   * （`KnowledgeBaseNodeExecutor` 按逗号/换行切开）。
+   * 用 `select` 会出问题：单选会把用户已选的其它知识库覆盖掉。</p>
+   */
+  kind: 'text' | 'textarea' | 'number' | 'select' | 'multiSelect' | 'switch';
   options?: { label: string; value: string | number }[];
+  /**
+   * 动态选项来源。与 `options` 二选一；同时存在时**以 source 为准**，
+   * 但**加载失败会退回 `options`**（宁可给一份静态候选，也不要空下拉）。
+   */
+  source?: FieldSource;
+  /**
+   * 选中某项后，把它的**参数模板**写进 `argsTemplateTo` 指向的另一个字段。
+   *
+   * <p>用于"选完工具 → `config.arguments` 自动填上该工具的入参骨架"：
+   * 模板由工具的 `inputSchema()` 推导（见 `toolArgsTemplate`），
+   * 用户在此基础上改值，不必再去翻文档查这个工具要传什么。</p>
+   *
+   * <p>仅在**该目标字段当前为空**时填充 —— 否则用户手写的参数会被选一次工具就冲掉。</p>
+   */
+  argsTemplateTo?: string;
   placeholder?: string;
   /** 是否用于节点卡片摘要展示 */
   summary?: boolean;
+  /** 下拉是否允许用户输入不在列表里的值（默认允许）。 */
+  freeInput?: boolean;
 }
 
 /** 节点库与节点卡片共用的元信息。 */
@@ -137,6 +189,9 @@ export const NODE_FIELDS: Record<string, CanvasFieldSpec[]> = {
       name: 'config.provider',
       label: '服务商',
       kind: 'select',
+      // 从数据字典读（与「平台设置 → 模型设置」同一个来源），不再各写一份静态清单
+      source: 'providers',
+      // 字典拉不到时退回这份静态候选：**auto 必须留**，它是「跟随平台默认」的意思
       options: [
         { label: '自动路由(auto)', value: 'auto' },
         { label: 'deepseek', value: 'deepseek' },
@@ -145,7 +200,14 @@ export const NODE_FIELDS: Record<string, CanvasFieldSpec[]> = {
         { label: 'anthropic', value: 'anthropic' },
       ],
     },
-    { name: 'config.model', label: '模型', kind: 'text', placeholder: 'deepseek-chat', summary: true },
+    {
+      name: 'config.model',
+      label: '模型',
+      kind: 'select',
+      source: 'models',
+      placeholder: '平台当前模型；也可直接输入其它模型名',
+      summary: true,
+    },
     { name: 'config.temperature', label: '温度', kind: 'number', placeholder: '0.7' },
     { name: 'config.max_tokens', label: '最大 Token', kind: 'number', placeholder: '2048' },
     {
@@ -164,7 +226,14 @@ export const NODE_FIELDS: Record<string, CanvasFieldSpec[]> = {
     { name: 'outputVar', label: '输出变量名', kind: 'text', placeholder: 'llm_output' },
   ],
   agent: [
-    { name: 'config.agent_id', label: '目标 Agent ID', kind: 'text', placeholder: 'agent_xxx', summary: true },
+    {
+      name: 'config.agent_id',
+      label: '目标智能体',
+      kind: 'select',
+      source: 'agents',
+      placeholder: '从列表选择，或直接输入 ID',
+      summary: true,
+    },
     {
       name: 'config.input',
       label: '输入内容',
@@ -176,9 +245,10 @@ export const NODE_FIELDS: Record<string, CanvasFieldSpec[]> = {
   knowledge: [
     {
       name: 'config.kb_ids',
-      label: '知识库 ID',
-      kind: 'textarea',
-      placeholder: 'kb_xxx（多个用逗号或换行分隔）',
+      label: '知识库',
+      kind: 'multiSelect',
+      source: 'knowledgeBases',
+      placeholder: '从列表选择（可多选），或粘贴 ID',
       summary: true,
     },
     {
@@ -192,7 +262,14 @@ export const NODE_FIELDS: Record<string, CanvasFieldSpec[]> = {
     { name: 'outputVar', label: '输出变量名', kind: 'text', placeholder: 'kb_result' },
   ],
   code: [
-    { name: 'config.skill_id', label: 'Skill', kind: 'text', placeholder: 'skill_xxx', summary: true },
+    {
+      name: 'config.skill_id',
+      label: 'Skill',
+      kind: 'select',
+      source: 'skills',
+      placeholder: '从列表选择，或直接输入 ID',
+      summary: true,
+    },
     {
       name: 'config.exec_type',
       label: '执行类型',
@@ -233,16 +310,38 @@ export const NODE_FIELDS: Record<string, CanvasFieldSpec[]> = {
     {
       name: 'config.tool_name',
       label: '插件工具名',
-      kind: 'text',
-      placeholder: 'plugin_xxx 提供的工具名（见「工具调试」页）',
+      kind: 'select',
+      source: 'tools',
+      // 选完就把该工具的入参骨架填进参数框（见 field-options 的 schemaToArgsTemplate）
+      argsTemplateTo: 'config.arguments',
+      placeholder: '从列表选择插件贡献的工具（会自动带出参数），或直接输入',
       summary: true,
     },
-    { name: 'config.arguments', label: '参数(JSON)', kind: 'textarea', placeholder: '{"city": "北京"}' },
+    {
+      name: 'config.arguments',
+      label: '参数(JSON)',
+      kind: 'textarea',
+      // 说明"可以重新生成"：填充只在它为空时发生，用户清了再选一次即可
+      placeholder: '选完工具会自动填入参数骨架；可自行修改（清空后重选可再生成）',
+    },
     { name: 'outputVar', label: '输出变量名', kind: 'text', placeholder: 'plugin_output' },
   ],
   tool: [
-    { name: 'config.tool_name', label: '工具名', kind: 'text', placeholder: 'weather / calculator …', summary: true },
-    { name: 'config.arguments', label: '参数(JSON)', kind: 'textarea', placeholder: '{"city": "北京"}' },
+    {
+      name: 'config.tool_name',
+      label: '工具名',
+      kind: 'select',
+      source: 'tools',
+      argsTemplateTo: 'config.arguments',
+      placeholder: '从列表选择工具（会自动带出参数），或直接输入',
+      summary: true,
+    },
+    {
+      name: 'config.arguments',
+      label: '参数(JSON)',
+      kind: 'textarea',
+      placeholder: '选完工具会自动填入参数骨架；可自行修改（清空后重选可再生成）',
+    },
     { name: 'outputVar', label: '输出变量名', kind: 'text', placeholder: 'tool_output' },
   ],
   condition: [
@@ -300,11 +399,31 @@ export const NODE_FIELDS: Record<string, CanvasFieldSpec[]> = {
   ],
 };
 
-/** 节点卡片上的一行摘要（取 summary 字段的第一个非空值）。 */
+/**
+ * 节点卡片上的一行摘要（取 summary 字段的第一个非空值）。
+ *
+ * <h3>★ 都为空时不再显示节点描述（2026-10-12 改）</h3>
+ * 原来的兜底是显示节点的 description（如 HTTP 节点显示「发起 HTTP 请求并读取响应」）——
+ * 那行字**描述的是这个节点能干什么，而不是它现在缺什么**，于是用户看到卡片"有内容"，
+ * 以为已经配好了，一保存却被拦下：
+ *
+ * <pre>
+ * Workflow validation failed: Node http_mv4wnwp46 (Http) requires config.url
+ * </pre>
+ *
+ * 这类报错还只在**保存时**出现，而画布上没有任何视觉线索指向它 ——
+ * 用户面对的是"三个节点、一串英文、不知道该点哪个"。
+ *
+ * ⇒ 现在改为**指出第一个待填的字段**。措辞用「未填写」而非「必填」是有意的：
+ * `summary` 字段里只有一部分是后端强制的必填项（如 http.url / tool.tool_name），
+ * 另一些只是"建议填"（如 condition.expression 不填也能存）。
+ * 卡片上加一句**不断言必填**的提示，两种情况都说得通，也不会误导。
+ */
 export function nodeSummary(type: string, data: Record<string, unknown> | undefined): string {
   const specs = NODE_FIELDS[type] ?? [];
   const d = data ?? {};
-  for (const spec of specs.filter((s) => s.summary)) {
+  const summarySpecs = specs.filter((s) => s.summary);
+  for (const spec of summarySpecs) {
     const raw = spec.name.split('.').reduce<unknown>((acc, k) => {
       if (acc && typeof acc === 'object') return (acc as Record<string, unknown>)[k];
       return undefined;
@@ -314,5 +433,10 @@ export function nodeSummary(type: string, data: Record<string, unknown> | undefi
       return text.length > 42 ? `${text.slice(0, 42)}…` : text;
     }
   }
+  // 有 summary 字段但一个都没填 —— 说出缺的那个，别让用户去猜
+  if (summarySpecs.length > 0) {
+    return `⚠️ 未填写：${summarySpecs[0].label}`;
+  }
+  // 本来就没有 summary 字段的类型（如 condition 的分支在分支上配）才回落到描述
   return NODE_META_MAP[type]?.description ?? '';
 }

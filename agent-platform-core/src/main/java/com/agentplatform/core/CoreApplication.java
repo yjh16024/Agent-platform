@@ -1,5 +1,6 @@
 package com.agentplatform.core;
 
+import com.agentplatform.core.settings.PlatformSettingsInitializer;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.boot.persistence.autoconfigure.EntityScan;
@@ -28,6 +29,10 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 public class CoreApplication {
 
     public static void main(String[] args) {
-        SpringApplication.run(CoreApplication.class, args);
+        SpringApplication app = new SpringApplication(CoreApplication.class);
+        // 平台设置覆盖必须在容器刷新前注入 Environment —— 部分设置项是 @ConditionalOnProperty
+        // 的 Bean 装配条件（springai / storage.type / events 等），只在启动装配时读一次。
+        app.addInitializers(new PlatformSettingsInitializer());
+        app.run(args);
     }
 }

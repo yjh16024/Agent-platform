@@ -56,7 +56,7 @@ export default function AgentForm({
   onSaved: () => void;
 }) {
   const [form] = Form.useForm();
-  // 「自定义模型」开关：默认关 → 使用平台默认对话模型（模型设置页配置），
+  // 「自定义模型」开关：默认关 → 使用平台默认对话模型（「平台设置 → 模型设置」配置），
   // 避免每个智能体都重复填一遍 provider/baseUrl/API Key（与模型设置页功能重复）。
   const [customModel, setCustomModel] = useState(false);
   const [kbs, setKbs] = useState<KnowledgeBase[]>([]);
@@ -115,7 +115,7 @@ export default function AgentForm({
       },
     };
     // 仅当用户显式勾选「自定义模型」时才提交模型绑定；
-    // 否则后端回退到平台默认对话模型（模型设置页），实现“只配一次、处处复用”。
+    // 否则后端回退到平台默认对话模型（「平台设置 → 模型设置」），实现“只配一次、处处复用”。
     if (customModel) {
       const strip = (s: unknown) => (typeof s === 'string' ? s.trim() : s);
       const binding: Record<string, unknown> = {
@@ -182,7 +182,7 @@ export default function AgentForm({
           message={
             customModel
               ? '正在为该智能体单独指定模型与 API Key。'
-              : '该智能体将使用「模型设置」页配置的平台默认对话模型；如需单独指定再勾选下方选项。'
+              : '该智能体将使用「平台设置」页配置的平台默认对话模型；如需单独指定再勾选下方选项。'
           }
         />
         <Checkbox

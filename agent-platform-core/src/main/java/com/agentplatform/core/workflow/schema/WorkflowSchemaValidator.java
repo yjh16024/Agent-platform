@@ -182,7 +182,7 @@ public class WorkflowSchemaValidator {
             }
             for (String key : required) {
                 if (!hasConfigKey(node.config(), key)) {
-                    errors.add("Node " + node.id() + " (" + node.type() + ") requires config." + key);
+                    errors.add(missingConfigMessage(node, key));
                 }
             }
         }
@@ -193,16 +193,55 @@ public class WorkflowSchemaValidator {
     }
 
     /**
-     * config 里是否存在某个键（snake_case 或等价的 camelCase）。
+     * 组装"缺少必填配置"的报错文案。
+     *
+     * <h3>★ 为什么要改这句话（2026-10-12）</h3>
+     * 原文案是 {@code Node http_mv4wnwp46 (Http) requires config.url} —— 三个问题：
+     * 给了 {@code id} 却<b>没给节点名</b>（画布上显示的是标题，用户对不上哪个是哪个）；
+     * 只有技术键名，<b>没说去哪儿填</b>；整句英文。
+     * 实际收到的反馈是"三个节点报一串英文，不知道该点哪个"。
+     * 现在带上节点标题 + 明确"点开节点在参数栏填写"。
+     *
+     * <p>节点名可能为空（画布一定会填，但接口调用方不一定传），此时回落到类型名。</p>
+     */
+    private static String missingConfigMessage(WorkflowNode node, String key) {
+        String label = node.name() == null || node.name().isBlank()
+                ? String.valueOf(node.type())
+                : node.name();
+        // 键名保留 config. 前缀：它与画布字段（NODE_FIELDS 的 `config.url` 等）一一对应，
+        // 用户能直接拿它对上；且既有测试断言的就是这个子串。
+        return "节点「" + label + "」(" + node.id() + ") 缺少必填配置 config." + key
+                + "（在画布上点开该节点，于参数栏填写后重试）";
+    }
+
+    /**
+     * config 里是否存在某个键（snake_case 或等价的 camelCase），<b>且值非空</b>。
+     *
+     * <h3>★ 为什么要连着值一起检查（2026-10-12 补）</h3>
+     * 原来只判 {@code containsKey} —— 于是 {@code {"url": ""}} 能通过保存，
+     * 却在执行到该节点时由 {@code HttpNodeExecutor} 抛
+     * {@code requires config.url}：<b>又把错误推回了运行期</b>，正是这个校验器要避免的。
+     * 用户的表现是"保存成功了，一跑就报错"，比保存期被拦住更难查。
+     *
+     * <p>空值判定按"字符串 trim 后为空"来算；数字 {@code 0}、布尔 {@code false} 都不算空
+     * （它们是有意义的值）。本清单里的键都是标识类（url / tool_name / prompt / query /
+     * agent_id / skill_id / kb_ids / loop_body），不存在"合法的空值"，所以这样判是安全的。</p>
      */
     private static boolean hasConfigKey(Map<String, Object> config, String snakeKey) {
         if (config == null) {
             return false;
         }
-        if (config.containsKey(snakeKey)) {
-            return true;
+        String camelKey = toCamel(snakeKey);
+        boolean hasSnake = config.containsKey(snakeKey);
+        if (!hasSnake && !config.containsKey(camelKey)) {
+            return false;
         }
-        return config.containsKey(toCamel(snakeKey));
+        Object value = hasSnake ? config.get(snakeKey) : config.get(camelKey);
+        if (value == null) {
+            return false;
+        }
+        // 字符串要 trim 后非空；数字 0 / 布尔 false 都是有意义的值，不算空
+        return !(value instanceof String s) || !s.trim().isEmpty();
     }
 
     /**

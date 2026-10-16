@@ -2,6 +2,8 @@ package com.agentplatform.core.tool.fs;
 
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.common.util.JsonUtils;
+import com.agentplatform.core.settings.PlatformSettingRegistry;
+import com.agentplatform.core.settings.PlatformSettingService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
@@ -55,6 +57,20 @@ public class WorkspaceService {
     /** 总开关：关掉后所有 {@code fs_*} 工具直接拒绝，便于在生产环境临时禁用。 */
     @Value("${agent-platform.agent.workspace.enabled:true}")
     private boolean enabled;
+
+    /**
+     * 平台设置服务（「平台设置」页可热切换本开关）。
+     * <p>字段注入 {@code required=false}：单测 / 最小环境里没有它时回落到上面的配置值。</p>
+     */
+    @Autowired(required = false)
+    private PlatformSettingService platformSettings;
+
+    /** 总开关的**运行期**取值：页面（覆盖文件）优先，其次配置文件 / 环境变量。 */
+    private boolean enabled() {
+        return platformSettings == null
+                ? enabled
+                : platformSettings.bool(PlatformSettingRegistry.WORKSPACE_ENABLED, enabled);
+    }
 
     /** 工作区根目录（相对路径按进程工作目录解析）。 */
     @Value("${agent-platform.agent.workspace.root:./data/workspace}")
@@ -152,7 +168,7 @@ public class WorkspaceService {
 
     /** 工作区是否可用（总开关打开）。 */
     public boolean available() {
-        return enabled;
+        return enabled();
     }
 
     /**
@@ -530,8 +546,8 @@ public class WorkspaceService {
     }
 
     private void requireEnabled() {
-        if (!enabled) {
-            throw BizException.forbidden("文件工具已被关闭（agent-platform.agent.workspace.enabled=false）");
+        if (!enabled()) {
+            throw BizException.forbidden("文件工具已被关闭（可在「平台设置 → 文件与工具」重新开启）");
         }
     }
 }

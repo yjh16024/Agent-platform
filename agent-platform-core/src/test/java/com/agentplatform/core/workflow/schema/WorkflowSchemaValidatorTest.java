@@ -100,6 +100,50 @@ class WorkflowSchemaValidatorTest {
     }
 
     @Test
+    @DisplayName("★ 报错要指路：带节点标题与 id，而不是只有一串技术键名")
+    void missingConfigMessagePointsToNode() {
+        // 名字是画布上显示的那个（用户靠它对上"该点哪个节点"）
+        WorkflowNode http = new WorkflowNode("http_mv4wnwp46", NodeType.Http, "抓取接口",
+                "end", null, "http_output", null, Map.of("method", "GET"));
+        WorkflowDefinition wf = def(List.of(
+                WorkflowNode.simple("start", NodeType.Start, "http_mv4wnwp46", null),
+                http,
+                WorkflowNode.simple("end", NodeType.End, null, null)));
+
+        BizException ex = assertThrows(BizException.class, () -> validator.validate(wf));
+        String msg = ex.getMessage();
+
+        assertTrue(msg.contains("抓取接口"), "要带节点标题，否则用户不知道是画布上的哪个：" + msg);
+        assertTrue(msg.contains("http_mv4wnwp46"), "也要带 id，便于和日志对上：" + msg);
+        assertTrue(msg.contains("config.url"), "键名要保留（与画布字段一一对应）：" + msg);
+        assertTrue(msg.contains("参数栏"), "要告诉用户去哪儿填：" + msg);
+    }
+
+    @Test
+    @DisplayName("★ 键在但值是空串 → 也算缺失（否则会拖到运行时才炸）")
+    void blankValueCountsAsMissing() {
+        WorkflowDefinition wf = def(List.of(
+                WorkflowNode.simple("start", NodeType.Start, "http", null),
+                node("http", NodeType.Http, "end", "http_output", Map.of("url", "   ")),
+                WorkflowNode.simple("end", NodeType.End, null, null)));
+
+        BizException ex = assertThrows(BizException.class, () -> validator.validate(wf),
+                "只写了个空串等于没填 —— 放过去的话，执行到该节点才会报错");
+        assertTrue(ex.getMessage().contains("config.url"), ex.getMessage());
+    }
+
+    @Test
+    @DisplayName("★ 反向：值非空就放行（数字 0、布尔 false 也不算空）")
+    void nonBlankValueAccepted() {
+        WorkflowDefinition wf = def(List.of(
+                WorkflowNode.simple("start", NodeType.Start, "tool", null),
+                node("tool", NodeType.Tool, "end", "tool_output",
+                        Map.of("tool_name", "calculator", "arguments", 0)),
+                WorkflowNode.simple("end", NodeType.End, null, null)));
+        assertDoesNotThrow(() -> validator.validate(wf));
+    }
+
+    @Test
     @DisplayName("config 写 camelCase（kbIds）也算提供，不被拒绝")
     void camelCaseConfigKeyAccepted() {
         WorkflowDefinition wf = def(List.of(

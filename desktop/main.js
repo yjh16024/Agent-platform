@@ -318,6 +318,21 @@ if (!gotLock) {
     return r.canceled || !r.filePaths.length ? null : r.filePaths[0];
   });
 
+  /*
+   * 应用重启：「平台设置」里改了"需重启才生效"的项后，用户点「立即重启应用」走这里。
+   *
+   * 只做两件事：app.relaunch()（登记"退出后重新拉起自己"）+ 正常 quit 流程。
+   * ★ 必须先置 app.isQuitting = true：否则后端 exit 回调会走"后端死了 → 销毁窗口 → 退出应用"
+   *   那条防御路径，与外层的 quit 流程互相干扰（表现是"重启一闪"，像它是崩溃）。
+   * 后端子进程由 before-quit 统一 kill（见下方钩子），这里不重复处理。
+   */
+  ipcMain.handle('ap:restart-app', () => {
+    app.isQuitting = true;
+    app.relaunch();
+    app.quit();
+    return true;
+  });
+
   app.on('second-instance', () => {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   });

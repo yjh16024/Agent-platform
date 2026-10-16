@@ -2,6 +2,8 @@ package com.agentplatform.core.audit;
 
 import com.agentplatform.common.util.IdGenerator;
 import com.agentplatform.core.security.rbac.RbacContext;
+import com.agentplatform.core.settings.PlatformSettingRegistry;
+import com.agentplatform.core.settings.PlatformSettingService;
 import com.agentplatform.model.entity.SysAuditLog;
 import com.agentplatform.model.repository.SysUserRepository;
 import jakarta.servlet.http.HttpServletRequest;
@@ -11,6 +13,7 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
@@ -61,6 +64,20 @@ public class AuditAspect {
     @Value("${agent-platform.audit.enabled:true}")
     private boolean auditEnabled;
 
+    /**
+     * 平台设置服务（「平台设置」页可热切换审计开关）。
+     * <p>字段注入 {@code required=false}：单测 / 最小环境里没有它时回落到上面的配置值。</p>
+     */
+    @Autowired(required = false)
+    private PlatformSettingService platformSettings;
+
+    /** 审计开关的**运行期**取值：页面（覆盖文件）优先，其次配置文件 / 环境变量。 */
+    private boolean auditEnabled() {
+        return platformSettings == null
+                ? auditEnabled
+                : platformSettings.bool(PlatformSettingRegistry.AUDIT_ENABLED, auditEnabled);
+    }
+
     private final AuditService auditService;
     private final SysUserRepository userRepository;
 
@@ -74,7 +91,7 @@ public class AuditAspect {
 
     @Around("within(@org.springframework.web.bind.annotation.RestController *)")
     public Object around(ProceedingJoinPoint pjp) throws Throwable {
-        if (!auditEnabled || shouldSkip(pjp)) {
+        if (!auditEnabled() || shouldSkip(pjp)) {
             return pjp.proceed();
         }
 

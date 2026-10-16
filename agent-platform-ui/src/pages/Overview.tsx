@@ -32,7 +32,7 @@ export default function Overview() {
         type="info"
         showIcon
         style={{ marginBottom: 16 }}
-        message="模型默认走本地 Mock（无外部依赖）。新建/编辑智能体时可绑定 provider / model / baseUrl / API Key 直连真实模型，或在「模型设置」配置嵌入模型；未配置时对话返回确定性示例文本。"
+        message="模型默认走本地 Mock（无外部依赖）。新建/编辑智能体时可绑定 provider / model / baseUrl / API Key 直连真实模型，或在「平台设置」配置嵌入模型；未配置时对话返回确定性示例文本。"
       />
       <Row gutter={16} style={{ marginBottom: 16 }}>
         <Col span={8}>

@@ -54,6 +54,12 @@ public enum RbacPermission {
     // 模型配置里含厂商密钥（AES-GCM 加密存储），必须比"看配置"更严：统一按管理粒度管控。
     MODEL_MANAGE("model:manage", "配置模型与密钥", "模型"),
 
+    // ---- 平台设置（2026-10-15：由「模型设置」页升级为「平台设置」，新增功能开关层）----
+    // 单码读写同权：页面主体仍是模型绑定（含厂商密钥、只回掩码），与 MODEL_MANAGE 同一粒度 ——
+    // 能看掩码的人本来就是该配置它的人；拆成 read + manage 只会造出"能看不能改"的中间态。
+    // 刻意**不进 systemCodes()**：与 model:manage / quota:manage 同类（部署与业务配置），operator 也持有。
+    PLATFORM_MANAGE("platform:manage", "配置平台设置", "平台设置"),
+
     // ---- 扩展（插件 / Skills / 皮肤）----
     PLUGIN_MANAGE("plugin:manage", "管理插件", "扩展"),
     SKILL_MANAGE("skill:manage", "管理 Skills", "扩展"),

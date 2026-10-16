@@ -3,8 +3,11 @@ package com.agentplatform.core.memory;
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.model.router.ModelRouter;
+import com.agentplatform.core.settings.PlatformSettingRegistry;
+import com.agentplatform.core.settings.PlatformSettingService;
 import com.agentplatform.model.enums.UserFactCategory;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import tools.jackson.databind.JsonNode;
@@ -59,6 +62,21 @@ public class UserFactExtractor {
     private boolean enabled;
 
     /**
+     * 平台设置服务（「平台设置」页可热切换本开关）。
+     * <p>字段注入 {@code required=false}：单测 / 最小环境里没有它时回落到上面的配置值 ——
+     * 改构造签名会让一批既有单测编译失败（{@code LlmNodeExecutor} 踩过同样的取舍）。</p>
+     */
+    @Autowired(required = false)
+    private PlatformSettingService platformSettings;
+
+    /** 总开关的**运行期**取值：页面（覆盖文件）优先，其次配置文件 / 环境变量。 */
+    private boolean enabled() {
+        return platformSettings == null
+                ? enabled
+                : platformSettings.bool(PlatformSettingRegistry.MEMORY_AUTO_PROFILE_ENABLED, enabled);
+    }
+
+    /**
      * 抽取用的模型服务商 / 模型。
      *
      * <p>刻意**不复用本轮对话的模型**：抽取是"顺带做的事"，用平台默认模型更可预测，
@@ -102,7 +120,7 @@ public class UserFactExtractor {
      */
     public void extractAsync(String tenantId, String userId, String sessionId,
                              String userMessage, String assistantReply) {
-        if (!enabled) {
+        if (!enabled()) {
             return;
         }
         if (userId == null || userId.isBlank()) {

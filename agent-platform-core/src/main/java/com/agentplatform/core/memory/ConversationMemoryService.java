@@ -2,11 +2,14 @@ package com.agentplatform.core.memory;
 
 import com.agentplatform.core.rag.retriever.EmbeddingService;
 import com.agentplatform.core.rag.retriever.VectorStore;
+import com.agentplatform.core.settings.PlatformSettingRegistry;
+import com.agentplatform.core.settings.PlatformSettingService;
 import com.agentplatform.model.entity.Message;
 import com.agentplatform.model.entity.Session;
 import com.agentplatform.model.repository.MessageRepository;
 import com.agentplatform.model.repository.SessionRepository;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -72,6 +75,20 @@ public class ConversationMemoryService {
     private boolean enabled;
 
     /**
+     * 平台设置服务（「平台设置」页可热切换本开关）。
+     * <p>字段注入 {@code required=false}：单测 / 最小环境里没有它时回落到上面的配置值。</p>
+     */
+    @Autowired(required = false)
+    private PlatformSettingService platformSettings;
+
+    /** 总开关的**运行期**取值：页面（覆盖文件）优先，其次配置文件 / 环境变量。 */
+    private boolean enabled() {
+        return platformSettings == null
+                ? enabled
+                : platformSettings.bool(PlatformSettingRegistry.MEMORY_VECTOR_ENABLED, enabled);
+    }
+
+    /**
      * 相似度下限。默认 0.75 —— 比 RAG 检索的 0 高得多。
      * 这个值偏高是刻意的：召回错了比召回不到更糟（会把无关旧对话灌进上下文）。
      */
@@ -112,7 +129,7 @@ public class ConversationMemoryService {
      * 召回到 user 消息后，其所在会话的上下文本来就还能经会话继续查。</p>
      */
     public void indexAsync(String tenantId, String userId, String sessionId, String text) {
-        if (!enabled || isBlank(userId) || isBlank(sessionId) || isBlank(text)) {
+        if (!enabled() || isBlank(userId) || isBlank(sessionId) || isBlank(text)) {
             return;
         }
         if (text.trim().length() < minTextChars) {
@@ -181,7 +198,7 @@ public class ConversationMemoryService {
      */
     public String recall(String tenantId, String userId, String query,
                          String excludeSessionId) {
-        if (!enabled || isBlank(userId) || isBlank(query)) {
+        if (!enabled() || isBlank(userId) || isBlank(query)) {
             return null;
         }
         String tenant = normalizeTenant(tenantId);
@@ -301,7 +318,7 @@ public class ConversationMemoryService {
      * （Milvus 部署下数据是持久的，本方法只在索引丢失时才需要。）</p>
      */
     public int rebuild(String tenantId, String userId) {
-        if (!enabled || isBlank(userId)) {
+        if (!enabled() || isBlank(userId)) {
             return 0;
         }
         String tenant = normalizeTenant(tenantId);

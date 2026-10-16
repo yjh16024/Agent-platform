@@ -14,7 +14,8 @@
 会话记忆（**四层：短期缓存 + 早期摘要 + 用户画像 + 向量召回**）、RAG 知识库、
 工具与 MCP（**四种传输**，每次调用过**五环责任链**）、自研 DAG 工作流（含循环 / 并行复合节点）、
 Skills 开放标准目录、插件体系（**7 个内置插件 + 声明式配置 + 声明式界面插槽**）、
-多模态输入（含图片视觉）、运行日志与三级诊断，
+多模态输入（含图片视觉）、运行日志与三级诊断、**平台设置**（模型绑定 + 功能开关两层；热切换即时生效，
+需重启项保存后弹窗提示、桌面版可一键重启），
 **让智能体读写文件**（工作区约束 + 工具审批 + 改前快照回滚 + 凭证隔离 + 调用过程可视化），
 **回复渲染与生成式 UI**（自研 Markdown 解析器 + 图表，流式安全且不落 HTML），
 以及**皮肤（换肤）体系** —— 第三方皮肤可以在不改平台代码的前提下接管界面外观。
@@ -459,7 +460,7 @@ curl http://localhost:8081/actuator/health
 建议按以下顺序配置，更快建立可验证的闭环：
 
 1. **跑通 Mock**：先不配任何 Key，确认「新建智能体 → 发消息 → 拿到回复」闭环可用。
-2. **平台默认对话模型**：仪表盘「模型设置」选服务商 → 填模型、baseUrl、API Key → 保存。
+2. **平台默认对话模型**：仪表盘「平台设置 → 模型设置」选服务商 → 填模型、baseUrl、API Key → 保存。
 3. **平台嵌入模型**：同上，填嵌入模型（如 `BAAI/bge-m3`），供 RAG 向量化使用。
 4. **建一个知识库**：上传文档 → 等待摄取完成 → 在智能体 `capabilities` 绑定 → 对话验证引用溯源。
 5. **挂 Skill / 插件**：把 Skill 放进 `data/skills/` 后「扫描同步」；插件在市场导入后 Attach 到智能体。
@@ -477,6 +478,7 @@ curl http://localhost:8081/actuator/health
 |----------|------|------|
 | `MYSQL_URL` / `MYSQL_USER` / `MYSQL_PASSWORD` | 数据源 | `localhost:3306/agent_platform` / `agent` / `agent123456` |
 | `SKILLS_DIR` | Skills 目录（标准 SKILL.md 布局） | `./data/skills` |
+| `PLATFORM_SETTINGS_FILE` | 平台设置覆盖文件（「平台设置」页写入；删一行即恢复该项默认值） | `./data/platform-settings.properties` |
 | `SKILLS_OPEN_FOLDER` | 是否允许仪表盘打开系统文件管理器 | `false`（本地桌面可设 `true`） |
 | `STORAGE_TYPE` | 文件存储：`local` / `minio` | `local`（本地磁盘 `./data/files`） |
 | `VECTOR_STORE` | 向量库：`in-memory` / `milvus` | `in-memory` |
@@ -502,7 +504,7 @@ start-core.sh rebuild                     # 或手动 java --enable-preview -jar
 
 | 能力 | 接线方式 |
 |------|----------|
-| 真实对话/嵌入 | 仪表盘「模型设置」填 Key（直连，不经 LiteLLM）；或起 LiteLLM + `.env` 填 `DEEPSEEK_API_KEY` 等 |
+| 真实对话/嵌入 | 仪表盘「平台设置」填 Key（直连，不经 LiteLLM）；或起 LiteLLM + `.env` 填 `DEEPSEEK_API_KEY` 等 |
 | Milvus 向量 | `VECTOR_STORE=milvus`（维度变化自动重建 collection，旧文档需重新上传） |
 | MinIO 文件 | `STORAGE_TYPE=minio`（默认 `MINIO_ENDPOINT/ACCESS/SECRET` 见 `application.yml`） |
 | Kafka 事件 | **默认开启**；`docker compose up -d kafka` 提供 broker（无 broker 时发送失败静默降级，不阻断业务） |
@@ -572,7 +574,7 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 1. 先看 `actuator/health`：确认 `db` UP；`redis` 为 DOWN 属正常降级。
 2. 拿到响应的 `traceId`，在仪表盘「运行日志」里按 trace 看瀑布图（模型调用、工具调用、RAG、
    插件各占多少耗时）。
-3. 模型调用失败：核对「模型设置」里的 provider、baseUrl、Key 是否匹配，日志中 `llm.call`
+3. 模型调用失败：核对「平台设置 → 模型设置」里的 provider、baseUrl、Key 是否匹配，日志中 `llm.call`
    会打印实际生效的 `provider` 与 `model`。
 4. RAG 命中为空：确认知识库已绑定（`capabilities.knowledgeBaseIds` 或请求 `context.rag`），
    文档摄取已完成，且 `topK` / `scoreThreshold` 不是过严。
@@ -603,8 +605,8 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests   # 构建可执行 jar
-mvn test                                              # 552 个单元测试（含 Spring AI 通道、内置库迁移、记忆、工具、工作流画布后端、插件与配置声明等）
-cd agent-platform-ui && npm test                      # 67 个前端单测（画布 adapter 往返幂等 / Markdown 解析器 / 插件配置表单；零新增依赖，用 esbuild + node:test）
+mvn test                                              # 583 个单元测试（含 Spring AI 通道、内置库迁移、记忆、平台设置、工具、工作流画布后端、插件与配置声明等）
+cd agent-platform-ui && npm test                      # 79 个前端单测（画布 adapter 往返幂等 / Markdown 解析器 / 插件配置表单 / 画布工具参数；零新增依赖，用 esbuild + node:test）
 warmup.bat                                            # Windows：依赖预热，"warmup.bat verify" 校验离线构建
 cd agent-platform-ui && npm run build:prod            # 前端构建，产物同步到 core 的 static/
 ```

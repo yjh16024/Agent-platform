@@ -106,13 +106,23 @@ public class ToolController {
             row.put("name", t.name());
             row.put("description", t.description() == null ? "" : t.description());
             row.put("source", registry.sourceOf(t.name()));
+            /*
+             * ★ 入参 JSON Schema —— 对所有来源都返回（2026-10-12 改）。
+             *
+             * 原来只在 HttpApiTool 分支里放，于是内置 / MCP / 插件工具的 schema
+             * 前端根本拿不到。而工作流画布需要它来做"选了工具自动带出参数模板"
+             * （用户不必再去翻文档查这个工具要传什么）。
+             *
+             * 取的是 Tool 接口的 inputSchema()，各实现自己声明；没实现的返回 null，
+             * 此时前端退回"让用户手写 JSON"—— 与从前一致，不会更差。
+             */
+            JsonNode schema = t.inputSchema();
+            if (schema != null && !schema.isNull()) {
+                row.put("parameters", schema);
+            }
             if (t instanceof HttpApiTool http) {
                 row.put("endpoint", http.getEndpoint());
                 row.put("method", http.getMethod());
-                // parameters（入参 JSON Schema）供编辑回显
-                if (http.getInputSchema() != null) {
-                    row.put("parameters", http.getInputSchema());
-                }
             }
             tools.add(row);
         }

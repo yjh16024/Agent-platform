@@ -4,6 +4,8 @@ import com.agentplatform.core.tool.Tool;
 import com.agentplatform.core.tool.ToolContext;
 import com.agentplatform.core.tool.ToolResult;
 import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
+import tools.jackson.databind.node.ObjectNode;
 import org.springframework.stereotype.Component;
 
 /**
@@ -16,6 +18,9 @@ import org.springframework.stereotype.Component;
 @Component("calc")
 public class CalculatorTool implements Tool {
 
+    /** 组装 JSON Schema 用（与 SearchTool 一致的做法）。 */
+    private final ObjectMapper mapper = new ObjectMapper();
+
     @Override
     public String name() {
         return "calc";
@@ -24,6 +29,24 @@ public class CalculatorTool implements Tool {
     @Override
     public String description() {
         return "Evaluate a mathematical expression, e.g. '2+3*4', 'sqrt(16)', 'sin(0)'";
+    }
+
+    /**
+     * 入参 schema。
+     *
+     * <p>原先没声明（走 {@code Tool} 接口的 default null），有两个后果：
+     * 厂商侧会报 {@code schema must be a JSON Schema of 'type: "object"'}；
+     * 工作流画布选了 calc 之后也无法自动带出参数模板。这里补上。</p>
+     */
+    @Override
+    public JsonNode inputSchema() {
+        ObjectNode schema = mapper.createObjectNode();
+        schema.put("type", "object");
+        schema.putObject("properties").putObject("expression")
+                .put("type", "string")
+                .put("description", "要计算的数学表达式，如 2+3*4、sqrt(16)、sin(0)");
+        schema.putArray("required").add("expression");
+        return schema;
     }
 
     @Override

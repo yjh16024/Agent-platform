@@ -1,7 +1,10 @@
 package com.agentplatform.core.tool.executor;
 
+import com.agentplatform.core.settings.PlatformSettingRegistry;
+import com.agentplatform.core.settings.PlatformSettingService;
 import com.agentplatform.core.tool.ToolResult;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
@@ -44,6 +47,20 @@ public class AuthToolFilter implements ToolFilter {
     @Value("${agent-platform.tool.disabled:}")
     private List<String> disabled = List.of();
 
+    /**
+     * 平台设置服务（「平台设置」页可热切换禁用清单）。
+     * <p>字段注入 {@code required=false}：单测 / 最小环境里没有它时回落到上面的配置值。</p>
+     */
+    @Autowired(required = false)
+    private PlatformSettingService platformSettings;
+
+    /** 禁用清单的**运行期**取值：页面（覆盖文件）优先，其次配置文件 / 环境变量。 */
+    private List<String> disabled() {
+        return platformSettings == null
+                ? disabled
+                : platformSettings.list(PlatformSettingRegistry.TOOL_DISABLED);
+    }
+
     @Override
     public ToolResult doFilter(ToolInvocation invocation, ToolChain chain) {
         if (invocation == null) {
@@ -57,11 +74,11 @@ public class AuthToolFilter implements ToolFilter {
                     + " 拒绝执行：调用缺少租户上下文（这会让审计与配额记录失真）");
         }
         // ② 平台禁用清单
-        List<String> deny = disabled;
+        List<String> deny = disabled();
         if (deny != null && !deny.isEmpty() && deny.contains(invocation.toolName())) {
             log.warn("[tool] 拒绝已禁用的工具：{}（租户 {}）", invocation.toolName(), tenantId);
             return ToolResult.fail("工具 " + invocation.toolName()
-                    + " 已被平台策略禁用（agent-platform.tool.disabled），请改用其它方式完成任务");
+                    + " 已被平台策略禁用（「平台设置 → 文件与工具 → 禁用工具清单」），请改用其它方式完成任务");
         }
         return chain.apply(invocation);
     }

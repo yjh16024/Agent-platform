@@ -210,7 +210,7 @@ export default function AppLayout() {
     { key: '/skins', icon: <SkinOutlined />, label: '皮肤市场', perm: 'skin:manage' },
     { key: '/plugins', icon: <AppstoreOutlined />, label: '插件', perm: 'plugin:manage' },
     { key: '/files', icon: <FolderOutlined />, label: '文件', perm: 'file:read' },
-    { key: '/settings', icon: <SettingOutlined />, label: '模型设置', perm: 'model:manage' },
+    { key: '/settings', icon: <SettingOutlined />, label: '平台设置', perm: 'platform:manage' },
     {
       key: '/ops',
       icon: <ToolOutlined />,

@@ -16,7 +16,7 @@ import SessionsPage from './pages/sessions/SessionsPage';
 import SkillsPage from './pages/skills/SkillsPage';
 import WorkflowsPage from './pages/workflows/WorkflowsPage';
 import FilesPage from './pages/files/FilesPage';
-import ModelSettingsPage from './pages/settings/ModelSettingsPage';
+import PlatformSettingsPage from './pages/settings/PlatformSettingsPage';
 import SkinMarketPage from './pages/skins/SkinMarketPage';
 import UserManagePage from './pages/system/UserManagePage';
 import RoleManagePage from './pages/system/RoleManagePage';
@@ -62,7 +62,7 @@ export default function App() {
         <Route path="/prompt" element={<PromptOptimizePage />} />
         <Route path="/tools" element={<ToolsPage />} />
         <Route path="/quota" element={<QuotaPage />} />
-        <Route path="/settings" element={<ModelSettingsPage />} />
+        <Route path="/settings" element={<PlatformSettingsPage />} />
         <Route path="/system/users" element={<UserManagePage />} />
         <Route path="/system/roles" element={<RoleManagePage />} />
         <Route path="/system/dicts" element={<DictManagePage />} />

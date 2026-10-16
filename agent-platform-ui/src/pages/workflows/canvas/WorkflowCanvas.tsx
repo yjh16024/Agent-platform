@@ -11,7 +11,7 @@
  * 试运行：先保存（保证跑的是当前画布）→ POST /workflows/{id}/debug（带节点级轨迹）
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, Button, Dropdown, Empty, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Tag, Typography, message } from 'antd';
+import { Alert, Button, Dropdown, Empty, Input, InputNumber, Modal, Popconfirm, Space, Switch, Tag, Typography, message } from 'antd';
 import {
   ArrowLeftOutlined,
   CloudUploadOutlined,
@@ -43,6 +43,8 @@ import {
 } from '../../../api/workflows';
 import { toBackend } from './adapter';
 import { NODE_FIELDS, NODE_METAS, NODE_META_MAP, type CanvasFieldSpec } from './node-metas';
+import { DynamicSelect, prewarmFieldOptions } from './DynamicSelect';
+import { toolArgsTemplate } from './field-options';
 import { buildNodeJson, insertAfterNode } from './materials';
 import { CanvasSelectionContext, type CanvasSelection } from './selection';
 import { useEditorProps } from './use-editor-props';
@@ -103,6 +105,18 @@ function CanvasShell({
       /* 旧版本无此 API 时忽略 */
     }
   }, [playgroundTools]);
+
+  /*
+   * 预热节点表单的下拉清单（智能体 / 工具 / 知识库 / Skill / 服务商）。
+   *
+   * 放在画布打开时拉一次，用户点开节点就是现成的 —— 否则每点一个节点都要等一轮请求，
+   * 而"选择"这件事本该是即时的。
+   * 失败无需处理：`loadAllFieldOptions` 内部对每个来源各自 catch，
+   * 拉不到就退回字段自带的静态候选（见 field-options.ts 顶部说明）。
+   */
+  useEffect(() => {
+    prewarmFieldOptions();
+  }, []);
   const [saving, setSaving] = useState(false);
   const [running, setRunning] = useState(false);
   const [published, setPublished] = useState<string | undefined>(publishedVersion);
@@ -442,7 +456,30 @@ function NodeFormPanel({
           {specs.map((spec) => (
             <div className="wf-field" key={spec.name}>
               <div className="wf-field__label">{spec.label}</div>
-              {renderField(spec, getValue(spec.name), (v) => setValue(spec.name, v))}
+              {renderField(
+                spec,
+                getValue(spec.name),
+                (v) => setValue(spec.name, v),
+                /*
+                 * ★ 「选完工具 → 自动带出参数模板」（2026-10-12）。
+                 *
+                 * ⚠️ 只在目标字段**当前为空**时才填 —— 否则用户手写好的参数
+                 * 会被"重新选一次工具"这个动作冲掉，那是最容易让人恼火的一类丢数据。
+                 * 想重新生成，先清空参数框再选一次即可（这条也写进了 placeholder 提示）。
+                 */
+                spec.argsTemplateTo
+                  ? (template) => {
+                      const target = spec.argsTemplateTo as string;
+                      const current = getValue(target);
+                      const isEmpty =
+                        current == null || (typeof current === 'string' && current.trim() === '');
+                      if (isEmpty) {
+                        setValue(target, template);
+                      }
+                    }
+                  : undefined,
+                spec.argsTemplateTo ? toolArgsTemplate : undefined
+              )}
             </div>
           ))}
         </div>
@@ -451,8 +488,19 @@ function NodeFormPanel({
   );
 }
 
-/** 按字段规格渲染控件（规格与节点卡片摘要同源）。 */
-function renderField(spec: CanvasFieldSpec, value: unknown, onChange: (v: unknown) => void) {
+/**
+ * 按字段规格渲染控件（规格与节点卡片摘要同源）。
+ *
+ * @param onArgsTemplate 该字段选中后要带出的参数模板（仅 `spec.argsTemplateTo` 时用）
+ * @param argsTemplateOf 取参数模板的方法（同上；由父组件注入以便共用一个实现）
+ */
+function renderField(
+  spec: CanvasFieldSpec,
+  value: unknown,
+  onChange: (v: unknown) => void,
+  onArgsTemplate?: (template: string) => void,
+  argsTemplateOf?: (value: string) => Promise<string | null>
+) {
   switch (spec.kind) {
     case 'textarea':
       return (
@@ -473,14 +521,21 @@ function renderField(spec: CanvasFieldSpec, value: unknown, onChange: (v: unknow
         />
       );
     case 'select':
+    // multiSelect 与 select 共用一个控件，差别只在"值是不是多值"
+    // （组件内部按 spec.kind 决定用 AutoComplete 还是 tags 模式的 Select）
+    case 'multiSelect':
+      /*
+       * 静态 select 与「从平台选」共用同一个控件：
+       * 有 `source` 时去拉平台清单，没有就用 `spec.options`。
+       * 两者都**允许手填** —— 见 DynamicSelect 的说明。
+       */
       return (
-        <Select
-          style={{ width: '100%' }}
-          allowClear
-          value={value as string}
-          placeholder={spec.placeholder ?? '请选择'}
-          options={spec.options as { label: string; value: string }[]}
-          onChange={(v) => onChange(v)}
+        <DynamicSelect
+          spec={spec}
+          value={value}
+          onChange={onChange}
+          onArgsTemplate={onArgsTemplate}
+          argsTemplateOf={argsTemplateOf}
         />
       );
     case 'switch':
