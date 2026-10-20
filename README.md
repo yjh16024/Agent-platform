@@ -10,12 +10,14 @@
 都有开关与降级，缺谁都能跑，接上才算数。因此它可以从「克隆 → 启动 → 发一条消息拿到 Mock 回复」
 开始，逐步长成一套生产可用的智能体服务。
 
-当前版本：`1.1.0`。提供统一运行入口（JSON / SSE）、多模型路由与凭证分层、
+当前版本：`1.5.0`。提供统一运行入口（JSON / SSE）、多模型路由与凭证分层、
 会话记忆（**四层：短期缓存 + 早期摘要 + 用户画像 + 向量召回**）、RAG 知识库、
 工具与 MCP（**四种传输**，每次调用过**五环责任链**）、自研 DAG 工作流（含循环 / 并行复合节点）、
-Skills 开放标准目录、插件体系（**7 个内置插件 + 声明式配置 + 声明式界面插槽**）、
+Skills 开放标准目录、插件体系（**7 个内置插件 + 声明式配置 + 声明式界面插槽 + 插件自带的配置表单**）、
 多模态输入（含图片视觉）、运行日志与三级诊断、**平台设置**（模型绑定 + 功能开关两层；热切换即时生效，
 需重启项保存后弹窗提示、桌面版可一键重启），
+**推理模型的思维链展示**（流式逐字输出 / 非流式一次性返回，跨厂商字段归一化，见下文「推理模型」）、
+**流式 token 用量**（请求显式开启 `stream_options.include_usage`，结束帧带本轮入/出用量，插件可据此算成本），
 **让智能体读写文件**（工作区约束 + 工具审批 + 改前快照回滚 + 凭证隔离 + 调用过程可视化），
 **回复渲染与生成式 UI**（自研 Markdown 解析器 + 图表，流式安全且不落 HTML），
 以及**皮肤（换肤）体系** —— 第三方皮肤可以在不改平台代码的前提下接管界面外观。
@@ -26,6 +28,7 @@ Skills 开放标准目录、插件体系（**7 个内置插件 + 声明式配置
 
 ## 文档导航
 
+- **功能清单与实现状态**（每条能力对应到类/文件，标了「已实现 / 部分 / 未做」）：[docs/status.md](docs/status.md)
 - **扩展指南与部署（K8s/Helm、演示脚本、可观测性运维）**：[docs/guides.md](docs/guides.md)
 - 端到端演示脚本：[docs/demo-script.sh](docs/demo-script.sh)
 - 桌面应用（Electron 壳 + jlink 运行时，**绿色版免安装**）：[desktop/](desktop/)（构建与分发见 [docs/guides.md](docs/guides.md) §2.7）
@@ -78,6 +81,34 @@ Skills 开放标准目录、插件体系（**7 个内置插件 + 声明式配置
 > 实现（底层为官方厂商 SDK：`openai-java` / `anthropic-java`，自定义 UA 经请求头透传、
 > 429/5xx 由 SDK `maxRetries` 重试）；**上层的凭证解析、加密/掩码、三级回退一行未动**，
 > 只是适配器换实现。设 `SPRING_AI_ENABLED=false` 回到自研适配器，两条链路都有测试守护。
+>
+> ⚠️ **但思考模式开启时（默认）不走 Spring AI**：它的 `ChatResponse` 抽象里只有
+> text / toolCalls / usage，**没有 reasoning 的位置**，厂商扩展字段（`reasoning_content`）进不来。
+> 所以通道选择是**按能力**而不是按厂商名：`MODEL_THINKING_ENABLED=true`（默认）→ 自研适配器（直接读原始 JSON）；
+> `=false` → Spring AI（官方 SDK 更稳，也省掉思考的 token）。详见下文「推理模型」。
+
+### 推理模型：思考过程与思考参数
+
+**开不开启，各家字段名完全不同**，发错字段会被上游直接 400。所以参数按 `provider` 映射：
+
+| provider | 请求参数 |
+| --- | --- |
+| `deepseek` / `zhipu` / `glm` / `moonshot` / `kimi` / `minimax` | `{"thinking":{"type":"enabled"}}` |
+| `qwen` / `dashscope` / `aliyun` / `tongyi` | `{"enable_thinking": true}` |
+| `openai` / `gpt` / `o1` / `o3` / `o4` / `azure` | `{"reasoning_effort":"medium"}` |
+| 其它 / 未知 | **不发**（宁可没有思考，也不能让对话挂掉） |
+
+即使命中白名单，老模型仍可能不认识这个字段 —— 适配器侧还有一层**「400 就摘掉参数重试一次」**的兜底。
+**看不到思考过程是小事，对话不能用才是大事**。
+
+**响应侧同样要归一化**，四种字段名都认：`reasoning_content`（DeepSeek / Qwen / GLM / Kimi）、
+`reasoning`（OpenRouter 等网关）、`reasoning_details[]`（结构化块）、Anthropic 的 `content[]` 里 `type=thinking` 的块。
+
+**两条链路都通**：流式走 SSE 事件 `run.reasoning`（逐帧），非流式走 `AgentRunResponse.Output.reasoning`。
+前端 `ThinkingBlock` 在流式时**自动展开并跟随滚动**、结束后自动收起。
+
+> **思考过程不进会话记录**：它不写进 `collected`、不进摘要、不进向量索引。
+> 否则下次召回会把模型的自我独白当成"用户说过的话"，污染上下文。
 
 ### 提示词：人格 → 模板 → 变量 → Skill
 
@@ -194,10 +225,20 @@ MCP 市场（`GET /api/v1/tools/mcp/market`）直连官方 `registry.modelcontex
 `before_output` 可**替换最终输出**（脱敏 / 合规改写的唯一落点），`on_error` 提供**兜底话术**。
 完整示例见 `plugin-example` 模块（8 个插件 + 8 份 manifest）。
 
-**声明式配置**：插件实现 `PluginDescriptor.configFields()` 声明自己需要哪些配置
+**声明式配置（jar 插件）**：插件实现 `PluginDescriptor.configFields()` 声明自己需要哪些配置
 （键名 / 标签 / 控件类型 / 取值范围 / 是否密钥），挂载界面据此**自动生成表单** ——
 加插件不需要改前端，外部插件将来也能用同一套声明。密钥类字段加密落库、接口只回掩码；
 用户不动密钥框直接保存时，后端识别出掩码并保留原值。
+
+**插件自带配置（界面插件）**：前端脚本插件在 `manifest.json` 里声明 `config` 数组
+（`key` / `label` / `type`(number/text/boolean/select) / `default` / `min` / `max` / `options` / `description`），
+「插件市场」卡片上出现「设置」→ 宿主**按声明生成表单**，值存浏览器侧（`ap.plugin.<id>.config`）。
+插件侧读 `ctx.config.get()`（**manifest 默认值 + 用户已存值合并**）/ `set()` / `onChange()`。
+**字段与默认值属于插件，渲染与存储属于宿主** —— 平台不因此多一套"插件配置表"。
+
+**界面插件的作用域**：默认 `scope: "global"` —— 装上就对所有智能体生效，卡片上不出现任何"挂载"入口；
+只有声明 `scope: "agent"` 的插件（确实需要按智能体隔离的）才会出现「挂载范围」多选，
+选了就只在那些智能体上出现。**通用能力不该背着配置入口**。
 
 **声明式界面插槽**：插件可实现 `UiProvider.provideUi()` 往约定槽位注入受控元素
 （`button` / `badge` / `card` / `list` / `link`），**动作与数据都走已有的工具调用通道** ——
@@ -436,14 +477,14 @@ chmod +x start-core.sh
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests
-java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.1.0.jar
+java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.5.0.jar
 ```
 
 启动成功日志含 `Tomcat started on port 8081`，随后浏览器打开 **http://localhost:8081/**。
 
 > - 若 **8081 被占用**，脚本会自动杀掉旧进程（Windows）或提示（Linux/macOS）。
 > - Redis 没有也不影响核心功能（日志会提示 redis DOWN）。
-> - 手动方式启动内置库：`java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.1.0.jar --spring.profiles.active=embedded`
+> - 手动方式启动内置库：`java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.5.0.jar --spring.profiles.active=embedded`
 
 #### 4. 验证
 
@@ -605,7 +646,7 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests   # 构建可执行 jar
-mvn test                                              # 596 个单元测试（含 Spring AI 通道、内置库迁移、记忆、平台设置、工具、工作流画布后端、插件与配置声明、可执行界面/界面插件等）
+mvn test                                              # 597 个单元测试（含 Spring AI 通道、内置库迁移、记忆、平台设置、工具、工作流画布后端、插件与配置声明、可执行界面/界面插件等）
 cd agent-platform-ui && npm test                      # 92 个前端单测（画布 adapter / Markdown 解析器 / 插件配置表单 / 画布工具参数 / DSH 转译器；零新增依赖，用 esbuild + node:test）
 warmup.bat                                            # Windows：依赖预热，"warmup.bat verify" 校验离线构建
 cd agent-platform-ui && npm run build:prod            # 前端构建，产物同步到 core 的 static/

@@ -8,7 +8,7 @@
 # 上传：
 #   POST /api/v1/plugins/upload
 #     -F "manifest=<本文件内容>"
-#     -F "jar=@target/plugin-example-1.1.0.jar"
+#     -F "jar=@target/plugin-example-1.5.0.jar"
 #
 # 挂载（config 可关掉脱敏）：
 #   POST /api/v1/plugins/example_pii_redaction/attach

@@ -22,7 +22,7 @@ extraResources:
   - from: pluginRuntime.js
     to: pluginRuntime.js
   # 后端 fat jar（含前端 static + H2，以 embedded 启动）
-  - from: ../agent-platform-core/target/agent-platform-core-1.1.0.jar
+  - from: ../agent-platform-core/target/agent-platform-core-1.5.0.jar
     to: backend/app.jar
 # 只打包两种语言包。Electron 默认把全部 locale 塞进 locales\（实测 40.3 MB / 58 个 .pak），
 # 而我们这个界面的文案全在网页侧（前端自己的 i18n），Electron 只用到很少一部分：

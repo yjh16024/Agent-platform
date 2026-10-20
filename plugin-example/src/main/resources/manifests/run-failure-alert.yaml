@@ -11,7 +11,7 @@
 # 上传：
 #   POST /api/v1/plugins/upload
 #     -F "manifest=<本文件内容>"
-#     -F "jar=@target/plugin-example-1.1.0.jar"
+#     -F "jar=@target/plugin-example-1.5.0.jar"
 #
 # 挂载（挂到任意智能体后，让该智能体运行失败一次即可验证）：
 #   POST /api/v1/plugins/example_run_failure_alert/attach

@@ -61,7 +61,7 @@ for arg in ${1+"$@"}; do
 done
 
 # ---- 5. Build when jar missing or explicit rebuild ----
-JAR_FILE="agent-platform-core/target/agent-platform-core-1.1.0.jar"
+JAR_FILE="agent-platform-core/target/agent-platform-core-1.5.0.jar"
 if [ -n "$NEED_BUILD" ] || [ ! -f "$JAR_FILE" ]; then
   echo "[2/3] Building (online first, fallback offline)..."
   # ① 在线优先：可取新依赖；② 失败降级离线 -o：本地仓库已预热时可复现构建

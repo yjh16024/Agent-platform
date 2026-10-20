@@ -3,7 +3,7 @@
 # 上传（multipart，两个字段都要）：
 #   POST /api/v1/plugins/upload
 #     -F "manifest=<本文件内容>"
-#     -F "jar=@target/plugin-example-1.1.0.jar"
+#     -F "jar=@target/plugin-example-1.5.0.jar"
 #   header: X-Tenant-Id: default
 #
 # 挂载到智能体（可选 config：关键词表）：

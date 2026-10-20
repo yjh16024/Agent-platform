@@ -23,7 +23,7 @@ set "REPO=%CD%"
 popd
 
 set "AP_DEV=1"
-set "AP_DEV_JAR=%REPO%\agent-platform-core\target\agent-platform-core-1.1.0.jar"
+set "AP_DEV_JAR=%REPO%\agent-platform-core\target\agent-platform-core-1.5.0.jar"
 set "AP_DEV_STATIC=%REPO%\agent-platform-core\src\main\resources\static"
 
 if not exist "%AP_DEV_JAR%" (

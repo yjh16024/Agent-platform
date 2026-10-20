@@ -7,7 +7,7 @@
     <parent>
         <groupId>com.agentplatform</groupId>
         <artifactId>agent-platform</artifactId>
-        <version>1.1.0</version>
+        <version>1.5.0</version>
     </parent>
 
     <artifactId>plugin-example</artifactId>
@@ -19,7 +19,7 @@
         POST /api/v1/plugins/upload  （multipart: manifest + jar）
       上传，再 attach 到智能体上热加载。
 
-      打包产物 target/plugin-example-1.1.0.jar 的用法见 src/main/resources/manifests/ 下的 4 份 manifest。
+      打包产物 target/plugin-example-1.5.0.jar 的用法见 src/main/resources/manifests/ 下的 4 份 manifest。
       一个 jar 里可以放多个 Plugin 实现，用不同 manifest（不同 id + 不同 main_class）分别上传，
       就得到多个互相独立的插件 —— 因为每个插件都有自己的 PluginClassLoader。
 

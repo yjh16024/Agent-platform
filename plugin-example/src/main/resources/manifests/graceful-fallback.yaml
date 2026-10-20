@@ -11,7 +11,7 @@
 # 上传：
 #   POST /api/v1/plugins/upload
 #     -F "manifest=<本文件内容>"
-#     -F "jar=@target/plugin-example-1.1.0.jar"
+#     -F "jar=@target/plugin-example-1.5.0.jar"
 #
 # 挂载（可自定义话术）：
 #   POST /api/v1/plugins/example_graceful_fallback/attach

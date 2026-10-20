@@ -74,7 +74,7 @@ public class WeatherTool implements Tool {
 - 注意 `ToolProvider.provideTools()` 会在启动时被调用以生成贡献清单，应当是**无副作用的纯声明**。
 
 外部插件：改 `plugin-example/` 里的样板 → `mvn -pl plugin-example -am package` → 用
-`plugin-example/src/main/resources/manifests/*.yaml` 作 manifest、`plugin-example-1.1.0.jar` 作制品，
+`plugin-example/src/main/resources/manifests/*.yaml` 作 manifest、`plugin-example-1.5.0.jar` 作制品，
 走 `POST /api/v1/plugins/upload`（multipart：`manifest` 文本 + `jar` 文件），
 再 `POST /api/v1/plugins/{id}/attach`（body `{"agent_id":"..."}`）挂到智能体上。
 
@@ -156,8 +156,8 @@ public class WeatherTool implements Tool {
 ### 2.1 构建镜像
 
 ```bash
-docker build -f agent-platform-deploy/docker/Dockerfile -t agent-platform/agent-platform-core:1.1.0 .
-docker push agent-platform/agent-platform-core:1.1.0
+docker build -f agent-platform-deploy/docker/Dockerfile -t agent-platform/agent-platform-core:1.5.0 .
+docker push agent-platform/agent-platform-core:1.5.0
 ```
 
 ### 2.2 K8s / Helm
@@ -171,7 +171,7 @@ helm template agent-platform agent-platform-deploy/helm/agent-platform --debug
 helm install agent-platform agent-platform-deploy/helm/agent-platform \
   --set services.mysql.host=mysql.prod.svc.cluster.local \
   --set secrets.jwtSecret="$(openssl rand -hex 32)" \
-  --set core.image.tag=1.1.0
+  --set core.image.tag=1.5.0
 ```
 
 ### 2.3 环境变量（core）

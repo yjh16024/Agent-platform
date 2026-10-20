@@ -14,10 +14,10 @@ replicas:
   - name: agent-gateway
     count: 1
 
-# 镜像 tag 跟随当前构建（项目版本 1.1.0）。
+# 镜像 tag 跟随当前构建（项目版本 1.5.0）。
 # 注意这里写的是 "镜像名" 的 name 段（不含 tag），kustomize 负责替换 tag。
 images:
   - name: agent-platform/agent-platform-core
-    newTag: 1.1.0
+    newTag: 1.5.0
   - name: agent-platform/agent-platform-gateway
-    newTag: 1.1.0
+    newTag: 1.5.0

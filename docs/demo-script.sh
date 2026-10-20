@@ -41,7 +41,7 @@ echo "agent_id=$AGENT_ID"
 #    注：内置的自动回复 / TTS / ASR 三个示例插件已移除，改由 plugin-example 提供样板。
 echo -e "\n[3] 挂载插件"
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-PLUGIN_JAR="$REPO_ROOT/plugin-example/target/plugin-example-1.1.0.jar"
+PLUGIN_JAR="$REPO_ROOT/plugin-example/target/plugin-example-1.5.0.jar"
 PLUGIN_MANIFEST="$REPO_ROOT/plugin-example/src/main/resources/manifests/keyword-reply.yaml"
 if [ -f "$PLUGIN_JAR" ]; then
   # 上传（multipart：manifest 文本 + jar 制品）。id 重复会返回 409，属预期，先删再传即可。

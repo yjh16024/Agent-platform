@@ -21,9 +21,9 @@ replicas:
 #    生产建议把 base 的 imagePullPolicy 改为 Always 或使用带 sha 的 tag。
 images:
   - name: agent-platform/agent-platform-core
-    newTag: 1.1.0
+    newTag: 1.5.0
   - name: agent-platform/agent-platform-gateway
-    newTag: 1.1.0
+    newTag: 1.5.0
 
 # 需要为生产单独调资源上限 / 加环境变量时，在这里追加：
 #
