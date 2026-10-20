@@ -104,6 +104,11 @@ agent-platform:
   model:
     default-provider: ${DEFAULT_PROVIDER:deepseek}    # 智能体未配置 provider 时的默认模型厂商
     default-name: ${DEFAULT_MODEL:deepseek-chat}      # 智能体未配置 model 时的默认模型名
+    # 思考模式（2026-10-19）：DeepSeek 的「深度思考」**必须显式开启**才返回 reasoning_content
+    # （请求体 `{"thinking": {"type": "enabled"}}`）。不开也能正常对话，只是没有思考过程。
+    # 代价：思考会消耗额外 tokens、增加首字延迟；不需要就设 MODEL_THINKING_ENABLED=false。
+    thinking:
+      enabled: ${MODEL_THINKING_ENABLED:true}
     # 发往模型厂商的 User-Agent（可用 MODEL_UA 覆盖；应对网关按 UA 拦截的瞬时风控）
     user-agent: ${MODEL_UA:Mozilla/5.0 (compatible; agent-platform/1.1)}
   # 嵌入模型（RAG 向量化）：运行时可经 /api/v1/model-config 直连云端嵌入
@@ -155,6 +160,13 @@ agent-platform:
       model: ${MEMORY_AUTO_PROFILE_MODEL:deepseek-chat}
   plugin:
     artifact-dir: ${PLUGIN_ARTIFACT_DIR:./data/plugins}
+    # 可执行界面总开关（2026-10-19，D 档）：关掉后插件的前端脚本一律不再下发（应急刹车）。
+    # 它与"逐个卸载插件"的区别：改配置重启后端即全局生效 —— 执行第三方代码的通道需要这种秒级停用手段。
+    ui-script:
+      enabled: ${PLUGIN_UI_SCRIPT_ENABLED:true}
+  # 界面插件（独立前端插件：zip 安装、全局生效、可随时停用）的安装目录
+  plugin-web:
+    dir: ${PLUGIN_WEB_DIR:./data/plugin-web}
   # ---- 平台设置（仪表盘「平台设置」页写入的覆盖文件）----
   # 页面改过的项落在该文件里，启动早期被注入 Environment：
   #   优先级 **低于** 环境变量/命令行（运维的救命通道 —— 页面写错了可用环境变量压回），

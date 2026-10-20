@@ -361,6 +361,13 @@ public class AgentRuntimeService {
             // ⑤ 经插件 Hook 管线调用模型（before_llm → LLM → after_llm）
             final long[] latency = {0L};
             final int[] usageTokens = {0, 0};
+            /*
+             * 非流式的思考过程（2026-10-19）：`AgentPipeline.run` 的 llmAction 只返回文本，
+             * reasoning 会在管线里丢掉 —— 所以在闭包外用一个单元素数组接住。
+             * ⚠️ 工具调用链路（runToolLoop）不经过这里，目前不取思考过程（它内部多次调用模型，
+             * "这一轮的思考"归哪一次本身就是个问题）。
+             */
+            final String[] reasoningHolder = {""};
             PipelineResult pipeline;
             try {
                 pipeline = agentPipeline.run(agent.getAgentId(), runId, userMessage, msg -> {
@@ -383,6 +390,8 @@ public class AgentRuntimeService {
                     latency[0] = resp.latencyMs();
                     usageTokens[0] = resp.promptTokens();
                     usageTokens[1] = resp.completionTokens();
+                    // 接住思考过程（普通模型为空串，不是错误）
+                    reasoningHolder[0] = resp.reasoning() == null ? "" : resp.reasoning();
                     logTo(LogLevel.INFO, LogCategory.llm, "llm.done provider=" + provider
                                     + " model=" + model
                                     + " latency=" + (System.currentTimeMillis() - t0) + "ms"
@@ -433,7 +442,18 @@ public class AgentRuntimeService {
             if (pipeline.extras() != null && pipeline.extras().containsKey("audio_url")) {
                 resp = new AgentRunResponse(resp.runId(), resp.sessionId(), resp.mode(),
                         new AgentRunResponse.Output("assistant", resp.output().content(),
-                                String.valueOf(pipeline.extras().get("audio_url"))),
+                                String.valueOf(pipeline.extras().get("audio_url")),
+                                resp.output().reasoning()),
+                        resp.traceId(), resp.usage(), resp.references(), resp.plugins(), resp.toolCalls());
+            }
+            /*
+             * 把思考过程挂到输出上（2026-10-19）。放在 audio 之后：
+             * 这样重建 Output 时能一并带上 audioUrl，不会互相覆盖。
+             */
+            if (!reasoningHolder[0].isEmpty()) {
+                resp = new AgentRunResponse(resp.runId(), resp.sessionId(), resp.mode(),
+                        new AgentRunResponse.Output("assistant", resp.output().content(),
+                                resp.output().audioUrl(), reasoningHolder[0]),
                         resp.traceId(), resp.usage(), resp.references(), resp.plugins(), resp.toolCalls());
             }
             // 工具调用记录（可视化）：从收集器取走（drain 同时清理该运行的槽位）
@@ -1154,10 +1174,32 @@ public class AgentRuntimeService {
                             streamUsage[1] = d.aggregate().completionTokens();
                         }
                     })
-                    .filter(d -> !d.finished() && d.text() != null && !d.text().isEmpty())
-                    .map(d -> {
-                        collected.append(d.text());
-                        return RunStreamEvent.delta(d.text());
+                    /*
+                     * 思考帧（2026-10-19）：`ChatDelta.reasoning` 非空时 text 是空串 ——
+                     * 旧的 filter 会把它整帧滤掉，用户的思维链就永远看不到。
+                     * 这里放行，并在 map 里分流成 `reasoning` 事件。
+                     *
+                     * ⚠️ `collected` **只累积正文**：思考不写进会话记录，
+                     * 否则下次摘要/向量检索会把它的自我独白当成回答内容。
+                     */
+                    .filter(d -> !d.finished()
+                            && ((d.reasoning() != null && !d.reasoning().isEmpty())
+                                || (d.text() != null && !d.text().isEmpty())))
+                    /*
+                     * 一帧可能同时带思考与正文（各适配器的行为不一致）—— 这里拆成两个事件。
+                     * 早先写成 map + 三元判断，后果是"有思考的那一帧把正文吞掉"：
+                     * 用户看到回答中间缺一段，而且完全看不出原因。
+                     */
+                    .flatMap(d -> {
+                        java.util.List<RunStreamEvent> out = new java.util.ArrayList<>(2);
+                        if (d.reasoning() != null && !d.reasoning().isEmpty()) {
+                            out.add(RunStreamEvent.reasoning(d.reasoning()));
+                        }
+                        if (d.text() != null && !d.text().isEmpty()) {
+                            collected.append(d.text());
+                            out.add(RunStreamEvent.delta(d.text()));
+                        }
+                        return out.isEmpty() ? Flux.<RunStreamEvent>empty() : Flux.fromIterable(out);
                     })
                     .concatWith(Flux.defer(() -> {
                         // 流正常结束后收尾：存会话 + 记日志 + 派发事件 + 附加产物（TTS 语音等）
@@ -1243,12 +1285,35 @@ public class AgentRuntimeService {
         // after_llm 附加产物（TTS 语音等）。与工具记录同属"事后补发"，共用结束帧。
         Map<String, Object> extras = agentPipeline.afterStream(agent.getAgentId(), runId, answer);
         Map<String, Object> safe = sanitizeExtras(extras);
-        if (!safe.isEmpty()) {
+
+        /*
+         * 本轮用量（2026-10-19）：随结束帧下发。
+         *
+         * 此前 `AgentRunResponse.Usage` 只在**非流式**返回里有，流式链路把 streamUsage 拿去
+         * 写日志与事件后就丢了 —— 于是"这轮花了多少 tokens"在默认（流式）用法下前端拿不到，
+         * 插件更拿不到。这里放进 extras（与 audio_url 同一通道），一次改动同时喂给：
+         * 前端「本轮消耗」提示、以及需要用量做展示的插件。
+         *
+         * ⚠️ 拿不到时**不下发**（有些兼容网关流式不返回 usage）——
+         * 下发 `0` 会让消费方以为"这轮没消耗"，而那与"不知道"是两件事。
+         */
+        Map<String, Object> withUsage = new LinkedHashMap<>(safe);
+        int promptTokens = usageTokens == null ? 0 : usageTokens[0];
+        int completionTokens = usageTokens == null ? 0 : usageTokens[1];
+        if (promptTokens > 0 || completionTokens > 0) {
+            Map<String, Object> usage = new LinkedHashMap<>();
+            usage.put("promptTokens", promptTokens);
+            usage.put("completionTokens", completionTokens);
+            usage.put("totalTokens", promptTokens + completionTokens);
+            withUsage.put("usage", usage);
+        }
+
+        if (!withUsage.isEmpty()) {
             logTo(LogLevel.INFO, LogCategory.agent, "run.extras agent=" + agent.getName()
-                            + " keys=" + safe.keySet() + " streaming=true",
+                            + " keys=" + withUsage.keySet() + " streaming=true",
                     traceId, runId, tenantId, agent.getAgentId());
         }
-        return safe;
+        return withUsage;
     }
 
     /** extras 单值长度上限（字符）。语音 data URI 会很长，但它必须是完整的 —— 所以只挡明显的异常值。 */

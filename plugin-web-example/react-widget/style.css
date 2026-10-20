@@ -1,0 +1,23 @@
+/* 在 shadow root 内生效（manifest 里 isolate=true），污染不到宿主 */
+.ap-react-widget {
+  position: fixed;
+  left: 20px;
+  /* 60px 而不是 20px：usage_widget 已经占了左下角 20px，两个示例同时开时要错开
+     （同位置重叠会让人以为"只装了一个"——这正是 2026-10-19 验证时踩到的） */
+  bottom: 60px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(22, 119, 255, 0.08);
+  border: 1px solid rgba(22, 119, 255, 0.3);
+  color: #1677ff;
+  font-size: 12px;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  z-index: 1;
+  user-select: none;
+}
+
+.ap-react-widget:hover {
+  background: rgba(22, 119, 255, 0.14);
+}

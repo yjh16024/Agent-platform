@@ -1,0 +1,13 @@
+{
+  "id": "node_demo",
+  "name": "本机能力示例",
+  "version": "1.0.0",
+  "description": "验证 Host 半侧：main.js（Node 侧）+ 系统信息 / 执行命令 / 读目录 / 私有存储，首次使用会弹授权",
+  "slot": "global.overlay",
+  "entry": "client.js",
+  "main": "main.js",
+  "style": "style.css",
+  "isolate": true,
+  "order": 80,
+  "label": "本机能力示例"
+}

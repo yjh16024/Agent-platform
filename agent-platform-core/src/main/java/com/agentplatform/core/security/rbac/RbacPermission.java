@@ -61,7 +61,10 @@ public enum RbacPermission {
     PLATFORM_MANAGE("platform:manage", "配置平台设置", "平台设置"),
 
     // ---- 扩展（插件 / Skills / 皮肤）----
-    PLUGIN_MANAGE("plugin:manage", "管理插件", "扩展"),
+    // ⚠️ 原先的 `plugin:manage` **已移除**（2026-10-19）：插件体系对所有登录用户开放 ——
+    // `PluginController` 不再带 `@RequiresPermission`，这一域没有可管控的对象。
+    // 保留一个"勾了也不生效"的权限点只会误导人（权限树里看起来像一道闸门，实际不拦任何请求），
+    // 所以连枚举项一起删掉。DB 里旧角色残留的 `plugin:manage` 字符串无害（不再有接口引用它）。
     SKILL_MANAGE("skill:manage", "管理 Skills", "扩展"),
     SKIN_MANAGE("skin:manage", "管理皮肤", "扩展"),
 

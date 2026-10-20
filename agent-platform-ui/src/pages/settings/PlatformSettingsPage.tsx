@@ -1,6 +1,7 @@
 import { Tabs, Typography } from 'antd';
 import ModelSettingsTab from './ModelSettingsTab';
 import FeatureTogglesTab from './FeatureTogglesTab';
+import PluginSlotHost from '../../slots/PluginSlotHost';
 
 const { Title, Text } = Typography;
 
@@ -26,6 +27,13 @@ export default function PlatformSettingsPage() {
           { key: 'toggles', label: '功能开关', children: <FeatureTogglesTab /> },
         ]}
       />
+
+      {/*
+        插件注册的设置区（2026-10-19，P1）：`ctx.slots.register('settings.section', element)`。
+        没有插件注册时 `PluginSlotHost` 返回 null，不占位。
+        放在 Tab 之外、页面底部 —— 插件自己的配置通常与"平台设置/功能开关"是并列的第三类。
+      */}
+      <PluginSlotHost slot="settings.section" />
     </div>
   );
 }

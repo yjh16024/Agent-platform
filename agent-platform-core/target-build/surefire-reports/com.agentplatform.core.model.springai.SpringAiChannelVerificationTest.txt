@@ -1,0 +1,4 @@
+-------------------------------------------------------------------------------
+Test set: com.agentplatform.core.model.springai.SpringAiChannelVerificationTest
+-------------------------------------------------------------------------------
+Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.204 s -- in com.agentplatform.core.model.springai.SpringAiChannelVerificationTest

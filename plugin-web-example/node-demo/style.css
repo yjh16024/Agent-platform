@@ -1,0 +1,66 @@
+/* 在 shadow root 内生效（isolate=true），不影响宿主 */
+.ap-node-demo {
+  position: fixed;
+  right: 24px;
+  bottom: 88px;
+  width: 360px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.14);
+  font-size: 12px;
+  color: #222;
+  pointer-events: auto;
+  z-index: 3;
+}
+
+.ap-node-demo-title {
+  font-weight: 600;
+  margin-bottom: 2px;
+}
+
+.ap-node-demo-hint {
+  color: #888;
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+
+.ap-node-demo-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.ap-node-demo-row button {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid #d9d9d9;
+  background: #fafafa;
+  cursor: pointer;
+}
+
+.ap-node-demo-row button:hover {
+  border-color: #1677ff;
+  color: #1677ff;
+}
+
+.ap-node-demo-row button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ap-node-demo-log {
+  max-height: 120px;
+  overflow: auto;
+  font-family: ui-monospace, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #444;
+  background: #fafafa;
+  border-radius: 8px;
+  padding: 8px;
+  word-break: break-all;
+}

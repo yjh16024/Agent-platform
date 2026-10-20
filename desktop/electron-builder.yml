@@ -4,16 +4,23 @@ directories:
   output: dist
   buildResources: build
 files:
-  - main.js
-  # preload 必须打进包，否则 contextBridge 不会生效、换肤无法通知主进程
-  # （表现为：网页版正常、桌面版切换皮肤后窗口背景不跟随）
-  - preload.js
+  # 2026-10-19：**由逐文件枚举改为 `*.js`**。
+  # 起因：主进程拆出了 hostBridge.js（插件 Host 桥），而这里是白名单式枚举 ——
+  # 漏加一个文件的后果是"应用**启动即崩**（Cannot find module './hostBridge'）"，
+  # 且 **electron-builder 完全不报错**，只有真正启动才发现（本次就是这么踩到的）。
+  # 用 `*.js` 之后，以后再加主进程模块不必改这里。
+  - "*.js"
   - package.json
   - "!node_modules/**/*"
 extraResources:
   # jlink 精简 JRE（桌面运行时）
   - from: runtime
     to: runtime
+  # 插件 Node 侧运行时（utilityProcess 的入口）。
+  # 必须是**真实文件**（`resources/pluginRuntime.js`），不从 asar 里 fork ——
+  # 路径一旦拼错就是"所有插件都不加载"，没必要冒这个险。
+  - from: pluginRuntime.js
+    to: pluginRuntime.js
   # 后端 fat jar（含前端 static + H2，以 embedded 启动）
   - from: ../agent-platform-core/target/agent-platform-core-1.1.0.jar
     to: backend/app.jar

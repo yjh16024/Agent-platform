@@ -109,7 +109,8 @@ public class AgentPipeline {
             if (rewritten != null) {
                 log.info("before_llm hook {} rewrote input of agent {} ({} → {} chars)",
                         hook.id(), agentId, effectiveMessage.length(), rewritten.length());
-                effectiveMessage = rewritten;
+                // 注入预算（2026-10-19）：插件可以把记忆/上下文塞进 prompt，但不能无上限
+                effectiveMessage = capHookText(rewritten, INPUT_KEYS_MAX_CHARS, "before_llm", hook.id(), agentId);
             }
         }
 
@@ -145,6 +146,28 @@ public class AgentPipeline {
         }
 
         return new PipelineResult(finalReply, false, extras);
+    }
+
+    /**
+     * `before_llm` 注入文本的长度上限（2026-10-19，P3 的"注入预算"）。
+     *
+     * <p>没有上限时，一个写错的记忆类插件（比如把整个记忆库拼进 prompt）就能撑爆上下文窗口 ——
+     * 表现是"模型开始胡说"或直接 400，而报错里**完全看不出是插件干的**。
+     * 16000 字符对"画像 + 几条记忆"足够宽松，同时能挡住失控。</p>
+     */
+    private static final int INPUT_KEYS_MAX_CHARS = 16_000;
+
+    /**
+     * 截断 hook 注入的文本并**明确记日志** —— 被静默截断比被拒绝更糟：
+     * 插件作者会以为"注入生效了"，实际只进了一部分。
+     */
+    private static String capHookText(String text, int max, String point, String hookId, String agentId) {
+        if (text == null || text.length() <= max) {
+            return text;
+        }
+        log.warn("[hook] {} hook {} 注入 {} 字符，超过上限 {}，已截断（agent={}）",
+                point, hookId, text.length(), max, agentId);
+        return text.substring(0, max);
     }
 
     /** 流式链路的钩子返回值：改写后的消息 +（可选的）短路回复。 */
@@ -183,7 +206,7 @@ public class AgentPipeline {
             if (rewritten != null) {
                 log.info("before_llm hook {} rewrote streaming input of agent {} ({} → {} chars)",
                         hook.id(), agentId, effectiveMessage.length(), rewritten.length());
-                effectiveMessage = rewritten;
+                effectiveMessage = capHookText(rewritten, INPUT_KEYS_MAX_CHARS, "before_llm", hook.id(), agentId);
             }
         }
         return new StreamHookResult(effectiveMessage, null);

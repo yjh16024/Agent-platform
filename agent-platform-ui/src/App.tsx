@@ -52,9 +52,10 @@ export default function App() {
           与老书签都在用它们。
         */}
         <Route path="/extensions" element={<ExtensionsPage />} />
-        <Route path="/plugins" element={<Navigate to="/extensions?tab=plugins" replace />} />
-        <Route path="/skills" element={<Navigate to="/extensions?tab=skills" replace />} />
+        {/* 2026-10-19：插件 / 界面插件已合并进「插件市场」；皮肤保留独立 Tab（外部 catalog 太慢） */}
+        <Route path="/plugins" element={<Navigate to="/extensions?tab=market" replace />} />
         <Route path="/skins" element={<Navigate to="/extensions?tab=skins" replace />} />
+        <Route path="/skills" element={<Navigate to="/extensions?tab=skills" replace />} />
         <Route path="/files" element={<FilesPage />} />
         {/*
           「日志与观测」：运行日志 / 智能体可观测性 / 操作日志 / 统计报表

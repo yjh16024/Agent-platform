@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { uiContributions, type UiContribution } from '../api/uiSlots';
+import { pluginWebContributions } from '../api/pluginWeb';
 import { SUPPORTED_SLOTS, SUPPORTED_TYPES, type SlotId } from '../slots/registry';
 
 /**
@@ -37,6 +38,22 @@ interface UiSlotState {
   currentAgentId: string | null;
   setCurrentAgent: (agentId: string | null) => void;
 
+  /**
+   * **全局界面插件**的槽位声明（2026-10-19，D 档第 4 步）。
+   *
+   * <p>与 {@link byAgent} 的区别：那些是"按智能体挂载的 jar 插件的声明"，
+   * 这些是"本机安装的界面插件的声明" —— **不绑智能体、任何页面都生效**。
+   * 渲染时两者合并（见 SlotOutlet），所以界面插件不需要先挂到某台智能体。</p>
+   */
+  global: UiContribution[];
+
+  /**
+   * 拉取界面插件的声明（安装/启停后由设置页主动刷新；失败静默为空）。
+   *
+   * @param agentId 当前智能体：传了才按「挂载范围」过滤。不传 = 全量（管理页/启动初期用）。
+   */
+  loadGlobal: (agentId?: string) => Promise<void>;
+
   /** 拉取（若已有缓存且非 force 则跳过）。 */
   load: (agentId: string, force?: boolean) => Promise<void>;
   /** 取某智能体某槽位下**可渲染**的贡献（已按 order 排序、已过滤认不出的槽位与类型）。 */
@@ -50,6 +67,17 @@ export const useUiSlotStore = create<UiSlotState>()((set, get) => ({
   pending: {},
   lastError: {},
   currentAgentId: null,
+  global: [],
+
+  loadGlobal: async (agentId) => {
+    try {
+      const list = await pluginWebContributions(agentId);
+      set({ global: list ?? [] });
+    } catch {
+      // 界面插件是装饰性功能：拉不到就当没有，绝不影响主界面
+      set({ global: [] });
+    }
+  },
 
   /** 切换当前智能体：记下来并**顺手拉它的界面贡献**（全局槽位随即可用）。 */
   setCurrentAgent: (agentId) => {
@@ -59,6 +87,11 @@ export const useUiSlotStore = create<UiSlotState>()((set, get) => ({
     set({ currentAgentId: agentId });
     if (agentId) {
       void get().load(agentId);
+      /*
+       * 界面插件也要按智能体重拉（2026-10-20）：它们可以只挂到某几个智能体上，
+       * 切过去不刷新的话，界面上会残留上一个智能体的挂件、或者缺少当前该有的。
+       */
+      void get().loadGlobal(agentId);
     }
   },
 

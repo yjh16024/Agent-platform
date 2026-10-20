@@ -1,0 +1,16 @@
+/* 示例插件的样式：在 shadow root 内生效（isolate=true），不会影响宿主的任何元素 */
+.ap-usage-widget {
+  position: fixed;
+  left: 20px;
+  bottom: 20px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: rgba(22, 119, 255, 0.08);
+  border: 1px solid rgba(22, 119, 255, 0.3);
+  color: #1677ff;
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  z-index: 1;
+}

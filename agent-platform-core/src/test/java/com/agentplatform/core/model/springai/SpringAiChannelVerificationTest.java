@@ -50,6 +50,12 @@ class SpringAiChannelVerificationTest {
         new ApplicationContextRunner()
                 .withPropertyValues(
                         "agent-platform.springai.enabled=true",
+                        /*
+                         * 必须显式关闭思考（2026-10-19 行为变更）：开启思考时一律走自研适配器 ——
+                         * Spring AI 的 `ChatResponse` 抽象里没有 reasoning 的位置，
+                         * 走它就拿不到厂商的 `reasoning_content`。这里测的是"通道本身可用"。
+                         */
+                        "agent-platform.model.thinking.enabled=false",
                         "spring.ai.openai.base-url=http://127.0.0.1:9",
                         "spring.ai.openai.api-key=sk-test",
                         "agent-platform.model.user-agent=test-ua")
@@ -61,11 +67,38 @@ class SpringAiChannelVerificationTest {
                             "启用时应存在 Spring Ai 模型工厂");
                     ModelProviderFactory factory = ctx.getBean(ModelProviderFactory.class);
                     assertTrue(factory.get("deepseek") instanceof SpringAiModelAdapter,
-                            "deepseek 应走 Spring AI 适配器");
+                            "thinking 关闭时 deepseek 应走 Spring AI 适配器");
                     assertTrue(factory.get("anthropic") instanceof SpringAiModelAdapter,
-                            "anthropic 应走 Spring AI 适配器");
+                            "thinking 关闭时 anthropic 应走 Spring AI 适配器");
                     assertTrue(factory.get("local") instanceof MockModelAdapter,
                             "local 仍走 Mock（Spring AI 不覆盖本地兜底）");
+                });
+    }
+
+    /**
+     * 开启思考时**即使 Spring AI 开关是开的也走自研**（2026-10-19 的行为变更）。
+     *
+     * <p>理由：Spring AI 只暴露 text / toolCalls / usage，**没有 reasoning 的位置**，
+     * 厂商扩展字段进不了它的抽象；自研适配器直接读原始 JSON，才能拿到思考过程。
+     * 这条断言同时锁住"换任何模型都能显示思考"的前提。</p>
+     */
+    @Test
+    void whenThinkingEnabled_thenLegacyAdapterIsUsed() {
+        new ApplicationContextRunner()
+                .withPropertyValues(
+                        "agent-platform.springai.enabled=true",
+                        "agent-platform.model.thinking.enabled=true",
+                        "spring.ai.openai.base-url=http://127.0.0.1:9",
+                        "spring.ai.openai.api-key=sk-test")
+                .withUserConfiguration(SpringAiChatModelFactory.class, SpringAiToolBridge.class,
+                        ModelProviderFactory.class)
+                .run(ctx -> {
+                    assertFalse(ctx.getStartupFailure() != null, "容器应启动成功");
+                    ModelProviderFactory factory = ctx.getBean(ModelProviderFactory.class);
+                    assertTrue(factory.get("deepseek") instanceof OpenAiCompatibleAdapter,
+                            "思考开启时 deepseek 走自研（能读 reasoning_content）");
+                    assertTrue(factory.get("anthropic") instanceof com.agentplatform.core.model.adapter.AnthropicAdapter,
+                            "思考开启时 anthropic 走自研（能读 thinking block）");
                 });
     }
 

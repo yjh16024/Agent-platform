@@ -132,10 +132,28 @@ public class SpringAiModelAdapter implements ModelAdapter {
         // 累积用量：流是逐块到来的，只有把每块的 metadata 累加起来才能得到一轮的总量
         final int[] usage = new int[]{0, 0};
         return model.stream(new Prompt(messages(request), options(request, false)))
-                .map(r -> {
+                .doOnNext(r -> {
+                    // 用量在 doOnNext 里累积（而不是 map）：下面 flatMap 会把一个 chunk 拆成多帧，
+                    // 放在 map 里会重复累加。
                     usage[0] += promptTokens(r);
                     usage[1] += completionTokens(r);
-                    return new ChatDelta(textOf(r), false, null);
+                })
+                .flatMap(r -> {
+                    /*
+                     * 思考与正文**拆成两帧**（2026-10-19）：同一个 chunk 可能同时带
+                     * reasoning 与 text，而 `ChatDelta` 约定"一帧只有一种"。
+                     * 不拆的后果是有思考的那一帧把正文吞掉（用户看到回答缺一段）。
+                     */
+                    java.util.List<ChatDelta> out = new java.util.ArrayList<>(2);
+                    String reasoning = reasoningOf(r);
+                    if (!reasoning.isEmpty()) {
+                        out.add(new ChatDelta("", false, null, reasoning));
+                    }
+                    String text = textOf(r);
+                    if (!text.isEmpty()) {
+                        out.add(new ChatDelta(text, false, null));
+                    }
+                    return out.isEmpty() ? Flux.<ChatDelta>empty() : Flux.fromIterable(out);
                 })
                 .concatWith(Flux.defer(() -> {
                     // 用 defer 是为了拿到**此时**的累积值 —— 直接 Flux.just(...) 会在订阅前求值，
@@ -256,6 +274,11 @@ public class SpringAiModelAdapter implements ModelAdapter {
             // Spring AI 2.0：同上，工具循环上移至 Advisor 链，ChatModel 不再内部执行工具。
             b.toolCallbacks(toolBridge.callbacks(request.tools()));
         }
+        /*
+         * 这里**刻意不发**思考参数：Spring AI 的 `ChatResponse` 抽象里没有 reasoning 的位置，
+         * 发了也拿不到（只会白花思考的 token）。所以开启思考时上层的工厂根本不会走这条通道
+         * （见 `ModelProviderFactory`：thinking 开启 → 一律走自研适配器）。
+         */
         return b.build();
     }
 
@@ -267,7 +290,106 @@ public class SpringAiModelAdapter implements ModelAdapter {
                 completionTokens != null ? completionTokens : completionTokens(resp),
                 0.0,
                 System.currentTimeMillis() - t0,
-                List.of());
+                List.of(),
+                reasoningOf(resp));
+    }
+
+    /**
+     * 取思考过程（2026-10-19）。
+     *
+     * <h3>为什么用反射</h3>
+     * 走 Spring AI 通道时，思考内容只能从 `AssistantMessage` 的 metadata 里找
+     * （key 为 {@code reasoning_content}），而 {@code getMetadata()} 在不同 Spring AI 版本/厂商实现上
+     * 有与没有不确定 —— 直接调用会让编译依赖具体版本。反射取不到就当没有（普通模型本来也没有），
+     * 绝不能让"取不到思考"影响正文。
+     */
+    private String reasoningOf(org.springframework.ai.chat.model.ChatResponse resp) {
+        try {
+            if (resp == null || resp.getResult() == null) {
+                return "";
+            }
+            /*
+             * 两个位置都要查（2026-10-19 补）：
+             * ① `Generation.getMetadata()` —— Ollama 把思考放这里（key = thinking）；
+             * ② `AssistantMessage.getMetadata()` —— Spring AI 官方文档给 DeepSeek 的例子
+             *    用的就是这里（key = **reasoningContent**，驼峰）。
+             *
+             * ⚠️ 驼峰这个坑我踩过：一开始只查 `reasoning_content`（下划线），
+             * 结果明明有值也读不到。现在两种都试。
+             */
+            String fromGeneration = pickFromGenerationMetadata(resp.getResult());
+            if (!fromGeneration.isEmpty()) {
+                return fromGeneration;
+            }
+            Object out = resp.getResult().getOutput();
+            if (out == null) {
+                return "";
+            }
+            Object meta = out.getClass().getMethod("getMetadata").invoke(out);
+            if (meta instanceof java.util.Map<?, ?> m) {
+                String v = pickReasoning(m);
+                if (!v.isEmpty()) {
+                    return v;
+                }
+                /*
+                 * 诊断（DEBUG）：这里恒为空时的**已知原因**是 ——
+                 * 走 OpenAI 兼容适配器时，底层 OpenAI Java SDK 的对象模型不含
+                 * `reasoning_content`，解析阶段就丢了，Spring AI 只能填个空值。
+                 * 官方文档的 `metadata.get("reasoningContent")` 只在使用
+                 * `spring-ai-starter-model-deepseek` 时才成立。
+                 */
+                log.debug("[springai] 未取到 reasoning；metadata keys={}", m.keySet());
+            }
+        } catch (Exception ignored) {
+            // 该版本/该厂商没有 metadata：正常情况
+        }
+        return "";
+    }
+
+    /**
+     * 从 {@code Generation} 的 metadata 里取思考内容（Ollama 的 {@code thinking} 放在这里）。
+     *
+     * <p>用反射是因为 {@code Generation.getMetadata()} 返回的是 {@code ChatGenerationMetadata}
+     * 而不是 {@code Map} —— 它提供 {@code get(String)} 之类的访问器，但不同版本形态不一致，
+     * 直接绑定类型会让编译依赖具体版本。</p>
+     */
+    private static String pickFromGenerationMetadata(Object result) {
+        try {
+            Object meta = result.getClass().getMethod("getMetadata").invoke(result);
+            if (meta == null) {
+                return "";
+            }
+            if (meta instanceof java.util.Map<?, ?> m) {
+                return pickReasoning(m);
+            }
+            for (String key : new String[]{"reasoningContent", "reasoning_content", "thinking", "reasoning"}) {
+                try {
+                    Object v = meta.getClass().getMethod("get", String.class).invoke(meta, key);
+                    if (v != null && !String.valueOf(v).isEmpty()) {
+                        return String.valueOf(v);
+                    }
+                } catch (NoSuchMethodException ignored) {
+                    // 该版本没有单个 key 的访问器
+                }
+            }
+        } catch (Exception ignored) {
+            // 拿不到就当没有
+        }
+        return "";
+    }
+
+    /** 按已知 key 优先级取思考内容（各家拼写不同，按出现频率排序）。 */
+    private static String pickReasoning(java.util.Map<?, ?> m) {
+        if (m == null || m.isEmpty()) {
+            return "";
+        }
+        for (String key : new String[]{"reasoningContent", "reasoning_content", "thinking", "reasoning"}) {
+            Object v = m.get(key);
+            if (v != null && !String.valueOf(v).isEmpty()) {
+                return String.valueOf(v);
+            }
+        }
+        return "";
     }
 
     private static String textOf(org.springframework.ai.chat.model.ChatResponse resp) {

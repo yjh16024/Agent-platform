@@ -26,6 +26,38 @@ export interface UiContribution {
   action?: { kind?: string; tool?: string } | null;
   /** 动态数据来源；为空表示只显示静态 label */
   dataSource?: { tool?: string } | null;
+  /**
+   * 仅 `type=script` 用：脚本路径（相对插件根，形如 `web/pet.js`）。
+   * 宿主把它拼成 `/api/v1/plugins/{pluginId}/web/pet.js` 注入 `<script>`。
+   */
+  script?: string | null;
+  /** 仅 `type=script` 用：样式路径（相对插件根，可选） */
+  style?: string | null;
+  /** 仅 `type=script` 用：是否用 Shadow DOM 隔离（后端缺省给 true，要改宿主才 false） */
+  isolate?: boolean;
+  /**
+   * 仅 `type=script` 用：插件目录的**绝对路径**（2026-10-19，P4）。
+   * 桌面壳据此加载插件的 Node 侧入口（`main` 字段）。
+   */
+  path?: string | null;
+  /**
+   * 仅 `type=script` 用：Node 侧入口文件名（manifest 的 `main` 字段）。
+   * 为空表示这个插件只有前端脚本；有值则桌面壳会 `loadPlugin(pluginId, path, main)`。
+   */
+  main?: string | null;
+  /**
+   * 仅 `type=script` 用：插件声明的配置项（2026-10-19）。
+   *
+   * <p>随贡献下发是为了让槽位组件在 `apply` 之前登记默认值 ——
+   * 插件脚本本身看不到 manifest，`ctx.config.get()` 靠这份声明才能填出缺省。</p>
+   */
+  config?: import('./pluginWeb').PluginConfigField[] | null;
+  /**
+   * 仅 `type=script` 用：资源端点的种类。
+   * `plugin-web` = 独立界面插件（`/api/v1/plugin-web/{id}/file/`）；
+   * 缺省/其它 = 插件 jar 携带的资源（`/api/v1/plugins/{id}/web/`）。
+   */
+  assetBase?: string | null;
 }
 
 /**

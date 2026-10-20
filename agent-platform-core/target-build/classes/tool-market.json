@@ -1,0 +1,165 @@
+[
+  {
+    "id": "github-search",
+    "name": "github_search",
+    "title": "GitHub 仓库搜索",
+    "description": "按关键词搜索公开仓库（无需 Key，有速率限制）",
+    "endpoint": "https://api.github.com/search/repositories?q={q}&per_page=5",
+    "method": "GET",
+    "requiresKey": false,
+    "tags": ["开发"],
+    "parameters": {
+      "type": "object",
+      "properties": { "q": { "type": "string", "description": "搜索关键词" } },
+      "required": ["q"]
+    }
+  },
+  {
+    "id": "exchange-rate",
+    "name": "exchange_rate",
+    "title": "汇率查询",
+    "description": "查询指定基准货币的最新汇率（无需 Key）",
+    "endpoint": "https://open.er-api.com/v6/latest/{base}",
+    "method": "GET",
+    "requiresKey": false,
+    "tags": ["金融"],
+    "parameters": {
+      "type": "object",
+      "properties": { "base": { "type": "string", "description": "基准货币代码，如 CNY / USD" } },
+      "required": ["base"]
+    }
+  },
+  {
+    "id": "ip-location",
+    "name": "ip_location",
+    "title": "IP 归属地",
+    "description": "查询 IP 的所在地与运营商信息（无需 Key）",
+    "endpoint": "https://ipapi.co/{ip}/json/",
+    "method": "GET",
+    "requiresKey": false,
+    "tags": ["网络"],
+    "parameters": {
+      "type": "object",
+      "properties": { "ip": { "type": "string", "description": "IPv4 地址，如 8.8.8.8" } },
+      "required": ["ip"]
+    }
+  },
+  {
+    "id": "random-quote",
+    "name": "random_quote",
+    "title": "随机名言",
+    "description": "返回一条随机英文名言（无需 Key）",
+    "endpoint": "https://api.quotable.io/random",
+    "method": "GET",
+    "requiresKey": false,
+    "tags": ["内容"],
+    "parameters": { "type": "object", "properties": {} }
+  },
+  {
+    "id": "cat-fact",
+    "name": "cat_fact",
+    "title": "随机冷知识",
+    "description": "返回一条随机猫科冷知识（无需 Key）",
+    "endpoint": "https://catfact.ninja/fact",
+    "method": "GET",
+    "requiresKey": false,
+    "tags": ["内容"],
+    "parameters": { "type": "object", "properties": {} }
+  },
+  {
+    "id": "country-info",
+    "name": "country_info",
+    "title": "国家/地区信息",
+    "description": "按名称查询国家基础信息（人口、货币、时区等，无需 Key）",
+    "endpoint": "https://restcountries.com/v3.1/name/{name}",
+    "method": "GET",
+    "requiresKey": false,
+    "tags": ["百科"],
+    "parameters": {
+      "type": "object",
+      "properties": { "name": { "type": "string", "description": "国家英文名，如 China" } },
+      "required": ["name"]
+    }
+  },
+  {
+    "id": "btc-price",
+    "name": "btc_price",
+    "title": "比特币价格",
+    "description": "查询比特币当前美元价格（无需 Key）",
+    "endpoint": "https://api.coindesk.com/v1/bpi/currentprice.json",
+    "method": "GET",
+    "requiresKey": false,
+    "tags": ["金融"],
+    "parameters": { "type": "object", "properties": {} }
+  },
+  {
+    "id": "random-user",
+    "name": "random_user",
+    "title": "随机用户资料",
+    "description": "生成一条随机用户资料（测试/演示用，无需 Key）",
+    "endpoint": "https://randomuser.me/api/",
+    "method": "GET",
+    "requiresKey": false,
+    "tags": ["测试"],
+    "parameters": { "type": "object", "properties": {} }
+  },
+  {
+    "id": "spacex-latest",
+    "name": "spacex_latest",
+    "title": "SpaceX 最新发射",
+    "description": "查询 SpaceX 最近一次发射信息（无需 Key）",
+    "endpoint": "https://api.spacexdata.com/v4/launches/latest",
+    "method": "GET",
+    "requiresKey": false,
+    "tags": ["科普"],
+    "parameters": { "type": "object", "properties": {} }
+  },
+  {
+    "id": "world-time",
+    "name": "world_time",
+    "title": "世界时间",
+    "description": "查询指定时区的当前时间（无需 Key）",
+    "endpoint": "https://worldtimeapi.org/api/timezone/{area}/{location}",
+    "method": "GET",
+    "requiresKey": false,
+    "tags": ["实用"],
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "area": { "type": "string", "description": "地区，如 Asia" },
+        "location": { "type": "string", "description": "城市，如 Shanghai" }
+      },
+      "required": ["area", "location"]
+    }
+  },
+  {
+    "id": "qr-code",
+    "name": "qr_code",
+    "title": "二维码生成",
+    "description": "按内容生成二维码图片 URL（无需 Key）",
+    "endpoint": "https://api.qrserver.com/v1/create-qr-code/?size=200x200&data={data}",
+    "method": "GET",
+    "requiresKey": false,
+    "tags": ["实用"],
+    "parameters": {
+      "type": "object",
+      "properties": { "data": { "type": "string", "description": "要编码的文本或链接" } },
+      "required": ["data"]
+    }
+  },
+  {
+    "id": "httpbin-echo",
+    "name": "httpbin_echo",
+    "title": "HTTP 回显测试",
+    "description": "回显请求信息，用于验证工具链路（无需 Key）",
+    "endpoint": "https://httpbin.org/get?msg={msg}",
+    "method": "GET",
+    "requiresKey": false,
+    "tags": ["测试"],
+    "parameters": {
+      "type": "object",
+      "properties": { "msg": { "type": "string", "description": "任意文本" } },
+      "required": ["msg"]
+    }
+  }
+]

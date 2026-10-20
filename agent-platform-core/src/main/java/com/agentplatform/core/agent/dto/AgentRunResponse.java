@@ -27,8 +27,19 @@ public record AgentRunResponse(
         /** 本轮工具调用记录；无调用时为 null。 */
         List<ToolCallRecord> toolCalls
 ) {
-    /** 输出内容。 */
-    public record Output(String role, String content, String audioUrl) {
+    /**
+     * 输出内容。
+     *
+     * <p>{@code reasoning} 是推理模型的思维链（2026-10-19 加）—— 只在模型真的返回
+     * `reasoning_content` 时非空。它与 {@code content} 是两段独立文本：
+     * content 是回答，reasoning 是"它怎么想的"，前端折叠展示、不参与复制。</p>
+     */
+    public record Output(String role, String content, String audioUrl, String reasoning) {
+
+        /** 兼容旧调用：无思考过程。 */
+        public Output(String role, String content, String audioUrl) {
+            this(role, content, audioUrl, null);
+        }
     }
 
     /** Token / 费用计量。 */

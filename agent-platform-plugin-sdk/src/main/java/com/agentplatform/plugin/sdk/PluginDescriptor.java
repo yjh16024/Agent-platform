@@ -1,5 +1,7 @@
 package com.agentplatform.plugin.sdk;
 
+import com.agentplatform.plugin.sdk.model.PluginManifest;
+
 import java.util.List;
 
 /**
@@ -47,6 +49,21 @@ public interface PluginDescriptor {
      * 既有的外部 jar 插件完全不受影响。
      */
     default List<ConfigFieldDef> configFields() {
+        return List.of();
+    }
+
+    /**
+     * 可执行界面贡献（插件自带前端脚本，宿主加载后在页面内执行）；**默认无** —— 完全向后兼容。
+     *
+     * <h3>资源放哪</h3>
+     * 内置插件的脚本放 classpath 的 {@code plugin-web/<pluginId>/} 下，{@code entry} 从那里算起：
+     * {@code entry="pet.js"} → {@code GET /api/v1/plugins/{pluginId}/web/pet.js}。
+     * 外部 jar 插件同理，放在 jar 内的 {@code web/} 目录。
+     *
+     * <p>⚠️ 与 {@code configFields()} 的区别：那个是"宿主渲染用的数据"，这个是"插件自己执行的代码"。
+     * 信任前提是"装插件即信任"（与 jar 同级），所以它**不是**安全边界内的扩展点。</p>
+     */
+    default List<PluginManifest.Contributes.UiScriptDef> provideUiScripts() {
         return List.of();
     }
 }

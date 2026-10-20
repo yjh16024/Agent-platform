@@ -40,6 +40,8 @@ public class ModelProviderFactory {
     private final String apiKey;
     private final String userAgent;
     private final OkHttpClient httpClient;
+    /** 是否请求「深度思考」（DeepSeek 专有，见 OpenAiCompatibleAdapter.buildChatBody）。 */
+    private final boolean thinkingEnabled;
 
     /**
      * Spring AI 版模型实现（可选）。
@@ -62,9 +64,9 @@ public class ModelProviderFactory {
         this.springAiTools = springAiTools;
     }
 
-    /** 兼容旧测试/调用的便捷构造（走默认 UA）。 */
+    /** 兼容旧测试/调用的便捷构造（走默认 UA，默认开思考）。 */
     public ModelProviderFactory(String baseUrl, String apiKey) {
-        this(baseUrl, apiKey, DEFAULT_UA);
+        this(baseUrl, apiKey, DEFAULT_UA, true);
     }
 
     /** 主构造（Spring 注入）——多构造时显式标注 @Autowired。 */
@@ -72,10 +74,12 @@ public class ModelProviderFactory {
     public ModelProviderFactory(
             @Value("${spring.ai.openai.base-url:http://localhost:4000}") String baseUrl,
             @Value("${spring.ai.openai.api-key:sk-local}") String apiKey,
-            @Value("${agent-platform.model.user-agent:Mozilla/5.0 (compatible; agent-platform/1.0)}") String userAgent) {
+            @Value("${agent-platform.model.user-agent:Mozilla/5.0 (compatible; agent-platform/1.0)}") String userAgent,
+            @Value("${agent-platform.model.thinking.enabled:true}") boolean thinkingEnabled) {
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
         this.userAgent = userAgent == null || userAgent.isBlank() ? DEFAULT_UA : userAgent;
+        this.thinkingEnabled = thinkingEnabled;
         this.httpClient = new OkHttpClient.Builder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .readTimeout(Duration.ofSeconds(120))
@@ -117,15 +121,31 @@ public class ModelProviderFactory {
         if ("rule".equals(key)) {
             return new RuleEngineModelAdapter();
         }
-        // Spring AI 通道（可选开关）：只替换协议层，凭证仍由 ModelBindingService 解析后按请求传入
-        if (springAi != null && SpringAiChatModelFactory.isSpringAiFamily(key)) {
-            log.info("Using Spring AI adapter for provider family: {}", key);
+        /*
+         * 通道选择 **按能力，而不是按厂商名**（2026-10-19）。
+         *
+         * <p>Spring AI 的 `ChatResponse` 抽象里只有 text / toolCalls / usage，
+         * **没有 reasoning 的位置** —— 厂商的 `reasoning_content` 这类扩展字段进不了它的模型，
+         * 也就传不到上层（这不是配置问题，是那层封装不提供）。</p>
+         *
+         * <p>所以规则很简单：</p>
+         * <ul>
+         *   <li><b>开启思考</b>（默认）：所有厂商都走自研适配器 —— 它们直接读原始 JSON，
+         *       能拿到任何厂商的思考字段（读取侧已做归一化，见各适配器的 extractReasoning）；</li>
+         *   <li><b>关闭思考</b>：才走 Spring AI（官方 SDK，标准能力更稳，还能省掉思考的 token）。</li>
+         * </ul>
+         *
+         * <p>这样"换模型"不需要改任何配置：只要 provider 是 OpenAI 兼容或 Anthropic，
+         * 在哪条通道都能跑，只是能不能看到思考过程取决于是否开了思考模式。</p>
+         */
+        if (springAi != null && SpringAiChatModelFactory.isSpringAiFamily(key) && !thinkingEnabled) {
+            log.info("Using Spring AI adapter（thinking 已关闭）: {}", key);
             return new SpringAiModelAdapter(key, springAi, baseUrl, apiKey, springAiTools);
         }
         if ("anthropic".equals(key)) {
-            return new AnthropicAdapter(key, baseUrl, apiKey, userAgent, httpClient);
+            return new AnthropicAdapter(key, baseUrl, apiKey, userAgent, httpClient, thinkingEnabled);
         }
-        return new OpenAiCompatibleAdapter(key, baseUrl, apiKey, userAgent, httpClient);
+        return new OpenAiCompatibleAdapter(key, baseUrl, apiKey, userAgent, httpClient, thinkingEnabled);
     }
 
     /**

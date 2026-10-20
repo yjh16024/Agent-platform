@@ -110,5 +110,16 @@ export const http = {
     fetch(url, { method: 'PATCH', headers: headers(), body: JSON.stringify(data ?? {}) }).then((r) =>
       unwrap<T>(r),
     ),
+  /**
+   * 上传表单（multipart）。
+   *
+   * <p>★ 必须**删掉** Content-Type：让浏览器自己生成 `multipart/form-data; boundary=…`。
+   * 手动带上 application/json 会让后端拿不到任何 part（表现为"文件是 null"）。</p>
+   */
+  postForm: <T>(url: string, form: FormData) => {
+    const h = headers();
+    delete h['Content-Type'];
+    return fetch(url, { method: 'POST', headers: h, body: form }).then((r) => unwrap<T>(r));
+  },
   delete: <T>(url: string) => fetch(url, { method: 'DELETE', headers: headers() }).then((r) => unwrap<T>(r)),
 };

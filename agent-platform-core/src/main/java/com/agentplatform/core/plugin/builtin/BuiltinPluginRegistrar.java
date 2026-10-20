@@ -245,6 +245,26 @@ public class BuiltinPluginRegistrar {
                 log.warn("[plugin] 内置插件 {} 的 configFields() 执行失败，挂载界面将退回自由 JSON 输入：{}",
                         plugin.id(), e.getMessage());
             }
+
+            /*
+             * 可执行界面（2026-10-19，D 档）：与上面的 ui 走**同一条**"转 Map 存 manifest"路径 ——
+             * 这样 PluginService.listUiContributions 对外部 manifest 与内置插件一视同仁，
+             * 不必写两条分支。字段名必须与 SDK 的 record 组件名一致（`ui_scripts`），
+             * 否则外部插件能声明、内置插件声明了却读不到。
+             */
+            try {
+                List<PluginManifest.Contributes.UiScriptDef> scripts = descriptor.provideUiScripts();
+                if (scripts != null && !scripts.isEmpty()) {
+                    List<Map<String, Object>> uiScripts = new ArrayList<>();
+                    for (PluginManifest.Contributes.UiScriptDef def : scripts) {
+                        uiScripts.add(JsonUtils.mapper().convertValue(def, Map.class));
+                    }
+                    contributes.put("ui_scripts", uiScripts);
+                }
+            } catch (Exception e) {
+                log.warn("[plugin] 内置插件 {} 的 provideUiScripts() 执行失败，可执行界面将缺失：{}",
+                        plugin.id(), e.getMessage());
+            }
         }
         m.put("contributes", contributes);
         return m;

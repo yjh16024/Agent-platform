@@ -11,7 +11,9 @@ import { AgentResponse, FileAsset, SessionSummary } from '../../api/types';
 import { useAppStore } from '../../store/appStore';
 import { useChatStore, ChatMsg } from '../../store/chatStore';
 import ToolCallList from './ToolCallList';
+import ThinkingBlock from './ThinkingBlock';
 import SessionHistoryDrawer from './SessionHistoryDrawer';
+import { emitPluginEvent } from '../../plugins/scriptLoader';
 import { Markdown } from './markdown/render';
 import SlotOutlet from '../../slots/SlotOutlet';
 import { SLOT_IDS } from '../../slots/registry';
@@ -205,17 +207,54 @@ export default function ChatPage() {
     */
     const sessionId = sessionOf(agentId);
 
+    /*
+     * 派发 message.sent（2026-10-19，P0）：插件的"每轮摄取"入口。
+     * 放在这里而不是 store 里 —— store 不该依赖插件运行时（会形成 chatStore ⇄ scriptLoader 的循环）。
+     */
+    emitPluginEvent('message.sent', {
+      agentId,
+      sessionId,
+      role: 'user',
+      content: `${displayText}${tagText}`.trim(),
+      at: Date.now(),
+    });
+
     setBusy(true);
     try {
       if (stream) {
         let acc = '';
+        /** 思考过程（2026-10-19）：与正文分开累积，最后挂在同一条消息的 `reasoning` 上。 */
+        let thought = '';
         append(agentId, { role: 'assistant', content: '' });
+        /** 把当前累积的正文/思考写回最后一条助手消息（两路增量共用一个出口）。 */
+        const patchLast = () => {
+          const copy = [...msgsOf(agentId)];
+          const last = copy[copy.length - 1];
+          if (!last) {
+            return;
+          }
+          copy[copy.length - 1] = {
+            ...last,
+            content: acc,
+            reasoning: thought || undefined,
+          };
+          replace(agentId, copy);
+        };
         const outcome = await runAgentStream(agentId, payload, (delta) => {
           acc += delta;
-          const copy = [...msgsOf(agentId)];
-          copy[copy.length - 1] = { role: 'assistant', content: acc };
-          replace(agentId, copy);
-        }, rag, tools, sessionId);
+          patchLast();
+        }, rag, tools, sessionId, (reasoning) => {
+          thought += reasoning;
+          patchLast();
+        });
+
+        /*
+         * 本轮用量派发给插件（2026-10-19）：`usage` 随结束帧下发，后端拿不到时不填 ——
+         * 这里同样不强造 0，插件据此决定"显示"还是"不显示"。
+         */
+        if (outcome.usage) {
+          emitPluginEvent('run.completed', { agentId, sessionId, usage: outcome.usage });
+        }
         const finalMsgs = [...msgsOf(agentId)];
         const lastIdx = finalMsgs.length - 1;
         if (lastIdx >= 0 && finalMsgs[lastIdx].role === 'assistant') {
@@ -239,9 +278,24 @@ export default function ChatPage() {
         }
       } else {
         const r = await runAgent(agentId, payload, rag, tools, sessionId);
+        // 非流式也有用量（非流式返回里本来就带 Usage），同样派发给插件
+        if (r.usage) {
+          emitPluginEvent('run.completed', {
+            agentId,
+            sessionId,
+            usage: {
+              promptTokens: r.usage.promptTokens ?? 0,
+              completionTokens: r.usage.completionTokens ?? 0,
+              totalTokens: (r.usage.promptTokens ?? 0) + (r.usage.completionTokens ?? 0),
+              costUsd: r.usage.totalCostUsd ?? 0,
+            },
+          });
+        }
         append(agentId, {
           role: 'assistant',
           content: r.output?.content ?? '(空)',
+          // 非流式链路的思考过程（2026-10-19）：与流式的 reasoning 事件走不同通道，结果一致
+          reasoning: r.output?.reasoning || undefined,
           refs: r.references && r.references.length > 0 ? r.references : undefined,
           toolCalls: r.toolCalls && r.toolCalls.length > 0 ? r.toolCalls : undefined,
           // 非流式链路里音频挂在 output.audioUrl（走的是 after_llm 的 extras 通道）
@@ -270,11 +324,15 @@ export default function ChatPage() {
       message.info('当前没有消息');
       return;
     }
+    const prevSession = sessionOf(agentId);
     reset(agentId);
     setInput('');
     setAttachments([]);
+    // 会话生命周期（P0）：旧会话结束 + 新会话开始（sessionId 为 null = 还没产生第一条消息）
+    emitPluginEvent('session.disposed', { agentId, sessionId: prevSession });
+    emitPluginEvent('session.started', { agentId, sessionId: null });
     message.success('已开始新对话，上一轮可在「历史」抽屉中查看');
-  }, [agentId, msgsOf, reset]);
+  }, [agentId, msgsOf, reset, sessionOf]);
 
   /**
    * 打开会话历史（方案 C）。
@@ -302,7 +360,11 @@ export default function ChatPage() {
         const msgs: ChatMsg[] = (d.messages ?? [])
           .filter((m) => m.role === 'user' || m.role === 'assistant')
           .map((m) => ({ role: m.role as 'user' | 'assistant', content: m.content ?? '' }));
+        const prevSession = sessionOf(target);
         resume(target, sid, msgs);
+        // 会话生命周期（P0）：切走的旧会话结束、载入的会话开始
+        emitPluginEvent('session.disposed', { agentId: target, sessionId: prevSession });
+        emitPluginEvent('session.started', { agentId: target, sessionId: sid });
         if (target !== agentId) {
           setAgentId(target);
         }
@@ -312,7 +374,7 @@ export default function ChatPage() {
         message.error(`载入会话失败：${(e as Error).message}`);
       }
     },
-    [agentId, resume],
+    [agentId, resume, sessionOf],
   );
 
   /**
@@ -348,8 +410,12 @@ export default function ChatPage() {
       return;
     }
     if (window.confirm('丢弃当前对话与附件（不保存到会话历史）？')) {
+      const prevSession = sessionOf(agentId);
       reset(agentId);
       setAttachments([]);
+      // 丢弃也算会话结束（P0）：插件据此清理自己的会话态
+      emitPluginEvent('session.disposed', { agentId, sessionId: prevSession });
+      emitPluginEvent('session.started', { agentId, sessionId: null });
     }
   };
 
@@ -678,6 +744,22 @@ export default function ChatPage() {
                   <Tag color={m.role === 'user' ? 'blue' : 'green'} style={{ marginBottom: 4 }}>
                     {m.role === 'user' ? '你' : '助手'}
                   </Tag>
+                  {/*
+                    思考过程（2026-10-19）：**必须在正文之前**。
+
+                    ⚠️ 之前放在消息内容之后，界面上就跑到回答底下了 —— 用户看到的顺序变成
+                    "先读完整段回答，末尾才给一个『思考过程』"，与「它是怎么想出来的」的直觉相反。
+                    DOM 顺序即视觉顺序（气泡内没有绝对定位），所以位置就是语义。
+
+                    `streaming` 判据与下方 Markdown 的 `done` 一致（最后一条 + 正在跑）：
+                    流式思考时自动展开、跟随滚动；跑完自动收起。
+                  */}
+                  {m.role === 'assistant' && m.reasoning && (
+                    <ThinkingBlock
+                      text={m.reasoning}
+                      streaming={busy && i === messages.length - 1}
+                    />
+                  )}
                   {/*
                     流式等待占位：内容还是空的时候给出 `_pending` 节点，
                     皮肤对它挂了动效（orca 的 `[data-orca-link-status='working']` 配合）。

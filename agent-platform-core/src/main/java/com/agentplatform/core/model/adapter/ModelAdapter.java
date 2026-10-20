@@ -212,21 +212,45 @@ public interface ModelAdapter {
             int completionTokens,
             double costUsd,
             long latencyMs,
-            List<ToolCall> toolCalls
+            List<ToolCall> toolCalls,
+            /**
+             * 思维链（推理模型返回的 `reasoning_content`，2026-10-19 加）。
+             *
+             * <p>不返回思考过程的模型这里是空串 —— 消费方**不要**把它当成错误或"没配好"。
+             * 它与 {@code content} 是两段独立文本：content 是给人看的回答，
+             * reasoning 是给用户"看它怎么想的"的中间过程（可能很长，前端要折叠显示）。</p>
+             */
+            String reasoning
     ) {
-        /** 兼容旧调用：无工具调用。 */
+        /** 兼容旧调用：无思考过程。 */
+        public ChatResponse(String content, int promptTokens, int completionTokens, double costUsd,
+                            long latencyMs, List<ToolCall> toolCalls) {
+            this(content, promptTokens, completionTokens, costUsd, latencyMs, toolCalls, "");
+        }
+
+        /** 兼容旧调用：无工具调用、无思考过程。 */
         public ChatResponse(String content, int promptTokens, int completionTokens, double costUsd, long latencyMs) {
-            this(content, promptTokens, completionTokens, costUsd, latencyMs, List.of());
+            this(content, promptTokens, completionTokens, costUsd, latencyMs, List.of(), "");
         }
     }
 
     /**
      * 流式增量。
+     *
+     * <p>★ {@code text} 与 {@code reasoning} **互斥**：一帧要么是正文增量，要么是思考增量。
+     * 消费方必须分别累积、分别渲染 —— 混进同一个缓冲区会把"思考过程"写进最终回答里，
+     * 用户看到的是一段自我独白（2026-10-19 加 reasoning 时明确这个约定）。</p>
      */
     record ChatDelta(
             String text,
             boolean finished,
-            ChatResponse aggregate
+            ChatResponse aggregate,
+            /** 思考增量（推理模型才有；空串表示这一帧是正文）。 */
+            String reasoning
     ) {
+        /** 兼容旧调用：正文增量。 */
+        public ChatDelta(String text, boolean finished, ChatResponse aggregate) {
+            this(text, finished, aggregate, "");
+        }
     }
 }

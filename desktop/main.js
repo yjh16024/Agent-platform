@@ -3,12 +3,13 @@
 // - 单实例锁；退出/窗口关闭回收后端子进程；日志写入 userData/app.log 便于排查。
 'use strict';
 
-const { app, BrowserWindow, ipcMain, nativeTheme, Menu, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeTheme, Menu, dialog, utilityProcess } = require('electron');
 const { spawn } = require('child_process');
 const http = require('http');
 const net = require('net');
 const path = require('path');
 const fs = require('fs');
+const { createHostBridge } = require('./hostBridge');
 
 const SMOKE = process.env.AP_DESKTOP_SMOKE === '1';
 
@@ -37,6 +38,13 @@ const START_PORT = 8081;
 let backend = null;
 let win = null;
 let bootLogFile = null;
+/** 后端实际端口（`pluginHost` 的平台代发要用它拼地址；热重启后会变）。 */
+let backendPort = null;
+/**
+ * 插件 Host 桥（2026-10-19，P4）：给插件脚本提供 fs / http / exec / storage 四类本机能力。
+ * 在 `whenReady` 里创建（那时 `app.getPath('userData')` 才保证可用）。
+ */
+let hostBridge = null;
 /** 热重启期间为 true：后端子进程退出属预期，不要跟着关窗口。 */
 let restartingBackend = false;
 
@@ -254,6 +262,7 @@ async function startBackend() {
     if (!app.isQuitting) app.quit();
   });
   await waitHttp(port, 120000);
+  backendPort = port;
   return port;
 }
 
@@ -333,17 +342,135 @@ if (!gotLock) {
     return true;
   });
 
+  /*
+   * ---- 插件 Host 能力（2026-10-19，P4）----
+   *
+   * 四类能力：fs / http / exec / storage。首次调用返回 `{ needAuth }`，
+   * renderer 弹一次确认后写进 userData/host-authorizations.json。
+   *
+   * 这些 handler 只做"转发 + 兜底"，真正的实现与边界都在 hostBridge.js
+   * —— 那里的注释解释了"为什么本机能力放主进程""为什么拦的是炸平台而不是恶意"。
+   */
+  ipcMain.handle('ap:host-call', (_e, payload) => {
+    if (!hostBridge) {
+      return { ok: false, error: 'Host 桥未就绪（应用还在启动）' };
+    }
+    const { pluginId, capability, method, args } = payload || {};
+    return hostBridge.call(pluginId, capability, method, args);
+  });
+
+  ipcMain.handle('ap:host-authorize', (_e, payload) => {
+    if (!hostBridge) {
+      return { ok: false, error: 'Host 桥未就绪' };
+    }
+    try {
+      hostBridge.authorize(payload?.pluginId, payload?.capability);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  ipcMain.handle('ap:host-revoke', (_e, payload) => {
+    if (!hostBridge) {
+      return { ok: false, error: 'Host 桥未就绪' };
+    }
+    try {
+      hostBridge.revoke(payload?.pluginId, payload?.capability);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  /*
+   * 运行时环境信息（P3）：不是"能力"，不查授权 —— 都是只读的平台信息。
+   * 插件用它做路径分隔符/平台分支判断，或显示在诊断面板里。
+   */
+  ipcMain.handle('ap:host-env', () => (
+    hostBridge ? { ok: true, data: hostBridge.env() } : { ok: false, error: 'Host 桥未就绪' }
+  ));
+
+  /*
+   * 登录态交给主进程（2026-10-19）：插件 Node 侧要调平台接口（`api.platform.request`），
+   * 而 token 只在渲染层的 localStorage 里。这里由渲染层登录后推一次，主进程只在内存里存 ——
+   * **不落盘**（比落盘少一个泄漏点，代价是应用重启后要等页面加载才恢复）。
+   */
+  ipcMain.handle('ap:host-set-auth', (_e, payload) => {
+    if (hostBridge) {
+      hostBridge.setAuth(payload || {});
+    }
+    return { ok: true };
+  });
+
+  ipcMain.handle('ap:host-status', (_e, payload) => {
+    if (!hostBridge) {
+      return { ok: false, error: 'Host 桥未就绪' };
+    }
+    try {
+      return { ok: true, data: hostBridge.status(payload?.pluginId) };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  /*
+   * 插件 Node 侧（main.js）：加载 / 卸载 / 调方法。
+   * `dir` 由 renderer 从后端拿（`/plugin-web` 列表里的 path）—— 主进程不猜后端的数据目录。
+   */
+  ipcMain.handle('ap:plugin-load', (_e, payload) => (
+    hostBridge
+      ? hostBridge.loadPlugin(payload?.pluginId, payload?.dir, payload?.mainFile)
+      : { ok: false, error: 'Host 桥未就绪' }
+  ));
+  ipcMain.handle('ap:plugin-unload', (_e, payload) => (
+    hostBridge ? hostBridge.unloadPlugin(payload?.pluginId) : { ok: false, error: 'Host 桥未就绪' }
+  ));
+  ipcMain.handle('ap:plugin-invoke', (_e, payload) => (
+    hostBridge ? hostBridge.invokePlugin(payload?.pluginId, payload?.method, payload?.args)
+      : { ok: false, error: 'Host 桥未就绪' }
+  ));
+
   app.on('second-instance', () => {
     if (win) { if (win.isMinimized()) win.restore(); win.focus(); }
   });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', () => {
     app.isQuitting = true;
+    // 先停插件的 Node 侧（它们的定时器/子进程不应拖住退出）；异步但不等待 —— 退出流程是同步的
+    if (hostBridge) { void hostBridge.dispose(); }
     if (backend) { try { backend.kill(); } catch { /* ignore */ } }
   });
   process.on('exit', () => { if (backend) { try { backend.kill(); } catch { /* ignore */ } } });
 
   app.whenReady().then(async () => {
+    /*
+     * 插件 Host 桥（2026-10-19，P4）：落三个位置
+     *   userData/host-authorizations.json   每个插件每类能力的授权
+     *   userData/plugin-data/<pluginId>/    插件私有数据（storage.json）
+     *   userData/host-audit.log             fs.write / exec / http 的审计流水
+     * 放在 whenReady 之后创建：`app.getPath('userData')` 这时才保证可用。
+     */
+    /*
+     * 插件 Node 侧的运行时脚本路径。
+     *
+     * 打包后用 `resources/pluginRuntime.js`（extraResources 里的**真实文件**），
+     * 不用 asar 内的路径 —— `utilityProcess.fork` 要的是一个能直接读的入口文件，
+     * 从 asar 里 fork 是能跑，但一旦路径拼错就是"插件全都不加载"，没必要冒这个险。
+     */
+    const runtimeScript = app.isPackaged
+      ? path.join(process.resourcesPath, 'pluginRuntime.js')
+      : path.join(__dirname, 'pluginRuntime.js');
+
+    hostBridge = createHostBridge({
+      userDataDir: app.getPath('userData'),
+      appVersion: app.getVersion(),
+      utilityProcess,
+      runtimeScript,
+      getBaseUrl: () => (backendPort ? `http://127.0.0.1:${backendPort}` : null),
+      log: (...a) => console.log('[host]', ...a),
+    });
+
     /*
      * 去掉 Electron 默认菜单栏（File / Edit / View / Window / Help）。
      *

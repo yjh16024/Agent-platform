@@ -1,0 +1,17 @@
+/* 在 shadow root 内生效（isolate=true） */
+.ap-dsh-sample {
+  position: fixed;
+  left: 20px;
+  bottom: 96px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: #f0f7ff;
+  border: 1px solid #b6d4fe;
+  color: #1e429f;
+  font-size: 12px;
+  cursor: pointer;
+  pointer-events: auto;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  z-index: 2;
+  user-select: none;
+}

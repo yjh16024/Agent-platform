@@ -42,8 +42,25 @@ public record RunStreamEvent(String type, String text, List<ToolCallRecord> tool
      */
     public static final String TYPE_COMPLETED = "completed";
 
+    /**
+     * **思考增量**（2026-10-19 加）：推理模型的「思维链」。
+     *
+     * <p>为什么单独一种类型而不是混进 {@code delta}：它**不是回答的一部分**。
+     * 混进去的话，前端累积出来的正文里会夹着"我先看看用户想要什么…"这类自我独白，
+     * 而且后端 {@code collected} 会把思考也存进会话历史 —— 下次检索、摘要都会被污染。
+     * 单独一个 type，前端可以折叠展示、后端可以不落库。</p>
+     *
+     * <p>复用 {@code text} 字段承载内容（与 {@code delta} 同构），不新增 record 字段。</p>
+     */
+    public static final String TYPE_REASONING = "reasoning";
+
     public static RunStreamEvent delta(String text) {
         return new RunStreamEvent(TYPE_DELTA, text, null, null);
+    }
+
+    /** 思考增量（推理模型才有；普通模型全程不会出现这种帧）。 */
+    public static RunStreamEvent reasoning(String text) {
+        return new RunStreamEvent(TYPE_REASONING, text, null, null);
     }
 
     /** 结束帧：没有工具调用时 {@code toolCalls} 收敛为 null（少序列化一个空数组）。 */

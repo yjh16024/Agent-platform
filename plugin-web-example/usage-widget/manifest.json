@@ -1,0 +1,12 @@
+{
+  "id": "usage_widget",
+  "name": "会话挂件（示例）",
+  "version": "1.0.0",
+  "description": "左下角小卡片：验证界面插件的加载、定时器、agent 事件与停用清理",
+  "slot": "global.overlay",
+  "entry": "main.js",
+  "style": "style.css",
+  "isolate": true,
+  "order": 100,
+  "label": "会话挂件"
+}

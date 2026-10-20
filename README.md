@@ -605,8 +605,8 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests   # 构建可执行 jar
-mvn test                                              # 583 个单元测试（含 Spring AI 通道、内置库迁移、记忆、平台设置、工具、工作流画布后端、插件与配置声明等）
-cd agent-platform-ui && npm test                      # 79 个前端单测（画布 adapter 往返幂等 / Markdown 解析器 / 插件配置表单 / 画布工具参数；零新增依赖，用 esbuild + node:test）
+mvn test                                              # 596 个单元测试（含 Spring AI 通道、内置库迁移、记忆、平台设置、工具、工作流画布后端、插件与配置声明、可执行界面/界面插件等）
+cd agent-platform-ui && npm test                      # 92 个前端单测（画布 adapter / Markdown 解析器 / 插件配置表单 / 画布工具参数 / DSH 转译器；零新增依赖，用 esbuild + node:test）
 warmup.bat                                            # Windows：依赖预热，"warmup.bat verify" 校验离线构建
 cd agent-platform-ui && npm run build:prod            # 前端构建，产物同步到 core 的 static/
 ```

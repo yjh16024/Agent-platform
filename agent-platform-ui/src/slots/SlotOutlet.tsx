@@ -3,6 +3,7 @@ import { App as AntApp, Button, Tag, Tooltip, Typography } from 'antd';
 import { invokeTool } from '../api/tools';
 import type { UiContribution } from '../api/uiSlots';
 import { useUiSlotStore } from '../store/uiSlotStore';
+import PluginScriptSlot from './PluginScriptSlot';
 import { SUPPORTED_SLOTS, SUPPORTED_TYPES, type SlotId } from './registry';
 
 const { Text } = Typography;
@@ -26,6 +27,8 @@ const { Text } = Typography;
  */
 export default function SlotOutlet({ slot, agentId }: { slot: SlotId; agentId?: string }) {
   const bucket = useUiSlotStore((s) => (agentId ? s.byAgent[agentId] : undefined));
+  /** 全局界面插件（不绑智能体）：与按智能体的贡献**合并**渲染。 */
+  const globalContribs = useUiSlotStore((s) => s.global);
   const load = useUiSlotStore((s) => s.load);
 
   useEffect(() => {
@@ -35,10 +38,11 @@ export default function SlotOutlet({ slot, agentId }: { slot: SlotId; agentId?: 
   }, [agentId, load]);
 
   const items = useMemo(() => {
-    if (!bucket || bucket.length === 0 || !SUPPORTED_SLOTS.has(slot)) {
+    const merged = [...(bucket ?? EMPTY), ...globalContribs];
+    if (merged.length === 0 || !SUPPORTED_SLOTS.has(slot)) {
       return EMPTY;
     }
-    const hit = bucket.filter((c) => c.slot === slot && c.type && SUPPORTED_TYPES.has(c.type));
+    const hit = merged.filter((c) => c.slot === slot && c.type && SUPPORTED_TYPES.has(c.type));
     if (hit.length === 0) {
       return EMPTY;
     }
@@ -47,16 +51,25 @@ export default function SlotOutlet({ slot, agentId }: { slot: SlotId; agentId?: 
       const d = (a.order ?? 0) - (b.order ?? 0);
       return d !== 0 ? d : a.pluginId.localeCompare(b.pluginId);
     });
-  }, [bucket, slot]);
+  }, [bucket, globalContribs, slot]);
 
   if (items.length === 0) {
     return null;
   }
   return (
     <>
-      {items.map((c) => (
-        <SlotItem key={`${c.pluginId}:${c.id ?? c.label ?? c.type}`} item={c} />
-      ))}
+      {items.map((c) =>
+        c.type === 'script' ? (
+          /*
+           * 可执行界面（2026-10-19，D 档）：插件自己的脚本渲染，宿主只给容器与生命周期。
+           * 它与下面五种**不是同一类东西** —— 那五种的数据与动作都受宿主控制，
+           * 这一个把执行权交给了插件（信任前提 = 已装它的 jar）。
+           */
+          <PluginScriptSlot key={`${c.pluginId}:${c.id ?? 'script'}`} item={c} agentId={agentId} />
+        ) : (
+          <SlotItem key={`${c.pluginId}:${c.id ?? c.label ?? c.type}`} item={c} />
+        ),
+      )}
     </>
   );
 }

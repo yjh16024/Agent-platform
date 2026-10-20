@@ -7,6 +7,13 @@ import type { ToolCallInfo } from '../api/run';
 export interface ChatMsg {
   role: 'user' | 'assistant';
   content: string;
+  /**
+   * 思考过程（推理模型返回的思维链，2026-10-19）。仅助手消息、且模型真的返回推理时有值。
+   *
+   * <p>**与 content 严格分开**：它不参与最终回答，也不写进后端会话记录
+   * （见 `AgentRuntimeService` 里 `collected` 只累积正文）。前端折叠展示。</p>
+   */
+  reasoning?: string;
   /** RAG 引用溯源（来源文档 + 页码），仅当该轮智能体检索到知识库时有值。 */
   refs?: Array<{ chunkId?: string; source?: string; page?: number | null; score?: number }>;
   /**

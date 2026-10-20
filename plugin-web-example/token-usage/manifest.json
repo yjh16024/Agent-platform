@@ -1,0 +1,61 @@
+{
+  "id": "token_usage",
+  "name": "本轮消耗",
+  "version": "1.1.0",
+  "description": "每轮回复结束，在输入框上方弹出该轮 tokens（分入/出）与预估花费，几秒后自动消失。单价可在「设置」里改。",
+  "slot": "global.overlay",
+  "entry": "client.js",
+  "style": "style.css",
+  "isolate": true,
+  "order": 20,
+  "label": "本轮消耗",
+  "config": [
+    {
+      "key": "inputPerM",
+      "label": "输入单价（每 100 万 tokens）",
+      "type": "number",
+      "default": 2,
+      "min": 0,
+      "step": 0.1,
+      "description": "按你所用服务商的公开价填写。示例值按 DeepSeek 缓存未命中价。填 0 则只显示 tokens。"
+    },
+    {
+      "key": "outputPerM",
+      "label": "输出单价（每 100 万 tokens）",
+      "type": "number",
+      "default": 8,
+      "min": 0,
+      "step": 0.1,
+      "description": "示例值按 DeepSeek 输出价。"
+    },
+    {
+      "key": "currency",
+      "label": "货币符号",
+      "type": "text",
+      "default": "¥"
+    },
+    {
+      "key": "showCost",
+      "label": "显示金额",
+      "type": "boolean",
+      "default": true,
+      "description": "关闭后只显示 tokens（更适合按量付费之外的场景）。"
+    },
+    {
+      "key": "showBreakdown",
+      "label": "显示输入/输出明细",
+      "type": "boolean",
+      "default": true
+    },
+    {
+      "key": "showMs",
+      "label": "停留时长（毫秒）",
+      "type": "number",
+      "default": 4000,
+      "min": 1000,
+      "max": 20000,
+      "step": 500,
+      "description": "弹出后多久自动消失。下一轮开始时无论如何都会立刻收起。"
+    }
+  ]
+}

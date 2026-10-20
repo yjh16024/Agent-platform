@@ -418,9 +418,14 @@ export default function SkinMarketPage() {
         <Card size="small" title={`已安装皮肤（${installed.length}）`}>
           <Space wrap size={8}>
             {installed.map((s) => (
-              <Card key={s.id} size="small" style={{ width: 260 }} bodyStyle={{ padding: 10 }}>
+              /*
+               * ★ 卡片固定宽度 + 内部按钮不换行 = 内容溢出压到相邻卡片上
+               * （2026-10-19 用户两次报障"皮肤卡片叠着"）。
+               * 这里给足宽度，并让内部的两行 Space 都允许换行 —— 长名字/多按钮才不会撑破。
+               */
+              <Card key={s.id} size="small" style={{ width: 300 }} bodyStyle={{ padding: 10 }}>
                 <Space direction="vertical" size={4} style={{ width: '100%' }}>
-                  <Space>
+                  <Space wrap>
                     <b>{s.name || s.id}</b>
                   </Space>
                   {/*
@@ -449,7 +454,8 @@ export default function SkinMarketPage() {
                     ))}
                     {s.license?.code && <Tag>{s.license.code}</Tag>}
                   </Space>
-                  <Space size={4}>
+                  {/* ★ wrap 不能省：这行有 Tag + 运行 JS + 卸载，不换行就会撑破卡片 */}
+                  <Space size={4} wrap>
                     {/*
                       支持度**如实标注**，不假装全兼容：
                       只有真的跑过才知道这个皮肤在我们的宿主上是什么状态，
@@ -567,7 +573,15 @@ export default function SkinMarketPage() {
           const isInstalled = s.installed || installedIds.has(s.id);
           const cover = proxyImageUrl(s.listScreenshot || s.screenshots?.[0]);
           return (
-            <Col key={s.id} xs={12} sm={8} md={6} lg={6} xl={4} xxl={3}>
+            /*
+             * ★ `minWidth: 260` 不能省（2026-10-19 用户报障：皮肤管理抽屉里两张卡片叠在一起）。
+             *
+             * antd 的 Col 断点按**视口**宽度算（xl=4 → 6 列），而它在什么容器里它并不知道：
+             * 整页时没问题，塞进 1000px 的抽屉后每列被压到约 160px —— 少于卡片内容需要的宽度，
+             * 于是内容溢出到相邻列上，看起来就是"卡片重叠、按钮被压住"。
+             * Row 是 flex-wrap，给列一个最小宽度，放不下的列会自然换行。
+             */
+            <Col key={s.id} xs={12} sm={8} md={6} lg={6} xl={4} xxl={3} style={{ minWidth: 260 }}>
               <Card
                 hoverable
                 size="small"

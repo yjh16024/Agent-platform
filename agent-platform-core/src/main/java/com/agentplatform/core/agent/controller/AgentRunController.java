@@ -51,7 +51,16 @@ public class AgentRunController {
      */
     private Flux<ServerSentEvent<Map<String, Object>>> streamEvents(AgentRunRequest req) {
         return runtimeService.runStream(req)
-                .map(ev -> ev.isCompleted() ? completedEvent(ev) : deltaEvent(ev))
+                .map(ev -> {
+                    if (ev.isCompleted()) {
+                        return completedEvent(ev);
+                    }
+                    // 思考增量走独立事件名（前端据此折叠展示，不混进回答）
+                    if (RunStreamEvent.TYPE_REASONING.equals(ev.type())) {
+                        return reasoningEvent(ev);
+                    }
+                    return deltaEvent(ev);
+                })
                 .onErrorResume(e -> Flux.just(ServerSentEvent.<Map<String, Object>>builder()
                         .event("run.error")
                         .data(Map.of("message", e.getMessage() == null ? "运行失败" : e.getMessage()))
@@ -71,6 +80,21 @@ public class AgentRunController {
         data.put("content", ev.text() == null ? "" : ev.text());
         return ServerSentEvent.<Map<String, Object>>builder()
                 .event("run.delta")
+                .data(data)
+                .build();
+    }
+
+    /**
+     * 思考增量帧（2026-10-19）。
+     *
+     * <p>独立事件名 `run.reasoning` —— 前端据此把它渲染成可折叠的「思考过程」，
+     * 而不是拼进回答。data 形态与 delta 帧一致（`{content}`），便于复用解析逻辑。</p>
+     */
+    private ServerSentEvent<Map<String, Object>> reasoningEvent(RunStreamEvent ev) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("content", ev.text() == null ? "" : ev.text());
+        return ServerSentEvent.<Map<String, Object>>builder()
+                .event("run.reasoning")
                 .data(data)
                 .build();
     }

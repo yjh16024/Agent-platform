@@ -51,3 +51,27 @@ contextBridge.exposeInMainWorld('apApp', {
   /** 重启整个桌面应用（后端进程随壳一起重启；页面会随之中断重载）。 */
   restart: () => ipcRenderer.invoke('ap:restart-app'),
 });
+
+/*
+ * 插件 Host 桥（2026-10-19，P4）—— 插件脚本的四类本机能力。
+ *
+ * 浏览器（npm run dev 直接开网页）里没有这个对象：前端据此判断"本机能力不可用"并明确报错，
+ * 而不是让插件以为自己调用失败了。
+ *
+ * 授权模型：首次调用某类能力返回 `{ needAuth }`，前端弹一次确认后调 `authorize`；
+ * 之后同插件的同类能力直接放行（记录在 userData/host-authorizations.json）。
+ */
+contextBridge.exposeInMainWorld('apHost', {
+  available: true,
+  capabilities: ['fs', 'http', 'exec', 'storage'],
+  call: (pluginId, capability, method, args) =>
+    ipcRenderer.invoke('ap:host-call', { pluginId, capability, method, args }),
+  authorize: (pluginId, capability) => ipcRenderer.invoke('ap:host-authorize', { pluginId, capability }),
+  revoke: (pluginId, capability) => ipcRenderer.invoke('ap:host-revoke', { pluginId, capability }),
+  status: (pluginId) => ipcRenderer.invoke('ap:host-status', { pluginId }),
+  env: () => ipcRenderer.invoke('ap:host-env'),
+  setAuth: (token, tenantId) => ipcRenderer.invoke('ap:host-set-auth', { token, tenantId }),
+  loadPlugin: (pluginId, dir, mainFile) => ipcRenderer.invoke('ap:plugin-load', { pluginId, dir, mainFile }),
+  unloadPlugin: (pluginId) => ipcRenderer.invoke('ap:plugin-unload', { pluginId }),
+  invokePlugin: (pluginId, method, args) => ipcRenderer.invoke('ap:plugin-invoke', { pluginId, method, args }),
+});

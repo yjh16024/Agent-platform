@@ -1,0 +1,12 @@
+{
+  "id": "react_widget",
+  "name": "React 挂件（示例）",
+  "version": "1.1.0",
+  "description": "验证 React 渲染桥、storage 服务、effect 清理与右侧面板注册",
+  "slot": "global.overlay",
+  "entry": "main.js",
+  "style": "style.css",
+  "isolate": true,
+  "order": 90,
+  "label": "React 挂件"
+}

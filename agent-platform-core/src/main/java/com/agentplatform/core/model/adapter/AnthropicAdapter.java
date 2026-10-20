@@ -44,14 +44,23 @@ public class AnthropicAdapter implements ModelAdapter {
     private final String apiKey;
     private final String userAgent;
     private final OkHttpClient httpClient;
+    /** 是否请求扩展思考（Anthropic 的 thinking，2026-10-19）。 */
+    private final boolean thinkingEnabled;
 
+    /** 兼容旧调用：默认请求思考。 */
     public AnthropicAdapter(String providerName, String baseUrl, String apiKey,
                             String userAgent, OkHttpClient httpClient) {
+        this(providerName, baseUrl, apiKey, userAgent, httpClient, true);
+    }
+
+    public AnthropicAdapter(String providerName, String baseUrl, String apiKey,
+                            String userAgent, OkHttpClient httpClient, boolean thinkingEnabled) {
         this.providerName = providerName;
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
         this.userAgent = userAgent == null || userAgent.isBlank() ? "agent-platform/1.0" : userAgent;
         this.httpClient = httpClient;
+        this.thinkingEnabled = thinkingEnabled;
     }
 
     @Override
@@ -85,8 +94,9 @@ public class AnthropicAdapter implements ModelAdapter {
             List<ModelAdapter.ToolCall> toolCalls = extractToolUses(node);
             int promptTokens = node.path("usage").path("input_tokens").asInt(0);
             int completionTokens = node.path("usage").path("output_tokens").asInt(0);
+            // 思考过程：Anthropic 是 content[] 里 type=thinking 的块（不是 reasoning_content）
             return new ChatResponse(content, promptTokens, completionTokens, 0.0,
-                    System.currentTimeMillis() - start, toolCalls);
+                    System.currentTimeMillis() - start, toolCalls, extractThinking(node));
         } catch (BizException e) {
             throw e;
         } catch (IOException e) {
@@ -142,7 +152,20 @@ public class AnthropicAdapter implements ModelAdapter {
             JsonNode node = JsonUtils.toJsonNode(data);
             String type = node.path("type").asText("");
             if ("content_block_delta".equals(type)) {
-                String text = node.path("delta").path("text").asText("");
+                JsonNode delta = node.path("delta");
+                /*
+                 * 思考增量（2026-10-19）：Anthropic 用 `type=thinking_delta` + `thinking` 字段，
+                 * 与正文的 `type=text_delta` + `text` 是两种块。混在一起取会让
+                 * 思考内容被当成回答显示（或反之，两者都拿不到）。
+                 */
+                if ("thinking_delta".equals(delta.path("type").asText())) {
+                    String thinking = delta.path("thinking").asText("");
+                    if (!thinking.isEmpty()) {
+                        sink.next(new ChatDelta("", false, null, thinking));
+                    }
+                    return;
+                }
+                String text = delta.path("text").asText("");
                 if (!text.isEmpty()) {
                     sink.next(new ChatDelta(text, false, null));
                 }
@@ -152,6 +175,26 @@ public class AnthropicAdapter implements ModelAdapter {
         } catch (Exception e) {
             log.warn("[model:{}] 跳过无法解析的 SSE 帧: {}", providerName, data);
         }
+    }
+
+    /**
+     * 提取思考过程（2026-10-19）。
+     *
+     * <p>Anthropic 的思考不是 {@code reasoning_content}，而是 {@code content[]} 里
+     * {@code type="thinking"} 的块（字段名 {@code thinking}）。与正文分开取，
+     * 否则用户会把"它在想"当成回答内容。</p>
+     */
+    private String extractThinking(JsonNode node) {
+        StringBuilder sb = new StringBuilder();
+        JsonNode content = node.path("content");
+        if (content.isArray()) {
+            for (JsonNode block : content) {
+                if ("thinking".equals(block.path("type").asText())) {
+                    sb.append(block.path("thinking").asText(""));
+                }
+            }
+        }
+        return sb.toString();
     }
 
     /** 提取响应文本（兼容 text block 与 thinking block 混合）。 */
@@ -192,8 +235,21 @@ public class AnthropicAdapter implements ModelAdapter {
     private Map<String, Object> buildBody(ChatRequest req, boolean stream) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", req.model());
-        body.put("max_tokens", req.maxTokens() == null ? 2048 : req.maxTokens());
+        int maxTokens = req.maxTokens() == null ? 2048 : req.maxTokens();
+        body.put("max_tokens", maxTokens);
         body.put("stream", stream);
+        /*
+         * 扩展思考（2026-10-19）。
+         *
+         * Anthropic 的约束很硬：`budget_tokens` **必须 ≥ 1024**，且 `max_tokens` 必须**大于**预算，
+         * 否则直接 400。所以这里取一半、封顶 2048；预算不够（max_tokens ≤ 1024）就干脆不请求思考 ——
+         * 宁可没有思考过程，也不能让对话挂掉。
+         */
+        if (thinkingEnabled && maxTokens > 1024) {
+            // budget 必须落在 [1024, maxTokens) 区间：取 max_tokens 的一半，夹在 1024~2048 之间
+            int budget = Math.min(2048, Math.max(1024, maxTokens / 2));
+            body.put("thinking", Map.of("type", "enabled", "budget_tokens", budget));
+        }
         if (req.temperature() != null) {
             body.put("temperature", req.temperature());
         }

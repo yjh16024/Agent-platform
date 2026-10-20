@@ -37,14 +37,23 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
     private final String apiKey;
     private final String userAgent;
     private final OkHttpClient httpClient;
+    /** 是否请求「深度思考」（仅对 deepseek 生效，见 buildChatBody）。 */
+    private final boolean thinkingEnabled;
 
+    /** 兼容旧调用：默认请求思考模式。 */
     public OpenAiCompatibleAdapter(String providerName, String baseUrl, String apiKey,
                                    String userAgent, OkHttpClient httpClient) {
+        this(providerName, baseUrl, apiKey, userAgent, httpClient, true);
+    }
+
+    public OpenAiCompatibleAdapter(String providerName, String baseUrl, String apiKey,
+                                   String userAgent, OkHttpClient httpClient, boolean thinkingEnabled) {
         this.providerName = providerName;
         this.baseUrl = baseUrl;
         this.apiKey = apiKey;
         this.userAgent = userAgent == null || userAgent.isBlank() ? "agent-platform/1.0" : userAgent;
         this.httpClient = httpClient;
+        this.thinkingEnabled = thinkingEnabled;
     }
 
     @Override
@@ -63,10 +72,9 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
         String base = effectiveBaseUrl(req);
         String key = effectiveApiKey(req);
         String url = buildUrl(base, "/v1/chat/completions");
-        Map<String, Object> body = buildChatBody(req, false);
         log.info("[model:{}] chat 请求 baseUrl={} url={} bearer={}",
                 providerName, base, url, key != null && !key.isBlank());
-        try (Response response = postWithRetry(url, body, key)) {
+        try (Response response = postWithThinkingFallback(url, req, key, false)) {
             if (!response.isSuccessful()) {
                 String err = readBody(response);
                 log.warn("[model:{}] 上游返回 HTTP {}: {}", providerName, response.code(), err);
@@ -76,13 +84,15 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
             JsonNode node = JsonUtils.toJsonNode(response.body().string());
             JsonNode message = node.path("choices").path(0).path("message");
             String content = message.path("content").asText("");
+            // 思考过程：各家字段名不同，统一归一化（见 extractReasoning）
+            String reasoning = extractReasoning(message);
             int promptTokens = node.path("usage").path("prompt_tokens").asInt(0);
             int completionTokens = node.path("usage").path("completion_tokens").asInt(0);
             List<ModelAdapter.ToolCall> toolCalls = parseToolCalls(message);
             log.info("[model:{}] chat 完成 来源=上游 latencyMs={} toolCalls={}",
                     providerName, System.currentTimeMillis() - start, toolCalls.size());
             return new ChatResponse(content, promptTokens, completionTokens, 0.0,
-                    System.currentTimeMillis() - start, toolCalls);
+                    System.currentTimeMillis() - start, toolCalls, reasoning);
         } catch (BizException e) {
             throw e;
         } catch (IOException e) {
@@ -93,9 +103,8 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
     @Override
     public Flux<ChatDelta> stream(ChatRequest req) {
         return Flux.create(sink -> {
-            Map<String, Object> body = buildChatBody(req, true);
             String url = buildUrl(effectiveBaseUrl(req), "/v1/chat/completions");
-            try (Response response = postWithRetry(url, body, effectiveApiKey(req))) {
+            try (Response response = postWithThinkingFallback(url, req, effectiveApiKey(req), true)) {
                 if (!response.isSuccessful()) {
                     String err = readBody(response);
                     log.warn("[model:{}] 上游流式返回 HTTP {}: {}", providerName, response.code(), err);
@@ -154,7 +163,31 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
                     providerName, data.length() > 200 ? data.substring(0, 200) + "…" : data);
             return;
         }
+        /*
+         * 用量帧（2026-10-19）：开了 `stream_options.include_usage` 之后，上游会在最后一帧
+         * 单独返回 `{choices: [], usage: {...}}` —— **choices 是空数组**，
+         * 所以它既不是正文帧也不是思考帧，必须单独处理。
+         *
+         * 这里发一个**带 aggregate 的终结帧**：`AgentRuntimeService` 的 streamUsage
+         * 正是从 `ChatDelta.aggregate` 里取的（见其 doOnNext）。没有这一步，
+         * 流式链路的 token 用量永远是 0。
+         */
+        JsonNode usageNode = node.path("usage");
+        if (usageNode.isObject() && usageNode.has("prompt_tokens")) {
+            sink.next(new ChatDelta("", true, new ChatResponse(
+                    "",
+                    usageNode.path("prompt_tokens").asInt(0),
+                    usageNode.path("completion_tokens").asInt(0),
+                    0.0, 0L, java.util.List.of())));
+            return;
+        }
+
         JsonNode delta = node.path("choices").path(0).path("delta");
+        // 思考增量先发（与正文互斥：同一帧只有一个非空），字段名归一化见 extractReasoning
+        String reasoning = extractReasoning(delta);
+        if (!reasoning.isEmpty()) {
+            sink.next(new ChatDelta("", false, null, reasoning));
+        }
         String content = delta.has("content") ? delta.path("content").asText() : "";
         if (!content.isEmpty()) {
             sink.next(new ChatDelta(content, false, null));
@@ -194,15 +227,46 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
         }
     }
 
+    /** 默认带上思考参数。 */
     private Map<String, Object> buildChatBody(ChatRequest req, boolean stream) {
+        return buildChatBody(req, stream, true);
+    }
+
+    /**
+     * @param withThinking 是否带厂商的思考参数。上游 400 时会被降级为 false 重试一次
+     *                     （见 {@link #postWithThinkingFallback}）。
+     */
+    private Map<String, Object> buildChatBody(ChatRequest req, boolean stream, boolean withThinking) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", req.model());
         body.put("stream", stream);
+        if (stream) {
+            /*
+             * OpenAI 兼容协议：**流式默认不返回 usage**，必须显式要求。
+             *
+             * 不加这一行的后果非常隐蔽：回答一切正常、token 统计恒为 0，
+             * 于是"本轮消耗"类界面与插件的数字永远是 0（或者干脆不显示）。
+             * 2026-10-19 做「本轮消耗」插件时才发现平台一直没要求过它。
+             */
+            body.put("stream_options", java.util.Map.of("include_usage", true));
+        }
         if (req.temperature() != null) {
             body.put("temperature", req.temperature());
         }
         if (req.maxTokens() != null) {
             body.put("max_tokens", req.maxTokens());
+        }
+        /*
+         * 思考模式（2026-10-19）。
+         *
+         * 不传厂商的思考参数时，模型**根本不思考** → 响应里没有 `reasoning_content`
+         * → 界面上的「思考过程」永远是空的，而对话本身一切正常（所以一直没被发现）。
+         * 但字段名各厂商不同（DeepSeek 是 `thinking`、Qwen 是 `enable_thinking`、
+         * OpenAI 是 `reasoning_effort`），发错会 400 —— 统一交给 `ThinkingParams` 按 provider 映射，
+         * 未知 provider 不发。真的被 400 拒绝时还有 `postWithThinkingFallback` 兜底。
+         */
+        if (thinkingEnabled && withThinking) {
+            body.putAll(ThinkingParams.forProvider(providerName));
         }
         java.util.List<Map<String, Object>> messages = new java.util.ArrayList<>();
         if (req.systemPrompt() != null && !req.systemPrompt().isBlank()) {
@@ -339,6 +403,71 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
                 .header("Authorization", "Bearer " + apiKey.trim())
                 .header("User-Agent", userAgent);
         return httpClient.newCall(builder.build()).execute();
+    }
+
+    /**
+     * 从响应（或流式 delta）里取思考过程，**统一各家的字段名**（2026-10-19）。
+     *
+     * <p>OpenAI 兼容协议只是"大致兼容"，思考字段各家不同，按优先级尝试：</p>
+     * <ol>
+     *   <li>{@code reasoning_content} —— DeepSeek / Qwen / GLM / Kimi / MiniMax（最常见）；</li>
+     *   <li>{@code reasoning} —— OpenRouter 及部分网关的纯文本字段；</li>
+     *   <li>{@code reasoning_details[]} —— OpenRouter 的结构化块（逐块取 text / summary 拼接）。</li>
+     * </ol>
+     *
+     * <p>都取不到就是空串 —— 普通模型本来就没有，不是错误。</p>
+     */
+    static String extractReasoning(JsonNode message) {
+        if (message == null || message.isMissingNode()) {
+            return "";
+        }
+        String direct = message.path("reasoning_content").asText("");
+        if (!direct.isEmpty()) {
+            return direct;
+        }
+        direct = message.path("reasoning").asText("");
+        if (!direct.isEmpty()) {
+            return direct;
+        }
+        JsonNode details = message.path("reasoning_details");
+        if (details.isArray()) {
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode d : details) {
+                String t = d.path("text").asText("");
+                if (t.isEmpty()) {
+                    t = d.path("summary").asText("");
+                }
+                if (!t.isEmpty()) {
+                    sb.append(t);
+                }
+            }
+            if (sb.length() > 0) {
+                return sb.toString();
+            }
+        }
+        return "";
+    }
+
+    /**
+     * 发起对话请求；若上游以 **400** 拒绝且原因可能是思考参数，**去掉参数重试一次**。
+     *
+     * <p>为什么必须有这层兜底：思考参数是**厂商扩展**，同一个 provider 下老模型可能不认
+     * （例如平台里 provider 配成 {@code openai} 却指向一个只支持 gpt-3.5 的网关）。
+     * 没有降级的话，用户"换个模型"就会直接收到 400 —— 而**看不到思考过程是小事，
+     * 对话不能用才是大事**。降级只在 400 时触发一次，不会掩盖 401/429 等真实错误。</p>
+     */
+    private Response postWithThinkingFallback(String url, ChatRequest req, String key, boolean stream)
+            throws IOException {
+        Map<String, Object> body = buildChatBody(req, stream, true);
+        Response response = postWithRetry(url, body, key);
+        if (response.code() == 400 && thinkingEnabled && ThinkingParams.hasParams(providerName)) {
+            String err = readBody(response);
+            response.close();
+            log.warn("[model:{}] 上游 400，尝试去掉思考参数重试（provider 可能不支持该字段）：{}",
+                    providerName, err == null ? "" : (err.length() > 200 ? err.substring(0, 200) : err));
+            response = postWithRetry(url, buildChatBody(req, stream, false), key);
+        }
+        return response;
     }
 
     /**

@@ -37,8 +37,19 @@ public record PluginManifest(
             List<ToolDef> tools,
             List<HookDef> hooks,
             List<ResourceDef> resources,
-            /** 界面贡献（前端插槽）。见 {@link UiDef} 的说明。 */
-            List<UiDef> ui
+            /** 界面贡献（**声明式**组件，宿主渲染）。见 {@link UiDef} 的说明。 */
+            List<UiDef> ui,
+            /**
+             * 可执行界面贡献（2026-10-19，D 档）：**插件携带的前端脚本，宿主加载后在页面内执行**。
+             *
+             * <p>与 {@code ui} 的区别只有一个：**谁来渲染**。{@code ui} 由宿主用受控白名单渲染，
+             * 这里由插件自己渲染（同上下文，能力全开）。</p>
+             *
+             * <p>信任前提与插件 jar 完全一致 —— **装插件即信任它的前端代码**
+             * （jar 本来就是任意 Java 代码）。因此不做沙箱；但保留 {@code isolate} 开关，
+             * 默认 Shadow DOM（样式不污染宿主、也改不到宿主结构），需要"改宿主界面"时显式关掉。</p>
+             */
+            List<UiScriptDef> ui_scripts
     ) {
         public record ToolDef(String name, String description, Map<String, Object> input_schema) {
         }
@@ -107,6 +118,39 @@ public record PluginManifest(
          * @param tool 工具名；必须在本 manifest 的 {@code contributes.tools} 里声明过
          */
         public record DataSourceDef(String tool) {
+        }
+
+        /**
+         * 一条**可执行**界面贡献：插件自带一段前端脚本，宿主负责加载与生命周期。
+         *
+         * <h3>加载方式</h3>
+         * 宿主把 {@code entry} 拼成 {@code /api/v1/plugins/{id}/web/<entry>} 注入
+         * {@code <script>}，脚本调用 {@code window.__apPlugin__.register(pluginId, { apply(ctx) })}
+         * 自注册；{@code apply} 的返回值是 disposer（卸载时调用）。
+         *
+         * <h3>与 {@link UiDef} 的关系</h3>
+         * 两者在服务端的输出里**合并为同一个列表**（前端只多一个 {@code type=script} 分支），
+         * 但声明结构分开：{@link UiDef} 全部字段都是"宿主渲染所需的数据"，
+         * 而这里只有"从哪加载"与"隔离与否"——描述的东西不同，硬塞进一个 record 会让另一边半数字段恒为 null。
+         *
+         * @param id      在**本插件内**唯一（宿主用它做 React key 与去重）
+         * @param slot    槽位 id（新增的 {@code global.overlay} 表示整页覆盖层）
+         * @param entry   脚本路径，**相对插件根**（如 {@code web/pet.js}）；必须在 {@code web/} 下
+         * @param style   样式路径（可选，同样相对插件根）
+         * @param isolate 是否用 Shadow DOM 隔离渲染容器：默认 {@code true}；
+         *                需要修改宿主界面结构时才显式设 {@code false}
+         * @param order   同槽位内的排序，小的在前；为空按 0
+         * @param label   诊断用名称（加载失败时显示在提示里）
+         */
+        public record UiScriptDef(
+                String id,
+                String slot,
+                String entry,
+                String style,
+                Boolean isolate,
+                Integer order,
+                String label
+        ) {
         }
     }
 

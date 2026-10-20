@@ -15,6 +15,7 @@ import com.agentplatform.model.repository.PluginRepository;
 import com.agentplatform.plugin.sdk.model.PluginManifest;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -50,6 +51,17 @@ public class PluginService {
     private final ExtensionRegistry extensionRegistry;
     /** 配置里密钥字段的加解密与掩码（TTS 这类插件需要用户填真实的付费 API Key）。 */
     private final PluginConfigSecrets pluginConfigSecrets;
+
+    /**
+     * 可执行界面（D 档）**总开关**，默认开。
+     *
+     * <p>它是唯一的"紧急刹车"：关掉后后端不再下发任何 {@code type=script} 的界面贡献，
+     * 前端因此不会去加载插件脚本 —— 不需要改插件、不需要重启前端，改配置重启后端即可。
+     * 之所以需要一个开关：这条通道执行的是**第三方代码**，一旦线上出现异常行为，
+     * "逐个卸载插件"太慢，而"全局停掉前端脚本"是秒级的。</p>
+     */
+    @Value("${agent-platform.plugin.ui-script.enabled:true}")
+    private boolean uiScriptEnabled;
 
     /**
      * 注册插件（上传 / 安装）。
@@ -341,9 +353,12 @@ public class PluginService {
             if (!(manifest.get("contributes") instanceof Map<?, ?> contributes)) {
                 continue;
             }
-            if (!(contributes.get("ui") instanceof List<?> uiList)) {
-                continue;   // 该插件没有界面贡献：正常情况，不是错误
-            }
+            /*
+             * 没有声明式 `ui` **不等于**"没有界面" —— 插件可能只声明了 `ui_scripts`（可执行界面）。
+             * 所以这里不能 continue，否则"只有可执行界面的插件"会被整个跳过。
+             * （2026-10-19 写测试时当场抓到：那类插件在列表里凭空消失，且没有任何日志。）
+             */
+            List<?> uiList = contributes.get("ui") instanceof List<?> l ? l : List.of();
 
             Set<String> declaredTools = declaredToolNames(contributes.get("tools"));
             String pluginName = asString(manifest.get("name"));
@@ -381,6 +396,46 @@ public class PluginService {
                 one.put("action", action);
                 one.put("dataSource", dataSource);
                 out.add(one);
+            }
+
+            /*
+             * ---- 可执行界面（2026-10-19，D 档）：插件自带前端脚本 ----
+             *
+             * 与上面的声明式组件**在同一个输出列表里**（前端只多一个 type=script 分支），
+             * 但它们不做工具校验 —— script 项不引用工具，它的"能力"是 ctx.invokeTool。
+             *
+             * entry 必须是 `web/` 下的相对路径：那个前缀同时是**资源端点的安全边界**
+             * （PluginWebAssetService 只允许读取 web/ 下的文件），这里先拦一次，避免插件声明
+             * 一个永远 404 的路径却没人提示。
+             */
+            if (uiScriptEnabled && contributes.get("ui_scripts") instanceof List<?> scriptList) {
+                for (Object item : scriptList) {
+                    if (!(item instanceof Map<?, ?> m)) {
+                        continue;
+                    }
+                    String entry = asString(m.get("entry"));
+                    String slot = asString(m.get("slot"));
+                    if (entry == null || !entry.startsWith("web/") || slot == null) {
+                        log.warn("[plugin-ui] 跳过插件 {} 的可执行界面项「{}」："
+                                        + "entry 必须是 web/ 下的相对路径、slot 不能为空（entry={} slot={}）",
+                                binding.getPluginId(), asString(m.get("label")), entry, slot);
+                        continue;
+                    }
+                    Map<String, Object> one = new LinkedHashMap<>();
+                    one.put("pluginId", binding.getPluginId());
+                    one.put("pluginName", pluginName);
+                    one.put("id", asString(m.get("id")));
+                    one.put("slot", slot);
+                    one.put("type", "script");
+                    one.put("label", asString(m.get("label")));
+                    one.put("order", m.get("order") instanceof Number n ? n.intValue() : 0);
+                    one.put("script", entry);
+                    one.put("style", asString(m.get("style")));
+                    // 缺省 true：安全默认值（Shadow DOM，样式不污染宿主、也改不到宿主结构）。
+                    // 要"改宿主界面"的插件才显式写 isolate: false。
+                    one.put("isolate", !(m.get("isolate") instanceof Boolean b) || b);
+                    out.add(one);
+                }
             }
         }
         return out;

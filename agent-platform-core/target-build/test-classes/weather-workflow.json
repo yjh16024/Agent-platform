@@ -1,0 +1,43 @@
+{
+  "nodes": [
+    {
+      "id": "start",
+      "type": "Start",
+      "name": "开始",
+      "next": "get_weather",
+      "config": {
+        "input_key": "city"
+      }
+    },
+    {
+      "id": "get_weather",
+      "type": "Tool",
+      "name": "查询天气",
+      "next": "reply",
+      "outputVar": "weather",
+      "config": {
+        "tool_name": "weather",
+        "arguments": {
+          "city": "${city}"
+        }
+      }
+    },
+    {
+      "id": "reply",
+      "type": "LLM",
+      "name": "组织回复",
+      "next": "end",
+      "outputVar": "answer",
+      "config": {
+        "provider": "auto",
+        "prompt": "用户想知道 ${city} 的天气。\n\n天气工具返回的结果如下：\n${weather.output}\n\n请用一句自然、友好的中文，把这个结果转述给用户（包含天气现象与气温）。\n只依据上面的结果，不要补充工具没有给出的信息（比如不要编造湿度、风速、未来预报）。"
+      }
+    },
+    {
+      "id": "end",
+      "type": "End",
+      "name": "结束",
+      "next": null
+    }
+  ]
+}

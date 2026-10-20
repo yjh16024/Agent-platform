@@ -4,12 +4,14 @@ import com.agentplatform.common.dto.ApiResponse;
 import com.agentplatform.core.plugin.marketplace.PluginArtifactStore;
 import com.agentplatform.core.plugin.marketplace.PluginService;
 import com.agentplatform.core.plugin.runtime.PluginManifestLoader;
-import com.agentplatform.core.security.rbac.RequiresPermission;
+import com.agentplatform.core.plugin.web.PluginWebAssetService;
 import com.agentplatform.model.entity.AgentPlugin;
 import com.agentplatform.model.entity.PluginDef;
 import com.agentplatform.plugin.sdk.model.PluginManifest;
 import lombok.RequiredArgsConstructor;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,16 +31,25 @@ import java.util.Map;
 /**
  * 插件市场与管理接口（Plugin Admin API · RESTful，对应 §3.4）。
  * <p>覆盖 注册/导入 → 市场 → 详情 → 挂载/卸载 → 删除 全链路。</p>
+ *
+ * <h3>★ 本控制器<b>刻意不做权限校验</b>（2026-10-19 定）</h3>
+ * 平台按"本地部署、单用户"定位：**插件体系（含可执行界面）对所有登录用户开放** ——
+ * 任何角色的账号都能注册 / 挂载 / 卸载 / 删除插件。
+ *
+ * <p>RBAC 本身**没有关闭**，仍管其它域（用户 / 角色 / 字典 / 审计 / 平台设置等）；
+ * 这里只是不加 {@code @RequiresPermission}。理由：单机场景下"能装插件、但装不了某类插件"
+ * 这个中间态没有真实的隔离对象（部署者就是使用者），只会制造麻烦；
+ * 而"插件"这一域的信任前提本来就是"装它的人已经拥有这台机器"。</p>
  */
 @RestController
 @RequestMapping("/api/v1/plugins")
 @RequiredArgsConstructor
-@RequiresPermission("plugin:manage")
 public class PluginController {
 
     private final PluginService pluginService;
     private final PluginManifestLoader manifestLoader;
     private final PluginArtifactStore artifactStore;
+    private final PluginWebAssetService webAssetService;
 
     /**
      * 注册插件（manifest 文本，YAML 或 JSON）。
@@ -147,6 +158,32 @@ public class PluginController {
             @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
             @RequestParam String agentId) {
         return ApiResponse.ok(pluginService.listUiContributions(tenantId, agentId));
+    }
+
+    /**
+     * 插件的前端资源（{@code web/} 下的脚本 / 样式 / 图片）—— **可执行界面**的加载入口。
+     *
+     * <p>前端把 manifest 里 {@code ui_scripts[].entry}（如 {@code web/pet.js}）拼成
+     * {@code /api/v1/plugins/{id}/web/pet.js} 注入 {@code <script>}。两种来源由
+     * {@link PluginWebAssetService} 决定：外部插件读 jar，内置插件读 classpath。</p>
+     *
+     * <p>响应带 {@code Cache-Control: no-store}：插件升级后脚本路径可能不变，
+     * 被缓存住就等于"改了不生效"（桌面版尤其容易踩 —— Electron 会长期保留 HTTP 缓存，
+     * 这也正是 application.yml 里静态资源统一 no-store 的原因）。</p>
+     */
+    @GetMapping("/{pluginId}/web/{*path}")
+    public ResponseEntity<byte[]> webAsset(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @PathVariable String pluginId,
+            @PathVariable String path) {
+        PluginWebAssetService.WebAsset asset = webAssetService.load(tenantId, pluginId, path);
+        if (asset == null) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CACHE_CONTROL, "no-store")
+                .contentType(MediaType.parseMediaType(asset.contentType()))
+                .body(asset.bytes());
     }
 
     /**

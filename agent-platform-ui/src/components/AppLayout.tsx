@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Layout, Menu, Button, Input, Space, App as AntApp } from 'antd';
+import { Layout, Menu, Button, Input, Space, Empty, App as AntApp } from 'antd';
 import {
   RobotOutlined,
   MessageOutlined,
@@ -24,13 +24,17 @@ import {
   AuditOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { setToken } from '../api/http';
+import { getTenantId, getToken, setToken } from '../api/http';
 import { getMe } from '../api/auth';
 import ToolApprovalWatcher from './ToolApprovalWatcher';
 import NotificationBell from './NotificationBell';
+import HostAuthDialog from '../plugins/host/HostAuthDialog';
+import { usePluginNav, type PluginNavEntry } from '../plugins/host/pluginSlots';
+import { emitPluginEvent } from '../plugins/scriptLoader';
 import { preloadDicts } from '../dict/store';
 import SidebarSkinSettings from './SidebarSkinSettings';
 import SlotOutlet from '../slots/SlotOutlet';
+import PluginSlotHost from '../slots/PluginSlotHost';
 import { SLOT_IDS } from '../slots/registry';
 import { useUiSlotStore } from '../store/uiSlotStore';
 import { useTheme } from '../theme/ThemeProvider';
@@ -55,6 +59,36 @@ export default function AppLayout() {
   const location = useLocation();
   /** 侧栏折叠：DSH 皮肤用 rail/wide 两态做造型，这个状态必须真实存在。 */
   const [collapsed, setCollapsed] = useState(false);
+
+  /**
+   * 插件的侧栏一级入口（2026-10-19，P1）。
+   *
+   * `pluginNav` 是插件用 `ctx.nav.register()` 注册的入口列表；`activePlugin` 记住
+   * "当前正在看哪个插件的整页视图" —— 非空时主内容区渲染插件元素而不是 `<Outlet/>`。
+   * 点其它菜单项会退出该视图（见 Menu 的 onClick）。
+   */
+  const pluginNav = usePluginNav();
+  const [activePlugin, setActivePlugin] = useState<string | null>(null);
+
+  /** 路由发生变化（浏览器前进/后退、代码内导航）时退出插件视图，避免"地址变了内容没变"。 */
+  useEffect(() => {
+    setActivePlugin(null);
+  }, [location.pathname]);
+
+  /*
+   * 把登录 token 交给主进程（2026-10-19）：插件 Node 侧调平台接口要用它
+   * （`api.platform.request`），而 token 只在渲染层 localStorage 里。
+   * 主进程只存内存、不落盘 —— 应用重启后由这里再推一次。
+   */
+  useEffect(() => {
+    const t = getToken();
+    const apHost = (window as unknown as {
+      apHost?: { setAuth?: (token: string | null, tenantId?: string) => Promise<unknown> };
+    }).apHost;
+    if (t && apHost?.setAuth) {
+      void apHost.setAuth(t, getTenantId());
+    }
+  }, []);
 
   /*
     对话页打开「会话历史」抽屉时会派发 ap:sidebar-collapse —— 把全局侧栏折叠，
@@ -86,6 +120,29 @@ export default function AppLayout() {
    * 所以由对话页上报（见 uiSlotStore.currentAgentId 的说明）。为 null 时插槽渲染 null，不占位。
    */
   const currentAgentId = useUiSlotStore((s) => s.currentAgentId);
+
+  /*
+    可执行界面（2026-10-19，D 档）：把"当前智能体 / 主题"的变化派发给插件脚本。
+    刻意**不重挂**插件（那样桌宠会瞬移回原点、看板会丢筛选状态）—— 插件订阅事件自己更新。
+  */
+  useEffect(() => {
+    if (currentAgentId) {
+      emitPluginEvent('agent.changed', currentAgentId);
+    }
+  }, [currentAgentId]);
+  useEffect(() => {
+    emitPluginEvent('theme.changed', siderTheme);
+  }, [siderTheme]);
+
+  /*
+    全局界面插件（2026-10-19）：启动时拉一次它们的槽位声明。
+    只在这里拉 —— 槽位组件有好几个，各自拉就是 N 个并发请求且可能不一致；
+    安装/启停后由「扩展 → 界面插件」页主动再调一次（热切换）。
+  */
+  const loadGlobalSlots = useUiSlotStore((s) => s.loadGlobal);
+  useEffect(() => {
+    void loadGlobalSlots();
+  }, [loadGlobalSlots]);
 
   /**
    * 当前用户的权限码；`null` = 还没拿到。
@@ -165,7 +222,13 @@ export default function AppLayout() {
       三者是同一件事的三个作用域（从市场安装第三方能力：运行时 / 智能体 / 界面），
       权限码**各自保留**，入口按"任一命中"显示（与「日志与观测」同一取舍）。
     */
-    { key: '/extensions', icon: <AppstoreOutlined />, label: '扩展', perm: 'plugin:manage|skill:manage|skin:manage' },
+    /*
+      2026-10-19：**插件域对任意登录用户开放**（本地单用户平台的定位）——
+      PluginController 已无权限校验，所以入口不能再挂在 `plugin:manage` 上
+      （那个权限码也已移除）。这里不设 perm = 所有登录用户可见；
+      内页的 Skills / 皮肤两个 Tab 仍按各自权限过滤，无权限的 Tab 不渲染。
+    */
+    { key: '/extensions', icon: <AppstoreOutlined />, label: '扩展' },
     { key: '/files', icon: <FolderOutlined />, label: '文件', perm: 'file:read' },
     { key: '/settings', icon: <SettingOutlined />, label: '平台设置', perm: 'platform:manage' },
     {
@@ -372,11 +435,26 @@ export default function AppLayout() {
             <Menu
               theme={siderTheme}
               mode="inline"
-              selectedKeys={[selectedKey]}
+              selectedKeys={[activePlugin ? `plugin:${activePlugin}` : selectedKey]}
               defaultOpenKeys={['/ops']}
-              items={visibleMenuItems}
+              // 插件入口追加在最后：它们是"额外装进来的东西"，不该插进核心导航中间
+              items={[
+                ...visibleMenuItems,
+                ...pluginNav.map((e) => ({
+                  key: `plugin:${e.pluginId}`,
+                  icon: <AppstoreOutlined />,
+                  label: e.label,
+                })),
+              ]}
               style={{ background: 'transparent', borderInlineEnd: 'none' }}
-              onClick={({ key }) => navigate(key)}
+              onClick={({ key }) => {
+                if (key.startsWith('plugin:')) {
+                  setActivePlugin(key.slice('plugin:'.length));
+                  return;
+                }
+                setActivePlugin(null);
+                navigate(key);
+              }}
             />
           </div>
 
@@ -473,7 +551,11 @@ export default function AppLayout() {
             className={frag(CLASS_CENTER_COL)}
             style={{ padding: 24, overflow: 'auto', minHeight: 0, background: 'transparent' }}
           >
-            <Outlet />
+            {activePlugin ? (
+              <PluginNavView pluginId={activePlugin} entries={pluginNav} />
+            ) : (
+              <Outlet />
+            )}
           </Content>
         </Layout>
         {/*
@@ -482,10 +564,55 @@ export default function AppLayout() {
           用户点完后端那边带着真实结果继续 —— 所以必须全局挂，不能只挂在聊天页：
           用户完全可能在会话列表页翻历史时收到审批。
         */}
+        {/*
+          可执行界面（2026-10-19，D 档）的整页槽位：
+          父层 pointer-events:none —— 覆盖层本身不挡任何操作；插件容器默认 auto，
+          装饰性插件（桌宠之外的挂件）不写尺寸就不会占位。
+          z-index 850：高于内容、低于通知铃铛（900）与 antd 弹层（1000）。
+        */}
+        <div style={{ position: 'fixed', inset: 0, pointerEvents: 'none', zIndex: 850 }}>
+          <SlotOutlet slot={SLOT_IDS.globalOverlay} agentId={currentAgentId ?? undefined} />
+        </div>
+        {/*
+          插件右侧面板区（2026-10-19，P1）：插件通过 ctx.slots.register('right.panel', …) 往里放东西。
+          容器固定右侧、父层 pointer-events:none —— 插件内容自己设交互（不写尺寸就不占位）。
+        */}
+        <div
+          style={{
+            position: 'fixed',
+            right: 0,
+            top: 0,
+            height: '100vh',
+            width: 380,
+            pointerEvents: 'none',
+            zIndex: 860,
+          }}
+        >
+          <PluginSlotHost slot={SLOT_IDS.rightPanel} />
+        </div>
         <ToolApprovalWatcher />
         {/* 右下角通知铃铛（2026-10-16）：红点随时可见，点击弹窗看全部 —— 替代原侧栏一级入口 */}
         <NotificationBell />
+        {/* 插件申请本机能力时的确认框（2026-10-19，P4）—— 全局单例，队列化 */}
+        <HostAuthDialog />
       </Layout>
     </AntApp>
   );
+}
+
+/**
+ * 插件的侧栏入口视图（2026-10-19，P1）。
+ *
+ * <p>独立组件而不是内联：`usePluginNav()` 在插件注册/注销时会推送新的 entries，
+ * 内联进 AppLayout 会让整个布局（侧栏、菜单、通知铃铛）跟着重渲染。</p>
+ *
+ * <p>插件被停用/卸载后 entries 里就没有它了 —— 此时显示一句话而不是空白页，
+ * 否则用户会以为"点了没反应"。</p>
+ */
+function PluginNavView({ pluginId, entries }: { pluginId: string; entries: PluginNavEntry[] }) {
+  const hit = entries.find((e) => e.pluginId === pluginId);
+  if (!hit) {
+    return <Empty description="该插件的界面已被停用或卸载" />;
+  }
+  return <>{hit.node}</>;
 }

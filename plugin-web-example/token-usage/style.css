@@ -1,0 +1,82 @@
+/* 在 shadow root 内生效（isolate=true），不影响宿主样式 */
+.ap-token-meter {
+  position: fixed;
+  /* 输入框上方、靠右（与截图里的红框位置对应）。
+     ⚠️ 用固定值而不是去测量输入框：插件拿不到输入框的高度，
+     而且这个卡片只是"看一眼就消失"的提示，稍有偏差无妨 —— 反过来若能测量，
+     就必须在窗口 resize / 输入框变高时重算，得不偿失。 */
+  right: 30px;
+  bottom: 122px;
+  width: 156px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.07);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, 0.12);
+  font-size: 12px;
+  color: #262626;
+  /* 不拦截点击：它盖在输入框上方，挡住输入框就本末倒置了 */
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.18s ease, transform 0.18s ease;
+  z-index: 3;
+}
+
+.ap-token-meter.ap-show {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.ap-token-meter-title {
+  font-size: 11px;
+  color: #8c8c8c;
+  margin-bottom: 2px;
+}
+
+.ap-token-meter-main {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+}
+
+.ap-token-meter-num {
+  font-size: 18px;
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.ap-token-meter-unit {
+  font-size: 11px;
+  color: #8c8c8c;
+}
+
+.ap-token-meter-sub {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #a6a6a6;
+}
+
+.ap-token-meter-cost {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed rgba(0, 0, 0, 0.08);
+  font-size: 12px;
+  color: #1677ff;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 暗色皮肤下也看得清（皮肤会改页面底色，卡片自身保持白底 + 深字） */
+@media (prefers-color-scheme: dark) {
+  .ap-token-meter {
+    background: #1f1f1f;
+    border-color: rgba(255, 255, 255, 0.1);
+    color: #e6e6e6;
+  }
+  .ap-token-meter-title,
+  .ap-token-meter-unit,
+  .ap-token-meter-sub {
+    color: #8c8c8c;
+  }
+}

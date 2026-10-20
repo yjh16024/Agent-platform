@@ -54,13 +54,22 @@ export interface StreamOutcome {
   audioMock?: boolean;
   /** 未配置密钥时的引导文案（后端给出，直接展示给用户即可）。 */
   audioHint?: string;
+  /**
+   * 本轮用量（2026-10-19）。
+   *
+   * <p>随 {@code run.completed} 帧下发（后端 `finishStream` 放进 extras）。
+   * **拿不到时为 undefined**——部分兼容网关在流式下不返回 usage，那时"不知道"不等于"没消耗"，
+   * 消费方不要用 0 兜底来显示。</p>
+   */
+  usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
 }
 
 export interface RunResponse {
   runId?: string;
   sessionId?: string;
   mode?: string;
-  output?: { role?: string; content?: string; audioUrl?: string };
+  /** `reasoning` 是推理模型的思维链（2026-10-19）：与 content 分开，前端折叠展示。 */
+  output?: { role?: string; content?: string; audioUrl?: string; reasoning?: string };
   traceId?: string;
   usage?: { promptTokens?: number; completionTokens?: number; totalCostUsd?: number };
   references?: RunReference[];
@@ -124,6 +133,15 @@ export async function runAgentStream(
   tools?: ToolsRequest,
   /** 运行时会话 ID（理由同 {@link runAgent}，必须传，否则记忆体系整条失效）。 */
   sessionId?: string,
+  /**
+   * 思考增量回调（推理模型的思维链，2026-10-19）。
+   *
+   * <p>**与 onDelta 严格分开**：它收到的是 `run.reasoning` 帧，不是回答内容。
+   * 混进同一个回调会让界面上把自我独白当成答案显示、也会让"复制回答"带上思考过程。</p>
+   *
+   * <p>普通模型不会产生这种帧，此回调全程不触发 —— 调用方不必判断模型能力。</p>
+   */
+  onReasoning?: (text: string) => void,
 ): Promise<StreamOutcome> {
   const h: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -158,6 +176,8 @@ export async function runAgentStream(
   let audioUrl: string | undefined;
   let audioMock = false;
   let audioHint: string | undefined;
+  /** 本轮用量（结束帧带）。 */
+  let usage: StreamOutcome['usage'];
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -199,8 +219,29 @@ export async function runAgentStream(
           if (typeof obj?.tts_hint === 'string') {
             audioHint = obj.tts_hint;
           }
+          // 用量同样平铺在这一层（后端 `finishStream` 把它放进 extras）
+          if (obj?.usage && typeof obj.usage === 'object') {
+            usage = {
+              promptTokens: Number(obj.usage.promptTokens ?? 0),
+              completionTokens: Number(obj.usage.completionTokens ?? 0),
+              totalTokens: Number(obj.usage.totalTokens ?? 0),
+            };
+          }
         } catch {
           /* 结束帧解析失败不影响已收到的文本 */
+        }
+        continue;
+      }
+      // 思考增量：单独一条通道，**不能落到下面的 onDelta**（见函数参数说明）
+      if (event === 'run.reasoning') {
+        try {
+          const obj = JSON.parse(data || '{}');
+          const text = obj?.content ?? obj?.delta;
+          if (text && onReasoning) {
+            onReasoning(String(text));
+          }
+        } catch {
+          /* 思考帧解析失败不影响回答 */
         }
         continue;
       }
@@ -215,5 +256,5 @@ export async function runAgentStream(
       }
     }
   }
-  return { toolCalls, audioUrl, audioMock, audioHint };
+  return { toolCalls, audioUrl, audioMock, audioHint, usage };
 }

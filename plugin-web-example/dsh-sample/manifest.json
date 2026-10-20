@@ -1,0 +1,12 @@
+{
+  "id": "dsh_sample",
+  "name": "DSH 形态示例（ESM）",
+  "version": "1.0.0",
+  "description": "ESM + export default { inject, apply }，验证 DSH 模块兼容层与受限转译",
+  "slot": "global.overlay",
+  "entry": "main.js",
+  "style": "style.css",
+  "isolate": true,
+  "order": 95,
+  "label": "DSH 形态示例"
+}

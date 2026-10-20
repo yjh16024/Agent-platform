@@ -32,6 +32,22 @@ export const SLOT_IDS = {
   conversationAboveList: 'conversation.above.list',
   /** 输入框底部工具条 —— 与"发送/清空/新会话"并列的动作 */
   composerActions: 'composer.actions',
+  /**
+   * 整页覆盖层（2026-10-19）—— 给**可执行界面**用的（桌宠、挂件、看板）。
+   *
+   * <p>它只能由 {@code type=script} 的贡献使用：覆盖层是全屏 absolute 容器，
+   * 声明式组件挂在上面没有意义（还会挡住页面点击）。父层设 {@code pointer-events: none}，
+   * 插件容器默认 {@code auto} —— 装饰性插件不写尺寸就不会挡任何东西。</p>
+   */
+  globalOverlay: 'global.overlay',
+  /**
+   * 右侧面板区（2026-10-19，P1）—— 插件注册自己的面板（看板 / 详情 / 工具条）。
+   *
+   * <p>它是**宿主提供的固定区域**（右侧 380px、父层 `pointer-events:none`），
+   * 插件用 {@code ctx.slots.register('right.panel', element)} 往里放东西；
+   * 元素自己决定尺寸与交互（不写尺寸就不占位）。</p>
+   */
+  rightPanel: 'right.panel',
 } as const;
 
 export type SlotId = (typeof SLOT_IDS)[keyof typeof SLOT_IDS];
@@ -52,4 +68,11 @@ export const SUPPORTED_TYPES: ReadonlySet<string> = new Set([
   'card',
   'list',
   'link',
+  /**
+   * 可执行界面（2026-10-19，D 档）：插件自带前端脚本，宿主加载执行。
+   *
+   * <p>⚠️ 它与上面五种**不是同一类东西**：那五种是"宿主渲染、数据由后端给"，
+   * 这个是把执行权交给插件（与装它 jar 同一个信任前提）。前端只负责容器与生命周期。</p>
+   */
+  'script',
 ]);
