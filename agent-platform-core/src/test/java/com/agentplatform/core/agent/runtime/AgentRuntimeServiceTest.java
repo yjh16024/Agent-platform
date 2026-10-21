@@ -44,7 +44,8 @@ class AgentRuntimeServiceTest {
                 "sess_1",
                 new AgentRunRequest.ContextConfig(10, false, null),
                 null, null, false,
-                Map.of("tenant_id", "t1", "user_id", "u1"));
+                Map.of("tenant_id", "t1", "user_id", "u1"),
+                null);
     }
 
     @Test

@@ -167,6 +167,50 @@ function SettingRow({
   const disabled = item.locked || busy;
   const dirty = draft.trim() !== item.value;
 
+  /*
+   * TEXT（多行文本，2026-10-20）：**独占一行**。
+   *
+   * 这类项是"可编辑的提示词片段"（如「输出格式」指引），几百字 ——
+   * 塞进右侧那半栏根本没法看，所以整块换成上下布局 + 大输入框。
+   */
+  if (item.type === 'TEXT') {
+    return (
+      <div style={{ padding: '12px 0', borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
+        <Space size={6} wrap>
+          <Text strong>{item.label}</Text>
+          {item.restartRequired && <Tag color="orange">需重启</Tag>}
+          {item.overridden && <Tag>已自定义</Tag>}
+        </Space>
+        <div>
+          <Text type="secondary" style={{ fontSize: 12 }}>{item.description}</Text>
+        </div>
+        <Input.TextArea
+          value={draft}
+          disabled={disabled}
+          autoSize={{ minRows: 8, maxRows: 24 }}
+          onChange={(e) => setDraft(e.target.value)}
+          style={{ marginTop: 8, fontSize: 12, lineHeight: 1.6 }}
+        />
+        <Space style={{ marginTop: 8 }} size={8} wrap>
+          <Button
+            size="small"
+            type="primary"
+            disabled={disabled || !dirty}
+            onClick={() => onSave(item.key, draft)}
+          >
+            应用
+          </Button>
+          <Button size="small" disabled={disabled || !dirty} onClick={() => setDraft(item.value)}>
+            撤销修改
+          </Button>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            留空 = 不注入这段提示词；纯文本渠道（QQ 等）在请求里单独关闭
+          </Text>
+        </Space>
+      </div>
+    );
+  }
+
   let control: ReactNode;
   if (item.locked) {
     control = <Text type="secondary">已锁定</Text>;

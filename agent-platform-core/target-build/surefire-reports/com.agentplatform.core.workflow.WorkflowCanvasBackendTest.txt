@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.agentplatform.core.workflow.WorkflowCanvasBackendTest
 -------------------------------------------------------------------------------
-Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 3.059 s -- in com.agentplatform.core.workflow.WorkflowCanvasBackendTest
+Tests run: 3, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.882 s -- in com.agentplatform.core.workflow.WorkflowCanvasBackendTest

@@ -99,6 +99,7 @@ C:\Users\16024\Desktop\agent-platform\agent-platform-core\src\main\java\com\agen
 C:\Users\16024\Desktop\agent-platform\agent-platform-core\src\main\java\com\agentplatform\core\plugin\builtin\BuiltinPluginRegistrar.java
 C:\Users\16024\Desktop\agent-platform\agent-platform-core\src\main\java\com\agentplatform\core\plugin\builtin\BuiltinTtsPlugin.java
 C:\Users\16024\Desktop\agent-platform\agent-platform-core\src\main\java\com\agentplatform\core\plugin\builtin\BuiltinUsageGuardPlugin.java
+C:\Users\16024\Desktop\agent-platform\agent-platform-core\src\main\java\com\agentplatform\core\plugin\builtin\BuiltinWebContentPlugin.java
 C:\Users\16024\Desktop\agent-platform\agent-platform-core\src\main\java\com\agentplatform\core\plugin\builtin\BuiltinWebSearchPlugin.java
 C:\Users\16024\Desktop\agent-platform\agent-platform-core\src\main\java\com\agentplatform\core\plugin\builtin\WebhookPusher.java
 C:\Users\16024\Desktop\agent-platform\agent-platform-core\src\main\java\com\agentplatform\core\plugin\classloader\ExternalPluginLoader.java

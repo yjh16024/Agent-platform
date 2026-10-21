@@ -29,6 +29,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 内置插件：<b>联网搜索</b>。
@@ -84,6 +86,25 @@ public class BuiltinWebSearchPlugin implements ToolProvider, PluginDescriptor, U
     private static final String DEFAULT_TAVILY_BASE_URL = "https://api.tavily.com";
     private static final String DDG_URL = "https://api.duckduckgo.com/";
 
+    /*
+     * 必应中国（2026-10-21 加）：**零配置、国内可直连**的后端。
+     *
+     * 背景：DuckDuckGo 的 API 域名在国内直连超时（实测 TIMEOUT），
+     * 而原来"没配密钥就走 DuckDuckGo"的兜底在国内等于**搜索永远失败** ——
+     * 用户看到的是"搜索失败（duckduckgo）：Connect timed out"，看起来像插件坏了。
+     *
+     * 实测 `https://cn.bing.com/search?q=哈尔滨天气` → HTTP 200 / 684ms / 10 条结果，
+     * 所以把它做成新的默认兜底：仍然不需要任何密钥。
+     */
+    private static final String BING_URL = "https://cn.bing.com/search";
+
+    /** 抓必应必须带浏览器 UA：默认 UA 会拿到简化页甚至验证码页。 */
+    private static final String BROWSER_UA =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                    + "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+
+    private static final String PROVIDER_BING = "bing";
+
     private static final int DEFAULT_MAX_RESULTS = 5;
     private static final int DEFAULT_TIMEOUT_MS = 12_000;
     private static final int HARD_MAX_RESULTS = 20;
@@ -131,8 +152,9 @@ public class BuiltinWebSearchPlugin implements ToolProvider, PluginDescriptor, U
                 @Override
                 public List<ConfigFieldDef> configFields() {
                 return List.of(
-                ConfigFieldDef.select(CFG_PROVIDER, "搜索服务商", List.of("tavily", "duckduckgo"))
-                      .hint("留空自动判断：填了密钥走 Tavily，没填走 DuckDuckGo（DuckDuckGo 无需密钥但覆盖面较窄）"),
+                ConfigFieldDef.select(CFG_PROVIDER, "搜索服务商", List.of("bing", "tavily", "duckduckgo"))
+                        .hint("留空自动判断：填了密钥走 Tavily，否则走 **Bing 页面抓取**（零配置、国内可直连）。"
+                                + "DuckDuckGo 仅建议海外部署使用 —— 它的域名在国内直连会超时"),
                 ConfigFieldDef.secret(CFG_API_KEY, "Tavily API Key")
                       .ph("tvly-...")
                       .hint("可选。在 tavily.com 注册后于控制台获取；填了搜索质量会明显更好"),
@@ -238,9 +260,14 @@ public class BuiltinWebSearchPlugin implements ToolProvider, PluginDescriptor, U
         SearchConfig cfg = configByAgent.getOrDefault(ctx == null ? "" : ctx.agentId(), SearchConfig.defaults());
 
         try {
-            String text = PROVIDER_TAVILY.equals(cfg.effectiveProvider())
-                    ? searchTavily(query.trim(), cfg)
-                    : searchDuckDuckGo(query.trim(), cfg);
+            String text;
+            if (PROVIDER_TAVILY.equals(cfg.effectiveProvider())) {
+                text = searchTavily(query.trim(), cfg);
+            } else if (PROVIDER_BING.equals(cfg.effectiveProvider())) {
+                text = searchBing(query.trim(), cfg);
+            } else {
+                text = searchDuckDuckGo(query.trim(), cfg);
+            }
             return JsonNodeFactory.instance.textNode(text);
         } catch (Exception e) {
             // 搜索失败应该让模型知道"这次没查到"，而不是抛出去把整轮对话打挂
@@ -249,6 +276,120 @@ public class BuiltinWebSearchPlugin implements ToolProvider, PluginDescriptor, U
             throw new IllegalStateException("搜索失败（" + cfg.effectiveProvider() + "）：" + e.getMessage()
                     + "。可以换个关键词重试，或直接说明你无法联网核实。");
         }
+    }
+
+    // ---------------- Bing（页面抓取，零配置） ----------------
+
+    /**
+     * 必应页面抓取（2026-10-21）。
+     *
+     * <p><b>为什么抓页面而不是调 API</b>：必应的搜索 API 属于 Azure 服务，要订阅要密钥；
+     * 而结果页对普通请求是公开的。在"零配置就能用"这个目标下，抓页面是唯一选择。</p>
+     *
+     * <p><b>代价说清楚</b>：① 结果可能滞后；② 必应改版会让解析失效（此时**抛异常**，
+     * 模型拿到的是"这次没查到"，而不是空结果被它拿去编）；③ 高频请求可能被限流。</p>
+     */
+    private String searchBing(String query, SearchConfig cfg) throws Exception {
+        int limit = Math.min(cfg.maxResults(), 10);
+        String url = BING_URL + "?q=" + URLEncoder.encode(query, StandardCharsets.UTF_8)
+                + "&count=" + limit;
+        Request request = new Request.Builder()
+                .url(url)
+                .header("User-Agent", BROWSER_UA)
+                .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+                .get()
+                .build();
+
+        try (Response response = clientFor(cfg.timeoutMs()).newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                throw new IllegalStateException("HTTP " + response.code());
+            }
+            String html = response.body() == null ? "" : response.body().string();
+            List<String> items = parseBing(html, limit);
+            if (items.isEmpty()) {
+                throw new IllegalStateException("未解析到结果（页面结构可能已变，或被要求人机验证）");
+            }
+            StringBuilder sb = new StringBuilder();
+            for (String item : items) {
+                sb.append(item).append("\n\n");
+            }
+            sb.append("（来源：Bing 页面抓取，免密钥；结果可能滞后，关键事实建议二次核实）");
+            return sb.toString();
+        }
+    }
+
+    /** 从必应结果页里抽「标题 / 链接 / 摘要」。 */
+    private static List<String> parseBing(String html, int limit) {
+        List<String> out = new ArrayList<>();
+        if (html == null || html.isEmpty()) {
+            return out;
+        }
+        Matcher blockMatcher = Pattern.compile("(?s)<li class=\"b_algo\".*?</li>").matcher(html);
+        int index = 0;
+        while (blockMatcher.find() && out.size() < limit) {
+            String block = blockMatcher.group();
+            Matcher titleMatcher = Pattern
+                    .compile("(?s)<h2>.*?<a[^>]+href=\"([^\"]+)\"[^>]*>(.*?)</a>")
+                    .matcher(block);
+            if (!titleMatcher.find()) {
+                continue;
+            }
+            String link = titleMatcher.group(1);
+            String title = decodeEntities(titleMatcher.group(2).replaceAll("<[^>]+>", "").trim());
+            if (title.isEmpty() || link.isEmpty()) {
+                continue;
+            }
+            String snippet = "";
+            Matcher pMatcher = Pattern.compile("(?s)<p[^>]*>(.*?)</p>").matcher(block);
+            if (pMatcher.find()) {
+                snippet = decodeEntities(pMatcher.group(1).replaceAll("<[^>]+>", "").trim());
+            }
+            index++;
+            out.add(index + ". " + title + "\n   " + link
+                    + (snippet.isEmpty() ? "" : "\n   " + snippet));
+        }
+        return out;
+    }
+
+    /**
+     * 简单 HTML 实体解码。
+     *
+     * <p>必应的摘要是 HTML 片段，里面夹着 `&ensp;`（半角空格）、`&#0183;`（间隔点）
+     * 这类实体。不解码就会把 `&ensp;` 原样喂给模型，它可能会照着念出来。</p>
+     */
+    private static String decodeEntities(String text) {
+        if (text == null || text.isEmpty()) {
+            return text;
+        }
+        String out = text
+                .replace("&nbsp;", " ")
+                .replace("&ensp;", " ")
+                .replace("&emsp;", " ")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&apos;", "'")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replace("&hellip;", "…")
+                .replace("&mdash;", "—")
+                .replace("&amp;", "&");
+        // 数字实体：&#123;（十进制）/ &#x1F600;（十六进制）
+        Matcher m = Pattern.compile("&#(x?)([0-9a-fA-F]+);").matcher(out);
+        StringBuilder sb = new StringBuilder();
+        while (m.find()) {
+            String replacement;
+            try {
+                int cp = m.group(1).isEmpty()
+                        ? Integer.parseInt(m.group(2))
+                        : Integer.parseInt(m.group(2), 16);
+                replacement = new String(Character.toChars(cp));
+            } catch (Exception e) {
+                replacement = m.group();   // 解析不了就原样保留
+            }
+            m.appendReplacement(sb, Matcher.quoteReplacement(replacement));
+        }
+        m.appendTail(sb);
+        return sb.toString();
     }
 
     // ---------------- Tavily ----------------
@@ -474,7 +615,13 @@ public class BuiltinWebSearchPlugin implements ToolProvider, PluginDescriptor, U
             if (provider != null) {
                 return provider;
             }
-            return hasApiKey() ? PROVIDER_TAVILY : PROVIDER_DUCKDUCKGO;
+            /*
+             * 默认后端（2026-10-21 改）：**没有密钥时走必应页面抓取**。
+             *
+             * 原来是 DuckDuckGo —— 它的 API 域名在国内直连超时，等于"零配置不可用"。
+             * 现在零配置也能搜到东西，`duckduckgo` 降为显式选项（海外部署可用）。
+             */
+            return hasApiKey() ? PROVIDER_TAVILY : PROVIDER_BING;
         }
 
         /**

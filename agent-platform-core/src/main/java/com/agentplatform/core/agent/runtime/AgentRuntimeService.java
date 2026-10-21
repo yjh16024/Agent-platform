@@ -100,6 +100,14 @@ public class AgentRuntimeService {
     private com.agentplatform.core.memory.ConversationMemoryService conversationMemoryService;
 
     /**
+     * 配置读取（2026-10-20）：用于取「输出格式」指引这类**可在平台设置里改**的提示词片段。
+     *
+     * <p>可选注入：单测里没有 Environment 时退化为用注册表里的默认值，行为不变。</p>
+     */
+    @Autowired(required = false)
+    private org.springframework.core.env.Environment environment;
+
+    /**
      * 工具调用记录收集器（前端「工具调用可视化」的数据来源）。
      *
      * <p>可选注入：缺失时退化为"不记录"，**不影响运行本身** ——
@@ -288,8 +296,19 @@ public class AgentRuntimeService {
 
         // ④.1 组装基础系统提示词（人格 → 提示词合并 + 变量填充 + Skill 注入）
         // 顺序：人格/模板 → Skill 正文 → 输出格式说明（格式说明放最后，最不容易被长 Skill 淹没）
-        String basePrompt = withRenderGuide(withSkillPrompts(agent,
-                assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req)));
+        String basePromptRaw = withSkillPrompts(agent,
+                assembleSystemPrompt(agent.getPersona(), agent.getSystemPrompt(), req));
+        /*
+         * 「输出格式」指引按**渠道**决定（2026-10-20）。
+         *
+         * 网页对话会渲染 Markdown 与 chart，注入它能让排版更好；但 QQ / 短信 / 终端这类
+         * 纯文本渠道传 `renderGuide=false` —— 模型**直接输出纯文本**，
+         * 比"先让它输出 `**粗体**` 再在插件里擦掉标记"干净得多：
+         * 事后清洗只能删符号，表格结构与嵌套列表早被压平了。
+         */
+        String basePrompt = Boolean.FALSE.equals(req.renderGuide())
+                ? basePromptRaw
+                : withRenderGuide(basePromptRaw);
         // ④.2 RAG 知识库自动检索（请求/智能体绑定知识库时，把命中片段注入上下文并生成引用；
         // 未绑定知识库/检索失败时 retrieveKnowledge 返回 null，等价于普通对话）
         // ④.3 对话附件自动摄取（方案 C）：文档拖入 → 归入租户附件库 → 并入本次检索范围
@@ -1455,26 +1474,23 @@ public class AgentRuntimeService {
      * 见 {@code pages/chat/markdown/ChartBlock.tsx}）—— 多写一种，模型就会输出渲染不出来的东西。</p>
      */
     public String withRenderGuide(String systemPrompt) {
-        StringBuilder sb = new StringBuilder(systemPrompt == null ? "" : systemPrompt);
-        sb.append("""
-
-                ## 输出格式
-
-                你的回复会按 Markdown 渲染，可以正常使用标题、有序/无序列表、表格、**粗体**、
-                行内代码与代码块 —— 用它们把内容组织清楚，不要写成一大段纯文本。
-
-                当需要展示**数据对比或趋势**（而不是罗列文字）时，用 chart 代码块，界面会画成图：
-
-                ```chart
-                { "type": "bar", "title": "各渠道询盘量",
-                  "data": [ {"label": "阿里巴巴", "value": 120}, {"label": "独立站", "value": 86} ] }
-                ```
-
-                - `type`：`bar`（柱状，默认）/ `line`（折线，适合趋势）/ `pie`（占比）
-                - `data`：每项是 `{"label": "名称", "value": 数字}`，至少一项
-                - 只在**确实有数据**要展示时才用；没有数据时不要为了排版好看而画图
-                - ⚠️ 必须是合法 JSON（双引号，不能有注释或多余逗号），否则界面只能显示原文""");
-        return sb.toString();
+        /*
+         * 内容改成**可配置**（2026-10-20）：从平台设置读，键 `agent-platform.prompt.render-guide`，
+         * 默认值就是原先硬编码的这段。理由：它直接决定模型输出的风格，用户有权查看与修改 ——
+         * 藏在代码里等于"平台偷偷往你的提示词里加东西"。
+         *
+         * 留空则不注入（某些部署可能根本不想要 Markdown 指引）。
+         */
+        String guide = environment == null
+                ? com.agentplatform.core.settings.PlatformSettingRegistry.DEFAULT_RENDER_GUIDE
+                : environment.getProperty(
+                        com.agentplatform.core.settings.PlatformSettingRegistry.PROMPT_RENDER_GUIDE,
+                        com.agentplatform.core.settings.PlatformSettingRegistry.DEFAULT_RENDER_GUIDE);
+        String base = systemPrompt == null ? "" : systemPrompt;
+        if (guide == null || guide.isBlank()) {
+            return base;
+        }
+        return base + "\n" + guide;
     }
 
     /**

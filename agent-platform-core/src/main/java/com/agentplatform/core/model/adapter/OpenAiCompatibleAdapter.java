@@ -285,7 +285,19 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
         // （模型请求工具 → 我们把 assistant(tool_calls) + tool 结果放进 history，
         //  此时不该再补一条空的 user 消息，否则重发用户提问会把上下文搞乱）。
         if (req.userMessage() != null && !req.userMessage().isBlank()) {
-            messages.add(Map.of("role", "user", "content", req.userMessage()));
+            /*
+             * 多模态（2026-10-20 修复）。
+             *
+             * 图片原先被塞进 `extra.images`，而 `extra` 是**原样合并进请求体**的通用口袋 ——
+             * 厂商不认识 `images` 这个字段，直接忽略。表现就是"图上传成功、模型说看不到"。
+             * 这里改成标准的 OpenAI 多模态消息：
+             *   content: [{type:"text"},{type:"image_url", image_url:{url:"data:<mime>;base64,..."}}]
+             */
+            java.util.List<Map<String, String>> images = imagesOf(req.extra());
+            Object content = images.isEmpty()
+                    ? req.userMessage()
+                    : multimodalContent(req.userMessage(), images);
+            messages.add(Map.of("role", "user", "content", content));
         }
         body.put("messages", messages);
         // 工具声明（function calling）——tools 为空时不启用，保证旧行为不变
@@ -308,9 +320,61 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
             }
         }
         if (req.extra() != null) {
-            body.putAll(req.extra());
+            /*
+             * `images` 是**平台内部键**（多模态图片，`{mimeType, base64}` 列表），
+             * 上面已转成标准 image_url 内容块，这里必须**排除** ——
+             * 原样下发只会让厂商收到一个不认识的字段（多数实现静默忽略，少数报 400）。
+             */
+            for (Map.Entry<String, Object> e : req.extra().entrySet()) {
+                if (!"images".equals(e.getKey())) {
+                    body.put(e.getKey(), e.getValue());
+                }
+            }
         }
         return body;
+    }
+
+    /** 从 `extra` 里取出图片数据（`{mimeType, base64}` 列表）；无图返回空。 */
+    private static java.util.List<Map<String, String>> imagesOf(Map<String, Object> extra) {
+        if (extra == null) {
+            return java.util.List.of();
+        }
+        Object v = extra.get("images");
+        if (!(v instanceof java.util.List<?> list)) {
+            return java.util.List.of();
+        }
+        java.util.List<Map<String, String>> out = new java.util.ArrayList<>();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) {
+                continue;
+            }
+            // `m` 是 Map<?, ?>，不能直接 getOrDefault(String, String)（泛型捕获不兼容）
+            Object rawB64 = m.get("base64");
+            String b64 = rawB64 == null ? "" : String.valueOf(rawB64);
+            if (b64.isBlank()) {
+                continue;
+            }
+            Object rawMime = m.get("mimeType");
+            String mime = rawMime == null ? "image/png" : String.valueOf(rawMime);
+            Map<String, String> one = new java.util.HashMap<>(2);
+            one.put("base64", b64);
+            one.put("mimeType", mime);
+            out.add(one);
+        }
+        return out;
+    }
+
+    /** 拼 OpenAI 多模态 content（text + 若干 image_url）。 */
+    private static java.util.List<Map<String, Object>> multimodalContent(
+            String text, java.util.List<Map<String, String>> images) {
+        java.util.List<Map<String, Object>> parts = new java.util.ArrayList<>(1 + images.size());
+        parts.add(Map.of("type", "text", "text", text));
+        for (Map<String, String> img : images) {
+            parts.add(Map.of(
+                    "type", "image_url",
+                    "image_url", Map.of("url", "data:" + img.get("mimeType") + ";base64," + img.get("base64"))));
+        }
+        return parts;
     }
 
     /**

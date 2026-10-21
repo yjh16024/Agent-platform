@@ -56,8 +56,38 @@ public final class PlatformSettingRegistry {
 
     /** 值的类型 —— 决定界面用哪种控件、写入时做哪种校验。 */
     public enum Type {
-        BOOL, ENUM, NUMBER, LIST
+        BOOL, ENUM, NUMBER, LIST,
+        /** 多行文本（2026-10-20 加）：目前用于「输出格式」指引这类可编辑的提示词片段。 */
+        TEXT
     }
+
+    /**
+     * 「输出格式」指引的键（2026-10-20）。
+     *
+     * <p>平台会把它拼进每轮系统提示词的末尾。**之所以做成设置项**：这段文字直接决定
+     * 模型输出的风格（用不用 Markdown、要不要画图），用户有权知道它存在、看清内容、
+     * 也应当能改 —— 藏在代码里等于"平台偷偷往你的提示词里加东西"。</p>
+     */
+    public static final String PROMPT_RENDER_GUIDE = "agent-platform.prompt.render-guide";
+
+    /** 默认值：与原先硬编码在 {@code AgentRuntimeService.withRenderGuide} 里的内容逐字一致。 */
+    public static final String DEFAULT_RENDER_GUIDE = """
+            ## 输出格式
+
+            你的回复会按 Markdown 渲染，可以正常使用标题、有序/无序列表、表格、**粗体**、
+            行内代码与代码块 —— 用它们把内容组织清楚，不要写成一大段纯文本。
+
+            当需要展示**数据对比或趋势**（而不是罗列文字）时，用 chart 代码块，界面会画成图：
+
+            ```chart
+            { "type": "bar", "title": "各渠道询盘量",
+              "data": [ {"label": "阿里巴巴", "value": 120}, {"label": "独立站", "value": 86} ] }
+            ```
+
+            - `type`：`bar`（柱状，默认）/ `line`（折线，适合趋势）/ `pie`（占比）
+            - `data`：每项是 `{"label": "名称", "value": 数字}`，至少一项
+            - 只在**确实有数据**要展示时才用；没有数据时不要为了排版好看而画图
+            - ⚠️ 必须是合法 JSON（双引号，不能有注释或多余逗号），否则界面只能显示原文""";
 
     /**
      * 单个设置项的定义。
@@ -144,7 +174,15 @@ public final class PlatformSettingRegistry {
             new SettingDef(EVENTS_ENABLED, "模型、存储与事件", "Kafka 事件总线",
                     "智能体配置变更广播与日志事件流。broker 不可用时发送失败静默降级，不阻断业务。"
                             + "需重启生效。",
-                    Type.BOOL, "true", null, true, EMBEDDED_EVENTS_LOCK)
+                    Type.BOOL, "true", null, true, EMBEDDED_EVENTS_LOCK),
+
+            // ---------------- 系统提示词（运行期读取：每轮对话组装时） ----------------
+            new SettingDef(PROMPT_RENDER_GUIDE, "系统提示词", "「输出格式」指引",
+                    "每轮对话都会把这段文字拼在系统提示词末尾，用来告诉模型「回复会被 Markdown 渲染，"
+                            + "可以用标题/列表/表格/图表」。**纯文本渠道（QQ、短信、终端）不会注入它** —— "
+                            + "请求里带 renderGuide=false 即可，否则模型会输出一堆 `**` `-` `|` 符号。"
+                            + "留空 = 完全不注入。",
+                    Type.TEXT, DEFAULT_RENDER_GUIDE, null, false, null)
     );
 
     private PlatformSettingRegistry() {

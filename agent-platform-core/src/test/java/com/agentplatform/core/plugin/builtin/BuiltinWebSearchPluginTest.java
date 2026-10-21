@@ -108,11 +108,24 @@ class BuiltinWebSearchPluginTest {
     }
 
     @Test
-    @DisplayName("★ 没配密钥自动走 DuckDuckGo 兜底（零配置可用）")
-    void autoFallsBackToDuckDuckGo() {
+    @DisplayName("★ 没配密钥自动走 Bing 页面抓取（零配置 + 国内可直连，2026-10-21 行为变更）")
+    void autoFallsBackToBing() {
         SearchConfig cfg = SearchConfig.of(JsonUtils.toJsonNode("{}"));
 
         assertFalse(cfg.hasApiKey());
+        /*
+         * 原来是 DuckDuckGo。改为 Bing 的原因很具体：DuckDuckGo 的 API 域名
+         * 在国内直连超时（实测 TIMEOUT），"零配置兜底"等于"永远搜不到"。
+         * Bing 页面抓取不需要密钥，且 cn.bing.com 国内可直连。
+         */
+        assertEquals("bing", cfg.effectiveProvider());
+    }
+
+    @Test
+    @DisplayName("DuckDuckGo 仍可显式指定（海外部署用）")
+    void duckDuckGoStillAvailableWhenExplicit() {
+        SearchConfig cfg = SearchConfig.of(JsonUtils.toJsonNode("{\"provider\":\"duckduckgo\"}"));
+
         assertEquals("duckduckgo", cfg.effectiveProvider());
     }
 

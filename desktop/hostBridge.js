@@ -482,7 +482,21 @@ function createHostBridge(opts) {
     if (!res.ok || (json && json.success === false)) {
       throw new Error((json && json.message) || `HTTP ${res.status}`);
     }
-    return json ? json.data : null;
+    /*
+     * ★ 两种响应形态都要支持（2026-10-20 修复）。
+     *
+     * 平台接口大多数套了 `ApiResponse`（`{ success, data, message }`），
+     * 但**有几个是裸 JSON**：最典型的是 `POST /api/v1/agent/run` 直接返回 `AgentRunResponse`
+     * （前端用 `raw=true` 走这条）。
+     *
+     * 原来无条件 `return json.data`，于是调 `/agent/run` 的插件（如 QQ 助手）拿到的全是 `null` ——
+     * 表现是"消息收到了、模型也回答了、就是发不出去"，极难定位。
+     * 现在：有 `data` 就取 `data`，没有就返回整个 json。
+     */
+    if (!json) {
+      return null;
+    }
+    return json.data !== undefined ? json.data : json;
   }
 
   /** 向子进程发一条请求并等回复（带超时，避免插件卡住时主进程永远等）。 */

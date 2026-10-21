@@ -23,6 +23,7 @@ com\agentplatform\core\plugin\builtin\BuiltinPluginRegistrarTest$DescribedPlugin
 com\agentplatform\core\agent\runtime\AgentRuntimeServicePromptParityTest.class
 com\agentplatform\core\plugin\builtin\PluginConfigDeclarationTest.class
 com\agentplatform\core\tool\fs\WorkspaceRootSafetyTest.class
+com\agentplatform\core\plugin\builtin\BuiltinWebContentPluginTest.class
 com\agentplatform\core\agent\service\AgentVersionServiceTest.class
 com\agentplatform\core\plugin\builtin\BuiltinUsageGuardPluginTest.class
 com\agentplatform\core\plugin\marketplace\PluginUiScriptContributionTest.class

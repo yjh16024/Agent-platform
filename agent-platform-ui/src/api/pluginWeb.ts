@@ -18,8 +18,13 @@ export interface PluginConfigField {
   /** 存储键（在同一插件内唯一）。 */
   key: string;
   label?: string;
-  /** 控件类型，缺省按 default 的类型推断。 */
-  type?: 'number' | 'text' | 'boolean' | 'select';
+  /**
+   * 控件类型，缺省按 default 的类型推断。
+   *
+   * - `agent`：**智能体选择器**（2026-10-20）—— 让插件声明"我需要一个 agentId"，
+   *   宿主渲染成下拉，而不是让用户去别处复制一串 UUID。值仍是 agentId 字符串。
+   */
+  type?: 'number' | 'text' | 'boolean' | 'select' | 'agent';
   default?: unknown;
   /** 表单下方的说明文字。 */
   description?: string;
@@ -45,6 +50,13 @@ export interface WebPluginItem {
   /** 是否 Shadow DOM 隔离 */
   isolate?: boolean;
   order?: number;
+  /**
+   * Node 侧入口文件名（manifest 的 `main`）。
+   *
+   * <p>有值 = 这个插件带一段跑在 `utilityProcess` 里的 Node 代码。
+   * 设置表单据此决定**是否要把配置同步到插件文件**（localStorage 在子进程里读不到）。</p>
+   */
+  main?: string | null;
   /** 插件声明的配置项（有它才会出现「设置」按钮）。 */
   config?: PluginConfigField[] | null;
   /**

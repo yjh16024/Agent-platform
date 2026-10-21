@@ -39,7 +39,16 @@ public record AgentRunRequest(
         ToolsConfig tools,
         PluginsConfig plugins,
         Boolean stream,
-        Map<String, Object> metadata
+        Map<String, Object> metadata,
+        /**
+         * 是否注入「输出格式」说明（Markdown + chart 指引，见 `withRenderGuide`）。
+         *
+         * <p>默认（null）= 注入，给网页对话用 —— 那里会渲染 Markdown 与图表。
+         * 纯文本渠道（QQ / 短信 / 终端）应传 {@code false}：模型直接输出纯文本，
+         * **不会先产生一堆 `**` `-` `|` 再让我们去擦**。事后清洗只能删标记，
+         * 表格结构与嵌套列表已经被压平了。</p>
+         */
+        Boolean renderGuide
 ) {
     /** 模型请求级覆盖。 */
     public record ModelOverride(String provider, String name, Double temperature) {

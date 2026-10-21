@@ -12,8 +12,8 @@ export interface PlatformSettingItem {
   key: string;
   label: string;
   description: string;
-  /** 控件类型：BOOL 开关 / ENUM 下拉 / NUMBER 数字 / LIST 逗号分隔清单 */
-  type: 'BOOL' | 'ENUM' | 'NUMBER' | 'LIST';
+  /** 控件类型：BOOL 开关 / ENUM 下拉 / NUMBER 数字 / LIST 逗号分隔清单 / TEXT 多行文本 */
+  type: 'BOOL' | 'ENUM' | 'NUMBER' | 'LIST' | 'TEXT';
   value: string;
   /** ENUM 候选项（其他类型为空数组） */
   options: string[];

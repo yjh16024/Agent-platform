@@ -97,7 +97,8 @@ class AgentServiceIntegrationTest {
                 new com.agentplatform.core.agent.dto.AgentRunRequest.ModelOverride("gpt-4o-mini", "openai", null),
                 List.of(new com.agentplatform.core.agent.dto.AgentRunRequest.Message("user", "你好")),
                 "sess_1", null, null, null, false,
-                java.util.Map.of("tenant_id", "t1"));
+                java.util.Map.of("tenant_id", "t1"),
+                null);
 
         var response = runtimeService.run(runReq);
         assertNotNull(response.runId());

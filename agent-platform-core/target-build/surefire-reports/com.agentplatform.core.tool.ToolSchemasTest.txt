@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.agentplatform.core.tool.ToolSchemasTest
 -------------------------------------------------------------------------------
-Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.071 s -- in com.agentplatform.core.tool.ToolSchemasTest
+Tests run: 5, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.083 s -- in com.agentplatform.core.tool.ToolSchemasTest

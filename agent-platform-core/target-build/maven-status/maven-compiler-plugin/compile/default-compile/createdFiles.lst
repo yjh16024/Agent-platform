@@ -112,6 +112,7 @@ com\agentplatform\core\observability\export\ObsExportProperties.class
 com\agentplatform\core\plugin\classloader\PluginClassLoader.class
 com\agentplatform\core\notification\NotificationController.class
 com\agentplatform\core\workflow\WorkflowController.class
+com\agentplatform\core\plugin\builtin\BuiltinWebContentPlugin.class
 com\agentplatform\core\dict\DictDtos$DictItemView$Option.class
 com\agentplatform\core\multimodal\FileUploadService.class
 com\agentplatform\core\agent\runtime\AgentRuntimeService.class
@@ -321,6 +322,7 @@ com\agentplatform\core\settings\PlatformSettingRegistry$SettingDef.class
 com\agentplatform\core\dict\DictSeeder.class
 com\agentplatform\core\skill\SkillService.class
 com\agentplatform\core\settings\PlatformSettingRegistry$Type.class
+com\agentplatform\core\multimodal\FileUploadService$InMemoryMultipartFile.class
 com\agentplatform\core\security\rbac\RbacService$LoginResult.class
 com\agentplatform\core\tool\mcp\LocalMcpClient.class
 com\agentplatform\core\prompt\enhancer\ExampleGenerator.class

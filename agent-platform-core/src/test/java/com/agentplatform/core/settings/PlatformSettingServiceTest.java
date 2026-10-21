@@ -174,7 +174,8 @@ class PlatformSettingServiceTest {
 
         PlatformSettingDtos.SettingsView view = svc.view();
 
-        assertEquals(List.of("长期记忆", "文件与工具", "操作审计", "模型、存储与事件"),
+        // 「系统提示词」组是 2026-10-20 新增的（输出格式指引可在设置里改）
+        assertEquals(List.of("长期记忆", "文件与工具", "操作审计", "模型、存储与事件", "系统提示词"),
                 view.groups().stream().map(SettingGroup::name).toList());
         assertEquals("server", view.runtimeMode());
 

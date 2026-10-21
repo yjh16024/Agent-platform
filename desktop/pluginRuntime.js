@@ -118,6 +118,29 @@ async function doLoad(msg) {
     platform: {
       request: (cfg) => callHost('platform.request', cfg),
     },
+    /**
+     * **执行平台工具**（2026-10-21）。
+     *
+     * <h3>为什么加它</h3>
+     * 在此之前，插件只能"贡献工具"，不能"消费工具"：bot 想主动联网搜点东西
+     * （找个头像、查个事实），只能绕道让模型在对话里调工具 —— 但"什么时候该搜"
+     * 是插件自己的逻辑（比如"改头像前先找张图"），不该由模型在一次对话里替它决定。
+     *
+     * <h3>边界与网页里的工具页一致</h3>
+     * 走 `POST /api/v1/tools/{name}/invoke`，与用户在工具页点「试跑」是同一条路 ——
+     * 责任链（鉴权/校验/限流/审计/截断）全部经过，**插件没有额外越权**：
+     * 能调哪些工具取决于当前登录用户的 `tool:invoke` 权限与工具是否已注册。
+     */
+    tools: {
+      /** 执行一个已注册工具，返回 `{ success, output, error }`。 */
+      execute: (name, args) => callHost('platform.request', {
+        path: `/api/v1/tools/${encodeURIComponent(name)}/invoke`,
+        method: 'POST',
+        body: args || {},
+      }),
+      /** 列出当前用户可用的工具（含入参 schema），便于插件自助发现。 */
+      list: () => callHost('platform.request', { path: '/api/v1/tools', method: 'GET' }),
+    },
   };
 
   if (mod && typeof mod.start === 'function') {

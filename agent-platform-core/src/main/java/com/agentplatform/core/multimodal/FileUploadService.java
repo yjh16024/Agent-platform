@@ -87,6 +87,93 @@ public class FileUploadService {
      * @param tenantId 租户 ID
      * @return 文件元数据
      */
+    /**
+     * 以 base64 上传（2026-10-20）。
+     *
+     * <h3>为什么需要它</h3>
+     * 桌面壳给插件提供的桥（`api.platform.request`）**只能发 JSON**，发不了 multipart。
+     * 于是插件收到一张图片时（QQ 消息里的图、本地表情包）无法走 `/files/upload`，
+     * 也就拿不到 `fileId` —— 而多模态消息恰恰只认 `fileId`。这条路一通，
+     * 所有插件都能处理图片，不必各写一套上传逻辑。
+     *
+     * <p>实现上包一层 {@code MultipartFile} 直接复用 {@link #upload}，
+     * 而不是重写一遍存储：大小限制、类型白名单、租户隔离、对象键规则都应该只有一份。</p>
+     *
+     * @param dataBase64 base64；允许带 `data:image/png;base64,` 前缀（前端直接传 dataURL 也行）
+     */
+    @Transactional
+    public FileAsset uploadBase64(String fileName, String mimeType, String dataBase64,
+                                  String type, String tenantId) {
+        if (dataBase64 == null || dataBase64.isBlank()) {
+            throw BizException.badRequest("dataBase64 不能为空");
+        }
+        String b64 = dataBase64.trim();
+        if (b64.startsWith("data:")) {
+            int comma = b64.indexOf(',');
+            if (comma < 0) {
+                throw BizException.badRequest("dataURL 格式不正确（缺少逗号分隔）");
+            }
+            b64 = b64.substring(comma + 1);
+        }
+        byte[] bytes;
+        try {
+            bytes = java.util.Base64.getMimeDecoder().decode(b64);
+        } catch (IllegalArgumentException e) {
+            throw BizException.badRequest("dataBase64 不是合法的 base64");
+        }
+        if (bytes.length == 0) {
+            throw BizException.badRequest("解码后内容为空");
+        }
+        String name = (fileName == null || fileName.isBlank()) ? "upload.bin" : fileName;
+        String mime = (mimeType == null || mimeType.isBlank()) ? "application/octet-stream" : mimeType;
+        return upload(new InMemoryMultipartFile(name, mime, bytes), type, tenantId);
+    }
+
+    /** 内存中的 MultipartFile（base64 上传用，不落临时文件）。 */
+    private record InMemoryMultipartFile(String name, String contentType, byte[] content)
+            implements MultipartFile {
+
+        @Override
+        public String getName() {
+            return "file";
+        }
+
+        @Override
+        public String getOriginalFilename() {
+            return name;
+        }
+
+        @Override
+        public String getContentType() {
+            return contentType;
+        }
+
+        @Override
+        public boolean isEmpty() {
+            return content == null || content.length == 0;
+        }
+
+        @Override
+        public long getSize() {
+            return content == null ? 0 : content.length;
+        }
+
+        @Override
+        public byte[] getBytes() {
+            return content == null ? new byte[0] : content;
+        }
+
+        @Override
+        public java.io.InputStream getInputStream() {
+            return new java.io.ByteArrayInputStream(getBytes());
+        }
+
+        @Override
+        public void transferTo(java.io.File dest) throws java.io.IOException {
+            java.nio.file.Files.write(dest.toPath(), getBytes());
+        }
+    }
+
     @Transactional
     public FileAsset upload(MultipartFile file, String type, String tenantId) {
         if (file == null || file.isEmpty()) {

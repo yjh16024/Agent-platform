@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 文件接口（多模态资源入口：上传 / 列表 / 详情 / 下载）。
@@ -38,6 +40,28 @@ public class FileUploadController {
             @RequestParam("file") MultipartFile file,
             @RequestParam(required = false) String type) {
         return ApiResponse.ok(fileUploadService.upload(file, type, tenantId));
+    }
+
+    /**
+     * 以 JSON 上传 base64（2026-10-20）。
+     *
+     * <p>给插件用：桌面壳的 `api.platform.request` 只能发 JSON，发不了 multipart，
+     * 而多模态消息只认 `fileId`。请求体：`{ fileName, mimeType, dataBase64, type? }`。</p>
+     */
+    @PostMapping("/base64")
+    @RequiresPermission("file:manage")
+    public ApiResponse<FileAsset> uploadBase64(
+            @RequestHeader(value = "X-Tenant-Id", defaultValue = "default") String tenantId,
+            @RequestBody Map<String, Object> body) {
+        String fileName = body == null ? null : str(body.get("fileName"));
+        String mimeType = body == null ? null : str(body.get("mimeType"));
+        String data = body == null ? null : str(body.get("dataBase64"));
+        String type = body == null ? null : str(body.get("type"));
+        return ApiResponse.ok(fileUploadService.uploadBase64(fileName, mimeType, data, type, tenantId));
+    }
+
+    private static String str(Object o) {
+        return o == null ? null : String.valueOf(o);
     }
 
     /** 列出租户文件。 */

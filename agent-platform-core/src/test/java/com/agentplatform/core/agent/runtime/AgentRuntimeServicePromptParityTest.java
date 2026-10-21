@@ -109,7 +109,8 @@ class AgentRuntimeServicePromptParityTest {
                 List.of(new AgentRunRequest.Message("user", "帮我退个货")),
                 "sess_1",
                 null, null, null, Boolean.FALSE,
-                Map.of("tenant_id", "t1", "user_id", "u1"));
+                Map.of("tenant_id", "t1", "user_id", "u1"),
+                null);
     }
 
     @Test

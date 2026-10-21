@@ -59,7 +59,9 @@ public class AgentNodeExecutor implements NodeExecutor {
                 null,
                 null,
                 Boolean.FALSE,
-                Map.of("tenant_id", "default", "user_id", "workflow"));
+                Map.of("tenant_id", "default", "user_id", "workflow"),
+                // 工作流节点之间传递的是纯文本：不注入 Markdown/chart 指引
+                Boolean.FALSE);
 
         AgentRunResponse response = agentRuntimeService.run(request);
 
