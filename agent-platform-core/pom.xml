@@ -229,6 +229,19 @@
     </dependencies>
 
     <build>
+        <!--
+            构建输出放到 target/tmp-build（2026-10-22）。
+
+            原因：dev 跑着的时候 `target/agent-platform-core-*.jar` 被 JVM 占用，
+            spring-boot repackage 重命名那一步会失败，所以打包必须换个输出目录。
+            但之前用的是**项目根下的 target-build** —— 不在 .gitignore 里，结果
+            475MB / 745 个构建产物被 git 跟踪，每次打包都产生几百条修改。
+
+            改成 target/tmp-build 后：`target/` 已在 .gitignore 中，产物自动被忽略；
+            而 dev.bat 读的仍是 `target/agent-platform-core-1.5.0.jar`（由打包脚本复制过去），
+            两者互不影响。
+        -->
+        <directory>${project.basedir}/target/tmp-build</directory>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>

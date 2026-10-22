@@ -80,6 +80,20 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
     /** 必应图片搜索（页面抓取，零配置）。 */
     private static final String BING_IMAGE_URL = "https://cn.bing.com/images/search";
 
+    /**
+     * 百度图片的 JSON 接口（2026-10-22 加，**现在是默认引擎**）。
+     *
+     * <p>为什么换掉 Bing：实测搜「动漫 白发 少女 插画 头像」，Bing 返回
+     * "白银还有近 20% 上涨空间""9999 银粒定制""张又侠致辞" —— 中文分词把"银白发"
+     * 切成了"白银"，完全跑偏。同一句话给百度，30 条全是
+     * "白发头像女动漫""白发动漫女生头像"，且图片来自 {@code img*.baidu.com}
+     * （自家 CDN，直连下载 200 / 37~52KB，无防盗链）。</p>
+     */
+    private static final String BAIDU_IMAGE_URL = "https://image.baidu.com/search/acjson";
+
+    /** 360 图片（备用引擎，实测结果偏少，仅作兜底）。 */
+    private static final String SO_IMAGE_URL = "https://image.so.com/j";
+
     /** 抓页面必须带浏览器 UA：默认 UA 常被返回简化页或验证码页。 */
     private static final String BROWSER_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -186,11 +200,14 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
         imgProps.putObject("limit")
                 .put("type", "integer")
                 .put("description", "返回几张，默认 10，上限 20");
+        imgProps.putObject("engine")
+                .put("type", "string")
+                .put("description", "搜索引擎：baidu（默认，中文场景最准）/ bing / so。"
+                        + "中文关键词或找头像时用 baidu；bing 适合英文查询，且支持 site 限定");
         imgProps.putObject("site")
                 .put("type", "string")
-                .put("description", "限定站点（强烈建议填）。找头像/插画/壁纸时传 duitang.com —— "
-                        + "堆糖是头像站，实测 90% 结果来自它自己的图床且能直接下载。"
-                        + "注意：Bing 只对部分站点认 site: 语法（huaban、pixiv 会被忽略并退回全网搜索）");
+                .put("description", "限定站点，**仅 bing 引擎有效**。找头像/插画可传 duitang.com"
+                        + "（堆糖，实测 90% 结果来自它自己的图床）。百度不支持 site 语法");
         imgSchema.putArray("required").add("query");
 
         return List.of(
@@ -219,7 +236,9 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
                                 + "注意它和 web_search 的区别：web_search 给的是网页地址，"
                                 + "这个给的是图片本身的地址，可以直接拿去下载/设置头像。"
                                 + "返回的是**地址列表**（你读到的是文字）；如果你想把某张发给对方看，"
-                                + "用 `[发图 <图片地址>]`，插件会把那张图真的发出去。",
+                                + "用 `[发图 <图片地址>]`，插件会把那张图真的发出去。"
+                                + "默认走百度图片（中文场景最准，找头像/插画首选）；"
+                                + "英文查询或要限定站点时传 engine=bing + site。",
                         imgSchema,
                         this::handleImageSearch));
     }
@@ -243,60 +262,203 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
         }
         int limit = clamp(args.path("limit").asInt(10), 1, 20);
         String q = query.trim();
-        /*
-         * 站点限定（2026-10-22）。
-         *
-         * 通用图片搜索对"头像"这种需求几乎没有用 —— 实测搜「动漫少女头像 白发 插画」
-         * 返回的是"白银还有近 20% 上涨空间""9999 银粒定制""张又侠致辞"，
-         * 因为"银白发"被引擎切成了"白银"。加 `site:duitang.com` 后 29 张里 26 张
-         * 来自堆糖图床，标题全是"动漫头像 - 堆糖"。
-         */
+        String engine = args.path("engine").asText("baidu").trim().toLowerCase(java.util.Locale.ROOT);
         String site = args.path("site").asText("").trim();
-        if (!site.isEmpty()) {
-            // 只接受域名形状，避免把任意字符拼进查询
-            if (!site.matches("^[A-Za-z0-9.\\-]+$")) {
-                throw new IllegalArgumentException("site 只接受域名，例如 duitang.com");
-            }
-            q = q + " site:" + site;
-        }
-        String url = BING_IMAGE_URL + "?q=" + URLEncoder.encode(q, StandardCharsets.UTF_8) + "&first=1";
 
+        /*
+         * 多引擎（2026-10-22）：默认百度。
+         *
+         * 换掉 Bing 的理由是实测出来的：同一句「动漫 白发 少女 插画 头像」，
+         * Bing 返回"白银还有近 20% 上涨空间""9999 银粒定制"（中文分词把"银白发"切成"白银"），
+         * 百度返回 30 条"白发头像女动漫""白发动漫女生头像"，图片来自 img*.baidu.com 可直接下载。
+         */
+        String label;
+        List<String[]> items;
+        try {
+            switch (engine) {
+                case "bing" -> {
+                    if (!site.isEmpty() && !site.matches("^[A-Za-z0-9.\\-]+$")) {
+                        throw new IllegalArgumentException("site 只接受域名，例如 duitang.com");
+                    }
+                    items = searchBingImages(site.isEmpty() ? q : q + " site:" + site, limit);
+                    label = site.isEmpty() ? "Bing" : "Bing/" + site;
+                }
+                case "so" -> {
+                    items = searchSoImages(q, limit);
+                    label = "360";
+                }
+                default -> {
+                    items = searchBaiduImages(q, limit);
+                    label = "百度";
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[web-content] image_search failed query={} engine={} reason={}", q, engine, e.getMessage());
+            throw new IllegalStateException("图片搜索失败（" + engine + "）：" + e.getMessage()
+                    + "。可以换关键词，或换 engine（baidu / bing / so）重试。");
+        }
+        if (items.isEmpty()) {
+            throw new IllegalStateException("图片搜索没有结果（" + engine + "）：可能被要求人机验证，或关键词太生僻。");
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("引擎：").append(label).append("　关键词：").append(q).append('\n');
+        sb.append("返回 ").append(items.size()).append(" 张（下面是图片直链，可直接下载）：\n\n");
+        for (int i = 0; i < items.size(); i++) {
+            String[] item = items.get(i);
+            sb.append(i + 1).append(". ").append(item[0].isBlank() ? "（无标题）" : item[0]).append('\n');
+            sb.append("   ").append(item[1]).append('\n');
+        }
+        log.info("[web-content] image_search ok engine={} query={} items={}", engine, q, items.size());
+        return JsonNodeFactory.instance.textNode(sb.toString());
+    }
+
+    // ---------------- image_search：百度 ----------------
+
+    private List<String[]> searchBaiduImages(String query, int limit) throws IOException {
+        String enc = URLEncoder.encode(query, StandardCharsets.UTF_8);
+        String url = BAIDU_IMAGE_URL
+                + "?tn=resultjson_com&ipn=rj&ct=201326592&fp=result&queryWord=" + enc
+                + "&cl=2&lm=-1&ie=utf-8&oe=utf-8&st=-1&word=" + enc
+                + "&pn=0&rn=" + Math.min(limit * 3, 60);
+        Request request = new Request.Builder()
+                .url(url)
+                .header("User-Agent", BROWSER_UA)
+                .header("Accept-Language", "zh-CN,zh;q=0.9")
+                .header("Referer", "https://image.baidu.com/")
+                .get()
+                .build();
+        try (Response response = http.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                throw new IllegalStateException("HTTP " + response.code());
+            }
+            String text = response.body() == null ? "" : response.body().string();
+            return parseBaiduImages(text, limit);
+        }
+    }
+
+    /**
+     * 解析百度图片的 acjson 结果。
+     *
+     * <p>取 {@code data[].middleURL}（约 500×500 的中图，对头像足够），
+     * 没有则退到 {@code thumbURL}。标题用 {@code fromPageTitleEnc}（HTML 实体编码），
+     * 里面带 {@code <em>} 高亮标签，要剥掉。</p>
+     *
+     * <p>百度偶尔返回**非严格 JSON**（含未转义控制字符），解析失败时返回空列表
+     * 而不是抛异常 —— 上层会给出"没有结果"，这比一个看不懂的解析错误更有用。</p>
+     */
+    static List<String[]> parseBaiduImages(String json, int limit) {
+        List<String[]> out = new ArrayList<>();
+        if (json == null || json.isBlank()) {
+            return out;
+        }
+        JsonNode root;
+        try {
+            root = JsonUtils.toJsonNode(json);
+        } catch (Exception e) {
+            return out;
+        }
+        JsonNode data = root.path("data");
+        if (!data.isArray()) {
+            return out;
+        }
+        for (JsonNode d : data) {
+            if (out.size() >= limit) {
+                break;
+            }
+            if (d == null || d.isNull()) {
+                continue;
+            }
+            String img = d.path("middleURL").asText("");
+            if (img.isEmpty()) {
+                img = d.path("thumbURL").asText("");
+            }
+            if (img.isEmpty()) {
+                continue;
+            }
+            String title = d.path("fromPageTitleEnc").asText("");
+            if (title.isEmpty()) {
+                title = d.path("fromPageTitle").asText("");
+            }
+            title = decodeEntities(title).replaceAll("<[^>]+>", "").trim();
+            out.add(new String[]{title, img});
+        }
+        return out;
+    }
+
+    // ---------------- image_search：必应 ----------------
+
+    private List<String[]> searchBingImages(String query, int limit) throws IOException {
+        String url = BING_IMAGE_URL + "?q=" + URLEncoder.encode(query, StandardCharsets.UTF_8) + "&first=1";
         Request request = new Request.Builder()
                 .url(url)
                 .header("User-Agent", BROWSER_UA)
                 .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
                 .get()
                 .build();
-
         try (Response response = http.newCall(request).execute()) {
             if (!response.isSuccessful()) {
                 throw new IllegalStateException("HTTP " + response.code());
             }
             String html = response.body() == null ? "" : response.body().string();
-            List<String[]> items = parseBingImages(html, limit);
-            if (items.isEmpty()) {
-                throw new IllegalStateException("未解析到图片（页面结构可能已变，或被要求人机验证）");
-            }
-            StringBuilder sb = new StringBuilder();
-            sb.append("关键词：").append(q).append('\n');
-            sb.append("返回 ").append(items.size()).append(" 张（下面是图片直链，可直接下载）：\n\n");
-            for (int i = 0; i < items.size(); i++) {
-                String[] item = items.get(i);
-                sb.append(i + 1).append(". ");
-                if (!item[0].isBlank()) {
-                    sb.append(item[0]);
-                } else {
-                    sb.append("（无标题）");
-                }
-                sb.append('\n').append("   ").append(item[1]).append('\n');
-            }
-            log.info("[web-content] image_search ok query={} items={}", q, items.size());
-            return JsonNodeFactory.instance.textNode(sb.toString());
-        } catch (Exception e) {
-            log.warn("[web-content] image_search failed query={} reason={}", q, e.getMessage());
-            throw new IllegalStateException("图片搜索失败：" + e.getMessage()
-                    + "。可以换个关键词重试，或改用本地图库。");
+            return parseBingImages(html, limit);
         }
+    }
+
+    // ---------------- image_search：360（备用） ----------------
+
+    private List<String[]> searchSoImages(String query, int limit) throws IOException {
+        String url = SO_IMAGE_URL + "?q=" + URLEncoder.encode(query, StandardCharsets.UTF_8)
+                + "&pn=0&rn=" + Math.min(limit * 3, 60) + "&src=srp";
+        Request request = new Request.Builder()
+                .url(url)
+                .header("User-Agent", BROWSER_UA)
+                .header("Accept-Language", "zh-CN,zh;q=0.9")
+                .header("Referer", "https://image.so.com/")
+                .get()
+                .build();
+        try (Response response = http.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                throw new IllegalStateException("HTTP " + response.code());
+            }
+            String text = response.body() == null ? "" : response.body().string();
+            return parseSoImages(text, limit);
+        }
+    }
+
+    /** 解析 360 图片的 JSON（{@code list[].img / thumb}）。 */
+    static List<String[]> parseSoImages(String json, int limit) {
+        List<String[]> out = new ArrayList<>();
+        if (json == null || json.isBlank()) {
+            return out;
+        }
+        JsonNode root;
+        try {
+            root = JsonUtils.toJsonNode(json);
+        } catch (Exception e) {
+            return out;
+        }
+        JsonNode list = root.path("list");
+        if (!list.isArray()) {
+            return out;
+        }
+        for (JsonNode d : list) {
+            if (out.size() >= limit) {
+                break;
+            }
+            if (d == null || d.isNull()) {
+                continue;
+            }
+            String img = d.path("img").asText("");
+            if (img.isEmpty()) {
+                img = d.path("thumb").asText("");
+            }
+            if (img.isEmpty()) {
+                continue;
+            }
+            out.add(new String[]{d.path("title").asText("").trim(), img});
+        }
+        return out;
     }
 
     /**

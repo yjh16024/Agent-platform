@@ -148,6 +148,45 @@ class BuiltinWebContentPluginTest {
     }
 
     @Test
+    @DisplayName("图片搜索：百度 acjson 解析（middleURL / thumbURL 兜底、剥掉 em 标签）")
+    void parsesBaiduImages() {
+        String json = "{\"data\":["
+                + "{\"middleURL\":\"https://img1.baidu.com/a.jpg\",\"fromPageTitleEnc\":\"<em>白发</em>头像女动漫\"},"
+                + "{\"thumbURL\":\"https://img2.baidu.com/b.png\",\"fromPageTitle\":\"白发动漫\"},"
+                + "{\"queryEnc\":\"x\"},"
+                + "null]}";
+
+        List<String[]> items = BuiltinWebContentPlugin.parseBaiduImages(json, 10);
+
+        // 后两条不是图片（一条只有 queryEnc、一条是 null），必须被跳过
+        assertEquals(2, items.size());
+        assertEquals("白发头像女动漫", items.get(0)[0]);
+        assertEquals("https://img1.baidu.com/a.jpg", items.get(0)[1]);
+        assertEquals("https://img2.baidu.com/b.png", items.get(1)[1]);
+    }
+
+    @Test
+    @DisplayName("图片搜索：360 JSON 解析（img / thumb）")
+    void parsesSoImages() {
+        String json = "{\"list\":["
+                + "{\"img\":\"https://a.com/1.jpg\",\"title\":\"白发\"},"
+                + "{\"thumb\":\"https://a.com/2.png\"}]}";
+
+        List<String[]> items = BuiltinWebContentPlugin.parseSoImages(json, 10);
+
+        assertEquals(2, items.size());
+        assertEquals("https://a.com/1.jpg", items.get(0)[1]);
+        assertEquals("https://a.com/2.png", items.get(1)[1]);
+    }
+
+    @Test
+    @DisplayName("图片搜索：百度返回非严格 JSON 时返回空列表，不抛异常")
+    void baiduToleratesBrokenJson() {
+        assertTrue(BuiltinWebContentPlugin.parseBaiduImages("{\"data\":[ oops", 10).isEmpty());
+        assertTrue(BuiltinWebContentPlugin.parseBaiduImages("", 10).isEmpty());
+    }
+
+    @Test
     @DisplayName("XXE 防护：带 DOCTYPE 的 XML 必须被拒绝（不能让它读本机文件）")
     void rejectsDoctypeToPreventXxe() {
         String evil = "<?xml version=\"1.0\"?><!DOCTYPE rss [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]>"

@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.agentplatform.core.db.EmbeddedDbMigrationSmokeTest
--------------------------------------------------------------------------------
-Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.170 s -- in com.agentplatform.core.db.EmbeddedDbMigrationSmokeTest

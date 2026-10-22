@@ -1,4 +1,0 @@
--------------------------------------------------------------------------------
-Test set: com.agentplatform.core.security.rbac.RbacServiceTest
--------------------------------------------------------------------------------
-Tests run: 9, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.435 s -- in com.agentplatform.core.security.rbac.RbacServiceTest
