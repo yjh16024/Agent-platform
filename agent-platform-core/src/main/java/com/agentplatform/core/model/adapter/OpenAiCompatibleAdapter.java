@@ -81,7 +81,8 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
                 throw new BizException("MODEL_UPSTREAM_ERROR",
                         "上游模型调用失败 HTTP " + response.code() + ": " + err);
             }
-            JsonNode node = JsonUtils.toJsonNode(response.body().string());
+            String rawBody = response.body().string();
+            JsonNode node = JsonUtils.toJsonNode(rawBody);
             JsonNode message = node.path("choices").path(0).path("message");
             String content = message.path("content").asText("");
             // 思考过程：各家字段名不同，统一归一化（见 extractReasoning）
@@ -89,8 +90,28 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
             int promptTokens = node.path("usage").path("prompt_tokens").asInt(0);
             int completionTokens = node.path("usage").path("completion_tokens").asInt(0);
             List<ModelAdapter.ToolCall> toolCalls = parseToolCalls(message);
-            log.info("[model:{}] chat 完成 来源=上游 latencyMs={} toolCalls={}",
-                    providerName, System.currentTimeMillis() - start, toolCalls.size());
+            /*
+             * 诊断（2026-10-21）：thinking 模型 + 工具循环的 400 只能靠这几个数字定位。
+             *
+             * `reasoningLen=0` 说明**厂商这轮没给思考内容**（或给在别的字段名里）；
+             * `msgFields` 直接列出响应 message 里到底有哪些 key —— 一眼能看出
+             * 思考是叫 `reasoning_content`、`reasoning` 还是根本没返回。
+             */
+            log.info("[model:{}] chat 完成 来源=上游 latencyMs={} toolCalls={} reasoningLen={} msg={}",
+                    providerName, System.currentTimeMillis() - start, toolCalls.size(),
+                    reasoning.length(), briefJson(message, 300));
+
+            /*
+             * 工具轮但没解析到思考内容 → 直接甩响应原文（2026-10-21 诊断）。
+             *
+             * 这种情况下一轮回灌必然被 thinking 模型拒绝，而错误信息只说
+             * "must be passed back"，不告诉你厂商到底给了什么。打一次原文，
+             * 就能看出是"字段名不同"还是"这轮真的没有思考"。
+             */
+            if (!toolCalls.isEmpty() && reasoning.isEmpty()) {
+                log.warn("[model:{}] 工具轮没有 reasoning_content，原始响应前 500 字：{}",
+                        providerName, rawBody.length() > 500 ? rawBody.substring(0, 500) : rawBody);
+            }
             return new ChatResponse(content, promptTokens, completionTokens, 0.0,
                     System.currentTimeMillis() - start, toolCalls, reasoning);
         } catch (BizException e) {
@@ -401,7 +422,7 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
         Map<String, Object> msg = new LinkedHashMap<>();
         if (m.hasToolCalls()) {
             msg.put("role", "assistant");
-            msg.put("content", m.content());
+            msg.put("content", m.content() == null ? "" : m.content());
             List<Map<String, Object>> calls = new java.util.ArrayList<>();
             for (ModelAdapter.ToolCall c : m.toolCalls()) {
                 Map<String, Object> fn = new LinkedHashMap<>();
@@ -415,17 +436,50 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
                 calls.add(call);
             }
             msg.put("tool_calls", calls);
-            return msg;
-        }
-        if (m.isToolResult()) {
+        } else if (m.isToolResult()) {
             msg.put("role", "tool");
             msg.put("tool_call_id", m.toolCallId() == null ? "" : m.toolCallId());
             msg.put("content", m.content() == null ? "" : m.content());
+            // tool 结果消息不参与 reasoning 校验
             return msg;
+        } else {
+            msg.put("role", m.role());
+            msg.put("content", m.content() == null ? "" : m.content());
         }
-        msg.put("role", m.role());
-        msg.put("content", m.content() == null ? "" : m.content());
+
+        /*
+         * thinking 模式：**每一条 assistant 消息**都必须带 reasoning_content（2026-10-21 第三次修）。
+         *
+         * 前两版只处理了"带 tool_calls 的那条"，仍然 400。日志里的请求序列把原因摊开了：
+         *
+         *   ... user → assistant(content=…) → assistant[tool_calls][reasoning=369] → tool → tool
+         *                ↑ 这条来自**会话历史**，只有 role/content
+         *
+         * 平台**没有把每轮的思考链持久化到会话历史**，重建 history 时那些 assistant 消息里
+         * 没有 reasoning_content。而 DeepSeek 在 thinking 模式下是**逐条**校验的 ——
+         * 缺一条就整轮 400，哪怕工具轮那条带对了也没用。
+         *
+         * 历史消息拿不到真实思考（早就丢了），补空串即可：上游只校验**字段存在**，
+         * 我们上一轮已经验证过"空串也接受"。
+         */
+        if (thinkingEnabled && "assistant".equalsIgnoreCase(String.valueOf(msg.get("role")))) {
+            msg.put("reasoning_content", m.reasoning() == null ? "" : m.reasoning());
+        }
         return msg;
+    }
+
+    /**
+     * 截断打印一个 JSON 节点（诊断用）。
+     *
+     * <p>用 {@code toString()} 而不是遍历字段名：Jackson 3 的 {@code JsonNode} 没有
+     * {@code fieldNames()}（试过，编译不过），而字符串形式既能看到 key 也能看到值。</p>
+     */
+    private static String briefJson(JsonNode node, int max) {
+        if (node == null || node.isMissingNode()) {
+            return "-";
+        }
+        String s = node.toString();
+        return s.length() > max ? s.substring(0, max) + "…" : s;
     }
 
     /**
@@ -523,6 +577,7 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
     private Response postWithThinkingFallback(String url, ChatRequest req, String key, boolean stream)
             throws IOException {
         Map<String, Object> body = buildChatBody(req, stream, true);
+        logToolRoundIfAny(body);
         Response response = postWithRetry(url, body, key);
         if (response.code() == 400 && thinkingEnabled && ThinkingParams.hasParams(providerName)) {
             String err = readBody(response);
@@ -532,6 +587,61 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
             response = postWithRetry(url, buildChatBody(req, stream, false), key);
         }
         return response;
+    }
+
+    /**
+     * 诊断：打印工具轮请求的消息序列（2026-10-21）。
+     *
+     * <p>只在"请求里含 tool_calls"时输出，形如：</p>
+     * <pre>
+     *   user(content=…) → assistant(content="")[reasoning=982][tool_calls] → tool[tool_result](content=…)
+     * </pre>
+     *
+     * <p>如果 `assistant` 那段**没有** `[reasoning=…]`，说明字段没被写进请求；
+     * 如果写了却仍然 400，问题就在顺序或其它必填字段上。</p>
+     */
+    private void logToolRoundIfAny(Map<String, Object> body) {
+        Object raw = body.get("messages");
+        if (!(raw instanceof java.util.List<?> list)) {
+            return;
+        }
+        boolean hasToolCalls = false;
+        for (Object o : list) {
+            if (o instanceof Map<?, ?> m && m.containsKey("tool_calls")) {
+                hasToolCalls = true;
+                break;
+            }
+        }
+        if (!hasToolCalls) {
+            return;
+        }
+        StringBuilder sb = new StringBuilder();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) {
+                continue;
+            }
+            sb.append(m.get("role"));
+            if (m.containsKey("content")) {
+                Object c = m.get("content");
+                if (c == null) {
+                    sb.append("(content=null)");
+                } else {
+                    sb.append(String.valueOf(c).isEmpty() ? "(content=\"\")" : "(content=…)");
+                }
+            }
+            if (m.containsKey("reasoning_content")) {
+                Object rc = m.get("reasoning_content");
+                sb.append("[reasoning=").append(rc == null ? "null" : String.valueOf(rc).length()).append(']');
+            }
+            if (m.containsKey("tool_calls")) {
+                sb.append("[tool_calls]");
+            }
+            if (m.containsKey("tool_call_id")) {
+                sb.append("[tool_result]");
+            }
+            sb.append(" → ");
+        }
+        log.info("[model:{}] 工具轮请求 messages: {}", providerName, sb);
     }
 
     /**

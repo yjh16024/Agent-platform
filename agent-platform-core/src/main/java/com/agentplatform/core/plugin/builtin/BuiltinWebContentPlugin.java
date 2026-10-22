@@ -23,8 +23,10 @@ import org.w3c.dom.NodeList;
 import javax.xml.parsers.DocumentBuilderFactory;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -62,6 +64,21 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
     public static final String TOOL_FETCH = "web_fetch";
     public static final String TOOL_BILI_HOT = "bilibili_hot";
     public static final String TOOL_RSS = "rss_fetch";
+
+    /**
+     * 图片搜索（2026-10-21）。
+     *
+     * <p><b>为什么需要它</b>：`web_search` 返回的是**网页**列表，而"给自己换个头像"
+     * 需要的是一张**能直接下载的图片直链**。模型在 QQ 插件里就是这样卡住的 ——
+     * 它明确说「I don't actually have an image search tool」，只能拿网页地址干瞪眼。</p>
+     *
+     * <p>走必应图片搜索的页面抓取：不需要密钥（和 {@code web_search} 的 Bing 后端同一个思路），
+     * 页面里每张图都带 {@code murl} 字段（原始图片地址），实测一次能拿到 30 条。</p>
+     */
+    public static final String TOOL_IMAGE = "image_search";
+
+    /** 必应图片搜索（页面抓取，零配置）。 */
+    private static final String BING_IMAGE_URL = "https://cn.bing.com/images/search";
 
     /** 抓页面必须带浏览器 UA：默认 UA 常被返回简化页或验证码页。 */
     private static final String BROWSER_UA =
@@ -160,6 +177,22 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
                 .put("description", "每条摘要最多多少字符，默认 200");
         rssSchema.putArray("required").add("url");
 
+        ObjectNode imgSchema = mapper.createObjectNode();
+        imgSchema.put("type", "object");
+        ObjectNode imgProps = imgSchema.putObject("properties");
+        imgProps.putObject("query")
+                .put("type", "string")
+                .put("description", "图片搜索关键词，越具体越好（例如「银白发少年 插画 头像」而不是「好看」）");
+        imgProps.putObject("limit")
+                .put("type", "integer")
+                .put("description", "返回几张，默认 10，上限 20");
+        imgProps.putObject("site")
+                .put("type", "string")
+                .put("description", "限定站点（强烈建议填）。找头像/插画/壁纸时传 duitang.com —— "
+                        + "堆糖是头像站，实测 90% 结果来自它自己的图床且能直接下载。"
+                        + "注意：Bing 只对部分站点认 site: 语法（huaban、pixiv 会被忽略并退回全网搜索）");
+        imgSchema.putArray("required").add("query");
+
         return List.of(
                 new PluginTool(TOOL_FETCH,
                         "读取一个网页的正文内容。当用户给出链接、或你需要确认某篇文章/某条新闻的具体内容时使用。"
@@ -179,7 +212,132 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
                                 + "（例如微博热搜 /weibo/search/hot、抖音热榜 /douyin/hot、"
                                 + "B 站 UP 主 /bilibili/user/video/:uid）。",
                         rssSchema,
-                        this::handleRss));
+                        this::handleRss),
+                new PluginTool(TOOL_IMAGE,
+                        "搜索网络图片，返回**可以直接下载的图片直链**（jpg/png/gif/webp）与标题。"
+                                + "需要一张具体的图时用它（例如换头像、找配图）—— "
+                                + "注意它和 web_search 的区别：web_search 给的是网页地址，"
+                                + "这个给的是图片本身的地址，可以直接拿去下载/设置头像。"
+                                + "返回的是**地址列表**（你读到的是文字）；如果你想把某张发给对方看，"
+                                + "用 `[发图 <图片地址>]`，插件会把那张图真的发出去。",
+                        imgSchema,
+                        this::handleImageSearch));
+    }
+
+    // ---------------- image_search ----------------
+
+    /**
+     * 必应图片搜索（页面抓取，2026-10-21）。
+     *
+     * <p>解析思路：结果页里每张图对应一个 {@code <a class="iusc" m="{...}">}，
+     * 它的 {@code m} 属性是段 JSON（HTML 实体转义过），其中 {@code murl} 是**原始图片地址**、
+     * {@code t} 是标题。只保留带图片扩展名的地址 —— 少数结果指向网页而不是图。</p>
+     *
+     * <p>代价与 {@code web_search} 的 Bing 后端一致：页面改版会让解析失效，届时抛异常
+     * 让模型知道"这次没搜到"，而不是返回空列表被它当成"没有这张图"。</p>
+     */
+    private JsonNode handleImageSearch(JsonNode args, PluginContext ctx) {
+        String query = args == null ? null : args.path("query").asText(null);
+        if (query == null || query.isBlank()) {
+            throw new IllegalArgumentException("参数 query 不能为空");
+        }
+        int limit = clamp(args.path("limit").asInt(10), 1, 20);
+        String q = query.trim();
+        /*
+         * 站点限定（2026-10-22）。
+         *
+         * 通用图片搜索对"头像"这种需求几乎没有用 —— 实测搜「动漫少女头像 白发 插画」
+         * 返回的是"白银还有近 20% 上涨空间""9999 银粒定制""张又侠致辞"，
+         * 因为"银白发"被引擎切成了"白银"。加 `site:duitang.com` 后 29 张里 26 张
+         * 来自堆糖图床，标题全是"动漫头像 - 堆糖"。
+         */
+        String site = args.path("site").asText("").trim();
+        if (!site.isEmpty()) {
+            // 只接受域名形状，避免把任意字符拼进查询
+            if (!site.matches("^[A-Za-z0-9.\\-]+$")) {
+                throw new IllegalArgumentException("site 只接受域名，例如 duitang.com");
+            }
+            q = q + " site:" + site;
+        }
+        String url = BING_IMAGE_URL + "?q=" + URLEncoder.encode(q, StandardCharsets.UTF_8) + "&first=1";
+
+        Request request = new Request.Builder()
+                .url(url)
+                .header("User-Agent", BROWSER_UA)
+                .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+                .get()
+                .build();
+
+        try (Response response = http.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                throw new IllegalStateException("HTTP " + response.code());
+            }
+            String html = response.body() == null ? "" : response.body().string();
+            List<String[]> items = parseBingImages(html, limit);
+            if (items.isEmpty()) {
+                throw new IllegalStateException("未解析到图片（页面结构可能已变，或被要求人机验证）");
+            }
+            StringBuilder sb = new StringBuilder();
+            sb.append("关键词：").append(q).append('\n');
+            sb.append("返回 ").append(items.size()).append(" 张（下面是图片直链，可直接下载）：\n\n");
+            for (int i = 0; i < items.size(); i++) {
+                String[] item = items.get(i);
+                sb.append(i + 1).append(". ");
+                if (!item[0].isBlank()) {
+                    sb.append(item[0]);
+                } else {
+                    sb.append("（无标题）");
+                }
+                sb.append('\n').append("   ").append(item[1]).append('\n');
+            }
+            log.info("[web-content] image_search ok query={} items={}", q, items.size());
+            return JsonNodeFactory.instance.textNode(sb.toString());
+        } catch (Exception e) {
+            log.warn("[web-content] image_search failed query={} reason={}", q, e.getMessage());
+            throw new IllegalStateException("图片搜索失败：" + e.getMessage()
+                    + "。可以换个关键词重试，或改用本地图库。");
+        }
+    }
+
+    /**
+     * 从必应图片结果页里抽「标题 + 原始图片地址」。
+     *
+     * <p><b>必须以结果卡片为单位解析</b>（2026-10-21 修正）。第一版是"全局找 murl，
+     * 再往前 400 字符找标题"，结果标题全是空的 —— 实测必应的 {@code m} 属性里
+     * {@code t}（标题）在 {@code murl} **之后**，而整张卡片有 1200~1600 字符，
+     * 往前找既方向错、范围也不够。</p>
+     *
+     * <p>现在按 {@code <a ... class="iusc" ...>} 切块，每块里各取各的，天然对齐。</p>
+     */
+    static List<String[]> parseBingImages(String html, int limit) {
+        List<String[]> out = new ArrayList<>();
+        if (html == null || html.isEmpty()) {
+            return out;
+        }
+        Matcher card = Pattern.compile("(?s)<a[^>]+class=\"iusc\"[^>]*>").matcher(html);
+        while (card.find() && out.size() < limit) {
+            String block = card.group();
+            Matcher m = Pattern.compile("murl&quot;:&quot;(https?://[^&]+)&quot;").matcher(block);
+            if (!m.find()) {
+                continue;
+            }
+            String imgUrl = decodeEntities(m.group(1));
+            // 只保留真正的图片地址；少数 murl 指向网页
+            if (!imgUrl.matches("(?i).*\\.(jpe?g|png|gif|webp)(\\?.*)?$")) {
+                continue;
+            }
+            /*
+             * `t&quot;:&quot;` 不会误匹配 `turl` / `cturl`（那两者 `t` 后面是别的字母），
+             * 所以这里取到的就是标题。多个时取最后一个（`t` 通常在属性末尾）。
+             */
+            String title = "";
+            Matcher tm = Pattern.compile("t&quot;:&quot;([^&]{1,120})&quot;").matcher(block);
+            while (tm.find()) {
+                title = decodeEntities(tm.group(1));
+            }
+            out.add(new String[]{title, imgUrl});
+        }
+        return out;
     }
 
     // ---------------- web_fetch ----------------

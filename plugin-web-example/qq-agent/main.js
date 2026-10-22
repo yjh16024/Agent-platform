@@ -67,8 +67,27 @@ const selfState = {
   /** 当前昵称 / 签名（给模型看"现状"，它才知道要不要改）。 */
   nicknameValue: '',
   signatureValue: '',
+  /**
+   * 它"想要一个什么样的头像"（2026-10-21）。
+   *
+   * <p>与"改不改头像"分开存：模型说"这轮不改"时，这个愿望依然有意义 ——
+   * 下次自我检视时把它呈现回去，它才有连续的想法，而不是每次凭空想个关键词。</p>
+   */
+  avatarWish: '',
+  /**
+   * 一次性资料是否已初始化（2026-10-21）。
+   *
+   * <p>`sex` / `personalNote` 只定一次：它们不像签名那样经常变，反复改反而可疑。
+   * 置位后提示词里不再提这两项，模型也不会再被问。</p>
+   *
+   * <p>字段名沿用 NapCat 的 `set_qq_profile` —— 它**只开放 nickname / personal_note / sex
+   * 三项**，生日、学校、公司、家乡这些接口不存在（不是漏做）。</p>
+   */
+  profileInit: false,
+  sexValue: '',
+  personalNoteValue: '',
   /*
-   * 下面三个**必须在声明里出现**：`loadSelfState` 是按 `Object.keys(selfState)`
+   * 下面几个**必须在声明里出现**：`loadSelfState` 是按 `Object.keys(selfState)`
    * 回填的，动态加上的属性重启后就丢了（冷却会被重置 → 行为变得可疑）。
    */
   /** 上次写日记的时间。 */
@@ -132,6 +151,15 @@ const DEFAULTS = {
   agentId: '',
   // 白名单：空数组 = 全部忽略（默认安全）。只有列出的才处理。
   privateWhitelist: [],
+  /*
+   * 群白名单（2026-10-21 补进 DEFAULTS —— 之前一直漏了）。
+   *
+   * <p><b>为什么是必修</b>：manifest 里早就有这个配置项，但 DEFAULTS 从没声明它。
+   * `saveConfig` 只接受 DEFAULTS 里出现过的 key，于是用户在设置面板里改的群号
+   * 会被**静默丢弃**（看起来保存成功，实际没生效）；若配置文件里也没有该字段，
+   * `cfg.groupWhitelist` 为 undefined → `parseIds` 返回空数组 → **群聊永远不回复**。</p>
+   */
+  groupWhitelist: [],
   // 回复概率：私聊 0.9（几乎都回，但不是 100%），群聊 0.55（经常不理）
   replyPrivate: 0.9,
   replyGroup: 0.55,
@@ -152,8 +180,11 @@ const DEFAULTS = {
   maxSegments: 3,
   maxSegmentChars: 60,
   typing: true,
-  // 每轮请求带的一段额外人格补充（可留空）
-  systemPromptPrefix: '',
+  /*
+   * 这里原本有个 `systemPromptPrefix`（每轮请求附带的人格补充），2026-10-21 删除。
+   * 人格已归平台智能体页统一管理 —— 插件再插一段，只会让同一个智能体在不同入口
+   * 表现不一致。旧配置文件里若还留着这个字段，`saveConfig` 会顺手过滤掉。
+   */
   // 表情包（2026-10-20，P2）：本地图片目录，回复后按概率附一张
   stickerDir: '',
   stickerChance: 0.25,
@@ -207,13 +238,13 @@ const DEFAULTS = {
   /** 总开关。默认关 —— 开着就像"AI 突然找你聊天"。 */
   proactiveEnabled: false,
   /**
-   * 两次主动发言的检查间隔（小时，区间随机）。
+   * 两次主动发言的间隔（小时，区间随机）。
    *
-   * 参考值来自同类项目实测：45~110 分钟检查一次，而不是 12~48 小时"发一次"。
-   * 检查不等于发送 —— 真正会不会发由下面的概率与"安静时长"决定。
-   * 固定间隔会让它像闹钟一样准点出现，所以必须随机。
+   * 拆成两个数字而不是数组：**表单不支持数组**，合并成一个字段就只能手改
+   * `config.json`。默认 2~8 小时 —— 短于 2 小时会显得粘人，长于一天又像不存在。
    */
-  proactiveGapHours: [0.75, 1.8],
+  proactiveGapHoursMin: 2,
+  proactiveGapHoursMax: 8,
   /** 对方必须安静这么久（分钟）才考虑主动 —— 正在聊天时不要打断。 */
   proactiveQuietMinutes: 15,
   /** 每次检查真正发送的概率（0~1）。0.35 意味着多数检查都会放弃。 */
@@ -810,7 +841,15 @@ async function maybeUpdateOnlineStatus() {
     return;
   }
   try {
-    await call('set_online_status', { status: target, ext_status: 0 }, 10000);
+    /*
+     * 三个参数缺一不可（2026-10-21 修）。
+     *
+     * 之前只传 `status` + `ext_status`，NapCat 每次都回
+     * `retcode=1400 Schema compilation error: Expected required property`，
+     * 而心跳每 10 分钟跑一次 —— 等于每 10 分钟往日志里刷一条错误。
+     * `battery_status` 是电量档位（0 = 不显示具体电量）。
+     */
+    await call('set_online_status', { status: target, ext_status: 0, battery_status: 0 }, 10000);
     selfState.onlineStatus = target;
     saveSelfState();
     diag(`online status -> ${target === 10 ? '在线' : '离开'}`);
@@ -1420,11 +1459,29 @@ async function processMessage(e, text, images) {
       await humanSend(isPrivate, peer, body);
     }
     if (sendImg.keyword !== null) {
-      const b64 = pickGalleryImage(sendImg.keyword);
-      if (b64) {
-        await sendImageMsg(isPrivate, peer, b64);
+      /*
+       * `[发图 xxx]` 现在支持两种来源（2026-10-21）：
+       *   · 以 http(s) 开头 → **直接发这张网络图**（搜索结果里的候选图就是这种方式发出去的）
+       *   · 其它 → 当关键词，去她自己的相册里找
+       *
+       * 之前只能发相册图，所以模型说"你帮我掌个眼"时**一张图都发不出来** ——
+       * 它选了图却没有渠道给对方看。
+       */
+      const kw = sendImg.keyword;
+      if (/^https?:\/\//i.test(kw)) {
+        const b64 = await fetchImageAsBase64(kw);
+        if (b64) {
+          await sendImageMsg(isPrivate, peer, b64);
+        } else {
+          diag(`send image failed (url): ${kw.slice(0, 80)}`);
+        }
       } else {
-        diag(`gallery: 没有匹配「${sendImg.keyword}」的图`);
+        const b64 = pickGalleryImage(kw);
+        if (b64) {
+          await sendImageMsg(isPrivate, peer, b64);
+        } else {
+          diag(`gallery: 没有匹配「${kw}」的图`);
+        }
       }
     }
     stats.replied++;
@@ -1740,6 +1797,20 @@ function extractCollect(text) {
   return { text: raw.replace(m[0], '').trim(), reason: m[1].trim() };
 }
 
+/**
+ * 最近更新过的几条印象（2026-10-21）。
+ *
+ * <p>给自我检视用：它要"按对这个人的认知"做事（主动搭话、以后点赞评论），
+ * 就得先知道自己怎么看这些人。只取最近更新的，避免上下文被所有好友塞满。</p>
+ */
+function recentImpressions(limit = 5) {
+  return Object.entries(impressions)
+    .filter(([, v]) => v && v.text)
+    .sort((a, b) => (b[1].updatedAt || 0) - (a[1].updatedAt || 0))
+    .slice(0, limit)
+    .map(([peer, v]) => ({ peer, text: v.text }));
+}
+
 /** 联系人 → { text, updatedAt, msgCount } */
 let impressions = {};
 
@@ -1874,9 +1945,16 @@ function loadSelfState() {
   try {
     const raw = JSON.parse(fs.readFileSync(selfStatePath(), 'utf8'));
     for (const k of Object.keys(selfState)) {
-      // 数字与字符串两种都要接受（时间是 number，昵称/签名是 string）
-      if (typeof raw[k] === 'number' || typeof raw[k] === 'string') {
-        selfState[k] = raw[k];
+      /*
+       * number / string / boolean 都要接受（2026-10-21 补 boolean）。
+       *
+       * `profileInit` 是布尔型"一次性资料是否已初始化"。漏掉它的话每次重启
+       * 都会被重置成 false → 模型被重新问一次、资料被重新设一遍 ——
+       * 两次答案不同就变成了反复改资料，那正是最可疑的账号行为。
+       */
+      const v = raw[k];
+      if (typeof v === 'number' || typeof v === 'string' || typeof v === 'boolean') {
+        selfState[k] = v;
       }
     }
     diag(`self-state loaded: ${JSON.stringify(selfState)}`);
@@ -1947,7 +2025,21 @@ async function fetchImageAsBase64(url) {
     return null;
   }
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(20000) });
+    /*
+     * 带浏览器 UA + Referer（2026-10-21）。
+     *
+     * 从图片站抓下来的图**经常有防盗链**：默认的 Node UA 会被直接回 403，
+     * 或者回一张"禁止外链"的占位图。带上 UA 和来源页，成功率明显提高。
+     */
+    const res = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+          + '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Referer': new URL(url).origin + '/',
+        'Accept': 'image/avif,image/webp,image/*,*/*;q=0.8',
+      },
+      signal: AbortSignal.timeout(20000),
+    });
     if (!res.ok) {
       diag(`avatar url HTTP ${res.status}: ${url.slice(0, 80)}`);
       return null;
@@ -1976,23 +2068,123 @@ async function fetchImageAsBase64(url) {
  * 自我检视的独白不该污染某个联系人的上下文。</p>
  */
 async function askSelfDecision() {
+  /*
+   * 自我认知素材（2026-10-21）。
+   *
+   * 自我管理用的是**独立会话** `qq:selfmanage:<uin>` —— 它没有跟任何人的对话历史，
+   * 平台的按会话记忆在这里取不到东西。所以"它最近经历了什么"只能从这两处补：
+   *   · 日记：它自己写下的心情与琐事（最直接的自我认知）
+   *   · 印象：它对常聊那几个人的判断（决定它怎么对人）
+   * 人格本身在系统提示词里，不需要也不该在这里重复。
+   */
+  const diaryLines = readDiary(3)
+    .map((d) => `${d.time}${d.mood ? `（${d.mood}）` : ''} ${d.text}`);
+  const impLines = recentImpressions(5).map((i) => `${i.peer}：${i.text}`);
+
+  /*
+   * 一次性资料（2026-10-21）：NapCat 的 `set_qq_profile` 只开放
+   * nickname / personal_note / sex 三项。nickname 归日常改，剩下两个定为一次性 ——
+   * 初始化过一次就不再问，提示词里也不再出现。
+   */
+  const needProfileInit = !selfState.profileInit;
+
   const prompt = [
     '（这是一次自我检视，对方看不到这条消息，不需要回复任何人。）',
     `你现在的昵称是「${selfState.nicknameValue || '（未记录）'}」，`
       + `签名是「${selfState.signatureValue || '（空）'}」。`,
+    /*
+     * 上一次的想法（2026-10-21 加）：不记得上次想要什么，每次就都是"随便想一个"。
+     * 给它连续性，它才可能慢慢形成一个稳定的自我形象。
+     */
+    `你上次说，自己想要的头像是「${selfState.avatarWish || '（还没说过）'}」。`,
+    ...(diaryLines.length > 0 ? ['【你最近写的日记】', ...diaryLines] : []),
+    ...(impLines.length > 0 ? ['【你对这些人的印象】', ...impLines] : []),
     '如果你此刻想换昵称 / 签名 / 头像，就给出新的；不想换就都留 null。',
     '像真人一样：资料很少变，绝大多数时候应该什么都不改。',
-    '想换头像时，**你可以先调用 image_gen 工具生成一张**（把「你想要的画面」当提示词），',
-    '然后用工具返回的图片直链填 avatarUrl。也可以用 web_search 找现成的图。',
-    '如果你只是描述画面而不想调用工具，就把描述写进 avatarHint，我会去本地图库里找相近的。',
+    /*
+     * 换头像（2026-10-21 第二次调整）。
+     *
+     * 上一版只说"把你想要的画面当提示词"，跳过了最关键的一步 —— **想清楚自己要什么**。
+     * 模型于是随便想个词（"可爱 头像"）就去搜，搜到啥用啥。
+     * 现在拆成三步：先认识自己、再定具体画面、最后才动手拿图。
+     */
+    '★ 想换头像时，别抓起一张就用，先想清楚再动手：',
+    '  第一步 · 我是谁：你是什么风格的存在？这个头像想让人看到你的哪一面？',
+    '           —— 从你自己的人格出发去想，不要想"一般人会喜欢什么"。',
+    '  第二步 · 我要什么：用一句**具体**的话说出你要的画面。',
+    '           要「夜里亮着一盏暖灯的书桌」这种，不要「好看」「可爱」这种谁都能用的词。',
+    '  第三步 · 拿图：**首选 `image_search`**，两个参数都要给对：',
+    '           · query：要**具体、无歧义**。别写「银白发」（会被搜成白银行情！），',
+    '             要写「动漫 白发 少女 插画 头像」这种。',
+    '           · site：填 `duitang.com` —— 堆糖是头像站，结果干净（实测 29 张里 26 张',
+    '             是它自己的图床）、且图片能直接下载。（site 留空会退回全网搜索，噪声很大。）',
+    '           从返回的图里挑一张，把地址填进 avatarUrl。',
+    '           ⚠️ `web_search` 给的是网页地址，不是图片，**不能**拿来当头像。',
+    '           如果有 `image_gen` 工具，也可以生成一张。',
+    '  （本地图库只是兜底，可能是空的，别指望它。）',
+    '  ⚠️ 先看一眼上面列出的可用工具：**既没有 image_search 也没有 image_gen 时别硬找**，',
+    '     这轮头像留 null，只写 avatarWish 就好 —— 硬拿网页地址当头像会失败。',
+    /*
+     * 纠正一个误解（2026-10-21）：它曾经说"我这边读不了图，只凭关键词猜，很容易挑错"，
+     * 于是不敢换。其实它**是支持视觉的**（对方发图片它能描述）；只是 image_search
+     * 返回的是地址文本，不是图片内容本身。说清楚，它就不会因为"看不到"而卡住。
+     */
+    '  ℹ️ 你自己是能看图的（对方发图片时你能描述内容）；但 image_search 返回的是**地址**、',
+    '     不是图本身。按标题挑一个就行，不必因此犹疑。',
+    /*
+     * avatarWish：这轮改不改都要写。
+     * 插件会存下来，下次自我检视时回给它看 —— 这是它"对自己的想法"能延续的关键。
+     */
+    '另外请回报 avatarWish：一句话写下你现在「想要什么风格的头像」，'
+      + '即使这轮不换也要写，下次我会把它拿给你看。',
+    /*
+     * 候选图（2026-10-21）：让"你帮我掌个眼"这句话真的能配上图。
+     *
+     * 之前它在自我管理里说"我挑了几个，你帮我看看"，但**一张图都发不出来** ——
+     * 这条路径只解析 JSON，`[发图]` 那套标记根本不生效。现在给它一个专门的字段，
+     * 插件会把里面的地址下载下来发给对方。
+     */
+    '如果你挑不准、想听对方的意见，就把 1~2 个候选图地址写进 previewUrls —— '
+      + '我会把这几张图发过去（这样可以，不必自己拿主意）。',
+    ...(needProfileInit
+      ? [
+          '── 还有一件事，只做这一次 ──',
+          '你的账号资料还没初始化过。请顺手定两件**定了就不再改**的事：',
+          '  · sex：你的性别代码（1=男，2=女，0=未知）',
+          '  · personalNote：一句个人说明（介绍你是谁，一两句就行）',
+        ]
+      : []),
     '只输出一行 JSON，不要解释、不要代码块：',
     '{"nickname": "新昵称或 null", "signature": "新签名或 null", '
-      + '"avatarUrl": "图片直链或 null", "avatarHint": "画面描述或 null"}',
+      + '"avatarUrl": "图片直链或 null", "avatarHint": "画面描述或 null", '
+      + '"avatarWish": "一句你想要的头像描述", "previewUrls": ["候选图地址"]'
+      + (needProfileInit ? ', "sex": "1/2/0", "personalNote": "一句个人说明"' : '') + '}',
   ].join('\n');
 
   const answer = await askPlatform(`qq:selfmanage:${stats.uin}`, prompt, [], null);
   diag(`self-manage decision raw: ${JSON.stringify((answer || '').slice(0, 120))}`);
   return parseDecision(answer);
+}
+
+/** 把性别归一成 NapCat 认的代码（"2"/2 → "2"；认不出返回 null）。 */
+function normalizeSex(v) {
+  const s = v == null ? '' : String(v).trim().toLowerCase();
+  if (['1', '2', '0'].includes(s)) {
+    return s;
+  }
+  /*
+   * 兼容中文/英文写法（模型不一定按代码给）。
+   *
+   * ⚠️ 这里**不能用** `/m/i` 这种单字母模糊匹配 —— "woman" 里也有 m，
+   * 会把女性判成男性。只认完整词与中文。
+   */
+  if (/男|^male$|^m$/i.test(s)) {
+    return '1';
+  }
+  if (/女|female/i.test(s)) {
+    return '2';
+  }
+  return null;
 }
 
 /** 解析模型给的 JSON（宽松：容忍代码块围栏、前后废话、"null" 字符串）。 */
@@ -2015,6 +2207,19 @@ function parseDecision(text) {
       signature: pick(j.signature),
       avatarUrl: pick(j.avatarUrl),   // 模型用 image_gen / web_search 拿到的直链
       avatarHint: pick(j.avatarHint), // 只给描述，从本地图库找
+      // 「我想要什么头像」—— 与这轮改不改无关，用来形成跨轮次的想法连续性
+      avatarWish: pick(j.avatarWish),
+      // 一次性资料（可能带引号的数字，如 "2" → 归一成 "1"/"2"/"0"）
+      sex: normalizeSex(j.sex),
+      // 个人说明：只定一次
+      personalNote: pick(j.personalNote),
+      // 拿不准时想发给对方看的候选图（最多 2 张，只收 http/https）
+      previewUrls: Array.isArray(j.previewUrls)
+        ? j.previewUrls
+          .map((u) => String(u == null ? '' : u).trim())
+          .filter((u) => /^https?:\/\//i.test(u))
+          .slice(0, 2)
+        : [],
     };
   } catch (e) {
     diag(`parse decision failed: ${e.message}`);
@@ -2055,13 +2260,52 @@ async function maybeSelfManage() {
 
   const decision = await askSelfDecision();
   selfState.lastCheck = now;
+  /*
+   * 先把「头像愿望」存下来再管改不改（2026-10-21）。
+   *
+   * 两个原因：① 它说"这轮不改"时，愿望依然有效，下次要呈现给它看；
+   * ② 提前落盘 —— 万一后面的 set_qq_avatar 抛异常，至少想法没丢。
+   */
+  if (decision && decision.avatarWish) {
+    const prevWish = selfState.avatarWish || '';
+    selfState.avatarWish = decision.avatarWish;
+    if (prevWish !== decision.avatarWish) {
+      diag(`self-manage: 头像愿望 -> 「${decision.avatarWish}」`);
+    }
+  }
+  saveSelfState();
   if (!decision) {
-    saveSelfState();
     diag('self-manage: 模型没给出可用决定，本轮跳过');
     return;
   }
 
   let changed = 0;
+
+  /*
+   * 一次性资料（2026-10-21）：只在 profileInit=false 时做，做完打标记、之后永不再问。
+   *
+   * NapCat 的 `set_qq_profile` 只开放 nickname / personal_note / sex。nickname 归日常改，
+   * 这两个（性别、个人说明）属于"定一次就够"的 —— 反复改反而是异常账号特征。
+   */
+  if (!selfState.profileInit && (decision.sex || decision.personalNote)) {
+    const patch = {};
+    if (decision.sex) {
+      patch.sex = Number(decision.sex);
+    }
+    if (decision.personalNote) {
+      patch.personal_note = decision.personalNote;
+    }
+    try {
+      await call('set_qq_profile', patch, 15000);
+      selfState.profileInit = true;
+      selfState.sexValue = decision.sex || '';
+      selfState.personalNoteValue = decision.personalNote || '';
+      changed++;
+      diag(`self-manage: 一次性资料已初始化 sex=${decision.sex || '-'} personalNote=${decision.personalNote || '-'}`);
+    } catch (e) {
+      diag(`self-manage profile init failed: ${e.message}`);
+    }
+  }
 
   if (nicknameDue && decision.nickname) {
     try {
@@ -2108,8 +2352,50 @@ async function maybeSelfManage() {
     }
   }
 
+  /*
+   * 候选图（2026-10-21）：它说"你帮我掌个眼"时，真的把图发过去。
+   *
+   * 之前它只在文字里说"我挑了几个"，**一张图都没发** —— 因为自我管理只解析 JSON，
+   * `[发图]` 那套标记在这条路径上不生效。现在用 `previewUrls` 字段补上。
+   */
+  if (decision.previewUrls && decision.previewUrls.length > 0) {
+    const peer = pickPreviewPeer();
+    if (peer) {
+      let sent = 0;
+      for (const url of decision.previewUrls) {
+        const b64 = await fetchImageAsBase64(url);
+        if (b64) {
+          await sendImageMsg(true, peer, b64);
+          sent++;
+        }
+      }
+      diag(`self-manage: 候选图 ${sent}/${decision.previewUrls.length} 张已发给 ${peer}`);
+    } else {
+      diag('self-manage: 有候选图但没有可发的人（近期无人私聊过），跳过');
+    }
+  }
+
   saveSelfState();
   diag(`self-manage: 本轮决定改动 ${changed} 项（模型原话已在上方记录）`);
+}
+
+/**
+ * 挑一个"最近聊过的人"，用于把候选图发过去（2026-10-21）。
+ *
+ * <p>自我管理是独处时刻，没有明确的对话对象；但"帮我看一眼这张"总得发给某个具体的人。
+ * 取最近互动的那位 —— 那最可能是它当时正在想的人。</p>
+ */
+function pickPreviewPeer() {
+  let best = null;
+  for (const [peer, rec] of recentContacts.entries()) {
+    if (!rec.isPrivate) {
+      continue;
+    }
+    if (!best || rec.lastAt > best.lastAt) {
+      best = { peer: Number(peer), lastAt: rec.lastAt };
+    }
+  }
+  return best ? best.peer : null;
 }
 
 /**
@@ -2126,8 +2412,22 @@ async function maybeProactive() {
     return;
   }
   const now = Date.now();
-  const r = cfg.proactiveGapHours || [12, 48];
-  const gapMs = (r[0] + Math.random() * Math.max(0, r[1] - r[0])) * 3600000;
+  /*
+   * 间隔从两个数字拼出来（2026-10-21 由数组改成两个可配项）。
+   * 保留对旧数组配置的兼容：万一 config.json 里还是 `proactiveGapHours: [a,b]`，
+   * 也能读出来，不会因为升级就失忆。
+   */
+  let minH;
+  let maxH;
+  if (Array.isArray(cfg.proactiveGapHours) && cfg.proactiveGapHours.length === 2) {
+    [minH, maxH] = cfg.proactiveGapHours;
+  } else {
+    minH = Number(cfg.proactiveGapHoursMin) || 2;
+    maxH = Number(cfg.proactiveGapHoursMax) || 8;
+  }
+  minH = Math.max(0.1, minH);
+  maxH = Math.max(minH, maxH);
+  const gapMs = (minH + Math.random() * (maxH - minH)) * 3600000;
   if (now - (selfState.lastProactiveAt || 0) < gapMs) {
     return;
   }

@@ -7,6 +7,7 @@ import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -91,6 +92,59 @@ class BuiltinWebContentPluginTest {
 
         assertEquals("E1", BuiltinWebContentPlugin.childText(entry, "title"));
         assertEquals("https://b.com/1", BuiltinWebContentPlugin.atomLink(entry));
+    }
+
+    @Test
+    @DisplayName("图片搜索：抽出图片直链与标题，并过滤掉指向网页的结果")
+    void parsesBingImages() {
+        // 这是必应结果页里 <a class="iusc" m="{...}"> 的真实形态（JSON 被 HTML 实体转义）
+        String html = "<a class=\"iusc\" m=\"{&quot;t&quot;:&quot;动漫头像&quot;,&quot;murl&quot;:&quot;https://x.com/a.jpg&quot;,&quot;purl&quot;:&quot;https://p.com&quot;}\">"
+                + "<a class=\"iusc\" m=\"{&quot;t&quot;:&quot;这不是图片&quot;,&quot;murl&quot;:&quot;https://x.com/page.html&quot;}\">"
+                + "<a class=\"iusc\" m=\"{&quot;t&quot;:&quot;第二张&quot;,&quot;murl&quot;:&quot;https://y.com/b.png&quot;}\">";
+
+        List<String[]> items = BuiltinWebContentPlugin.parseBingImages(html, 10);
+
+        // .html 那条必须被过滤 —— 否则模型会拿一个网页地址去当头像
+        assertEquals(2, items.size());
+        assertEquals("动漫头像", items.get(0)[0]);
+        assertEquals("https://x.com/a.jpg", items.get(0)[1]);
+        assertEquals("https://y.com/b.png", items.get(1)[1]);
+    }
+
+    @Test
+    @DisplayName("图片搜索：标题在 murl 之后也能取到（必应真实字段顺序）")
+    void parsesBingImagesWithTitleAfterMurl() {
+        /*
+         * 实测必应的 m 属性里 `t`（标题）排在 `murl` **之后**，整张卡片 1200+ 字符。
+         * 第一版"往前找 400 字符"因此全空 —— 模型拿到的只有 URL，
+         * 它的原话是"回来的都是直链，没有标题也没有预览…很容易挑错"，于是不敢换头像。
+         */
+        String html = "<a class=\"iusc\" m=\"{&quot;cid&quot;:&quot;x&quot;,"
+                + "&quot;murl&quot;:&quot;https://x.com/a.jpg&quot;,"
+                + "&quot;turl&quot;:&quot;https://x.com/thumb.jpg&quot;,"
+                + "&quot;t&quot;:&quot;动漫头像 - 堆糖&quot;}\">";
+
+        List<String[]> items = BuiltinWebContentPlugin.parseBingImages(html, 5);
+
+        assertEquals(1, items.size());
+        // turl 不能被抓成标题
+        assertEquals("动漫头像 - 堆糖", items.get(0)[0]);
+        assertEquals("https://x.com/a.jpg", items.get(0)[1]);
+    }
+
+    @Test
+    @DisplayName("图片搜索：limit 生效、空页面返回空列表不抛异常")
+    void parseBingImagesRespectsLimit() {
+        StringBuilder html = new StringBuilder();
+        for (int i = 0; i < 5; i++) {
+            // 必须带 class="iusc"：解析是按结果卡片切的，没有这个类就不是一张结果
+            html.append("<a class=\"iusc\" m=\"{&quot;t&quot;:&quot;t").append(i)
+                    .append("&quot;,&quot;murl&quot;:&quot;https://x.com/").append(i).append(".jpg&quot;}\">");
+        }
+
+        assertEquals(2, BuiltinWebContentPlugin.parseBingImages(html.toString(), 2).size());
+        assertTrue(BuiltinWebContentPlugin.parseBingImages("", 10).isEmpty());
+        assertTrue(BuiltinWebContentPlugin.parseBingImages(null, 10).isEmpty());
     }
 
     @Test

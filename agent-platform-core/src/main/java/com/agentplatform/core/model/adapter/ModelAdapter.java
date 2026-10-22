@@ -164,21 +164,52 @@ public interface ModelAdapter {
      * @param toolCallId 仅 {@code role=tool} 使用：对应 {@link ToolCall#id()}
      * @param toolCalls  仅 {@code role=assistant} 使用：本轮请求的工具调用
      */
-    record ChatMessage(String role, String content, String toolCallId, List<ToolCall> toolCalls) {
+    /*
+     * `reasoning`（2026-10-21 加）：thinking 模型的思考链。
+     *
+     * <p><b>为什么必须存</b>：DeepSeek 等模型的 thinking 模式要求 —— 把工具结果回灌给
+     * 模型时，上一轮 assistant 消息里的 `reasoning_content` 必须**原样带回**，否则直接 400：
+     * {@code The reasoning_content in the thinking mode must be passed back to the API}。</p>
+     *
+     * <p>这个错只在"模型调了工具"时出现（普通对话是单轮请求，不需要回灌），
+     * 所以一旦给模型开 `tools`，不做这件事就是必炸。</p>
+     *
+     * <p>只在"带 tool_calls 的 assistant 消息"上有意义，其他消息为 null。</p>
+     */
+    record ChatMessage(String role, String content, String toolCallId, List<ToolCall> toolCalls,
+                       String reasoning) {
 
         /** 兼容旧调用：普通文本消息。 */
         public ChatMessage(String role, String content) {
-            this(role, content, null, List.of());
+            this(role, content, null, List.of(), null);
         }
 
         /** 工具执行结果消息（回灌给模型）。 */
         public static ChatMessage tool(String toolCallId, String content) {
-            return new ChatMessage("tool", content, toolCallId, List.of());
+            return new ChatMessage("tool", content, toolCallId, List.of(), null);
         }
 
         /** 请求了工具的 assistant 消息（回灌时需原样带回，模型据此对齐 tool_call_id）。 */
         public static ChatMessage assistantToolCalls(List<ToolCall> calls) {
-            return new ChatMessage("assistant", null, null, calls == null ? List.of() : calls);
+            return assistantToolCalls(calls, null);
+        }
+
+        /**
+         * 带思考链的 assistant 工具消息（2026-10-21）。
+         *
+         * @param reasoning 上一轮模型返回的 `reasoning_content`，thinking 模型必须原样回传；
+         *                  null / 空串时不写该字段（非 thinking 模型不会因此多传东西）
+         */
+        public static ChatMessage assistantToolCalls(List<ToolCall> calls, String reasoning) {
+            /*
+             * content 用空串而不是 null（2026-10-21）。
+             *
+             * DeepSeek 的 thinking 模式对这条消息要求很严：`content`、`reasoning_content`、
+             * `tool_calls` 三者都得在。`null` 在 JSON 里是 `null`，某些网关会当成"缺失字段"，
+             * 而空串是明确"这轮没有正文"。
+             */
+            return new ChatMessage("assistant", "", null,
+                    calls == null ? List.of() : calls, reasoning);
         }
 
         public boolean isToolResult() {

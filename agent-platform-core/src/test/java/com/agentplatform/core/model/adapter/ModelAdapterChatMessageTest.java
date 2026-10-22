@@ -34,6 +34,9 @@ class ModelAdapterChatMessageTest {
 
     private final OpenAiCompatibleAdapter openai =
             new OpenAiCompatibleAdapter("test-openai", "http://localhost", "k", null, null);
+    /** 关掉思考模式的适配器：用来验证"不会给普通厂商塞 reasoning_content"。 */
+    private final OpenAiCompatibleAdapter openaiNoThink =
+            new OpenAiCompatibleAdapter("test-plain", "http://localhost", "k", null, null, false);
     private final AnthropicAdapter anthropic =
             new AnthropicAdapter("test-anthropic", "http://localhost", "k", null, null);
 
@@ -71,7 +74,8 @@ class ModelAdapterChatMessageTest {
         ModelAdapter.ChatMessage m = ModelAdapter.ChatMessage.assistantToolCalls(List.of(call));
 
         assertEquals("assistant", m.role());
-        assertNull(m.content(), "只请求工具时 content 应为空（这是 OpenAI 的合法形态）");
+        // 2026-10-21 起用空串：thinking 模型要求该字段存在，null 会被当成缺失
+        assertEquals("", m.content());
         assertTrue(m.hasToolCalls());
         assertEquals(1, m.toolCalls().size());
         assertEquals("call_1", m.toolCalls().get(0).id());
@@ -116,7 +120,8 @@ class ModelAdapterChatMessageTest {
         Map<String, Object> msg = openai.toOpenAiMessage(m);
 
         assertEquals("assistant", msg.get("role"));
-        assertNull(msg.get("content"), "带 tool_calls 时 content 允许为 null");
+        // 2026-10-21 起用空串：thinking 模型要求 content 字段存在，null 会被某些网关当成缺失
+        assertEquals("", msg.get("content"));
 
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> calls = (List<Map<String, Object>>) msg.get("tool_calls");
@@ -213,5 +218,83 @@ class ModelAdapterChatMessageTest {
     @DisplayName("Anthropic：history 为 null → 返回空列表，不抛异常")
     void anthropicToleratesNullHistory() {
         assertTrue(anthropic.toAnthropicMessages(null).isEmpty());
+    }
+
+    @Test
+    @DisplayName("★ thinking 模型：带工具调用的 assistant 消息必须回传 reasoning_content（2026-10-21 修复）")
+    void openAiPassesReasoningContentBack() {
+        JsonNode args = JSON.objectNode().put("query", "哈尔滨天气");
+        ModelAdapter.ChatMessage m = ModelAdapter.ChatMessage.assistantToolCalls(
+                List.of(new ModelAdapter.ToolCall("call_1", "web_search", args)),
+                "我需要先查一下天气再回答。");
+
+        Map<String, Object> msg = openai.toOpenAiMessage(m);
+
+        assertEquals("assistant", msg.get("role"));
+        /*
+         * 不回传就会 HTTP 400：
+         * "The `reasoning_content` in the thinking mode must be passed back to the API."
+         *
+         * 这个错**只在模型调了工具的第二轮请求**出现 —— 普通问答是单轮请求，
+         * 测不出来。所以必须专门钉一条。
+         */
+        assertEquals("我需要先查一下天气再回答。", msg.get("reasoning_content"));
+    }
+
+    @Test
+    @DisplayName("非 thinking 模型：没有 reasoning 时不要凭空塞 reasoning_content")
+    void openAiOmitsReasoningWhenAbsent() {
+        ModelAdapter.ChatMessage m = ModelAdapter.ChatMessage.assistantToolCalls(
+                List.of(new ModelAdapter.ToolCall("call_1", "calc", JSON.objectNode())));
+
+        // 用 thinkingEnabled=false 的适配器：普通厂商不认这个字段，凭空写反而可能被拒
+        Map<String, Object> msg = openaiNoThink.toOpenAiMessage(m);
+
+        assertNull(msg.get("reasoning_content"));
+    }
+
+    @Test
+    @DisplayName("★ thinking 模式：会话历史里的普通 assistant 消息也要补 reasoning_content（2026-10-21 第三次修复）")
+    void openAiAddsReasoningToHistoricalAssistant() {
+        /*
+         * 平台没把每轮思考链存进会话历史，重建 history 时这些消息只有 role/content。
+         * DeepSeek 逐条校验，缺一条整轮 400 —— 所以历史 assistant 也要补空串。
+         */
+        Map<String, Object> msg = openai.toOpenAiMessage(
+                new ModelAdapter.ChatMessage("assistant", "上一轮的回答"));
+
+        assertEquals("assistant", msg.get("role"));
+        assertTrue(msg.containsKey("reasoning_content"), "thinking 模式下 assistant 必须带这个字段");
+        assertEquals("", msg.get("reasoning_content"));
+    }
+
+    @Test
+    @DisplayName("thinking 模式：tool / user 消息不需要 reasoning_content")
+    void openAiSkipsReasoningForNonAssistant() {
+        Map<String, Object> tool = openai.toOpenAiMessage(
+                ModelAdapter.ChatMessage.tool("call_1", "42"));
+        Map<String, Object> user = openai.toOpenAiMessage(
+                new ModelAdapter.ChatMessage("user", "你好"));
+
+        assertNull(tool.get("reasoning_content"));
+        assertNull(user.get("reasoning_content"));
+    }
+
+    @Test
+    @DisplayName("★ 思考内容为空串时也必须写 reasoning_content（2026-10-21 第二次修复）")
+    void openAiWritesEmptyReasoningContent() {
+        /*
+         * 实测踩到的坑：DeepSeek 在"这轮只调工具、还没写答案"时返回的
+         * reasoning_content 是**空串**。第一版用 `!isBlank()` 判断，于是字段整个没写，
+         * 第二轮请求照样 400 —— 上游的校验是"字段必须存在"，不看内容长不长。
+         */
+        ModelAdapter.ChatMessage m = ModelAdapter.ChatMessage.assistantToolCalls(
+                List.of(new ModelAdapter.ToolCall("call_1", "web_search", JSON.objectNode())),
+                "");
+
+        Map<String, Object> msg = openai.toOpenAiMessage(m);
+
+        assertTrue(msg.containsKey("reasoning_content"), "字段必须存在，值可以为空串");
+        assertEquals("", msg.get("reasoning_content"));
     }
 }

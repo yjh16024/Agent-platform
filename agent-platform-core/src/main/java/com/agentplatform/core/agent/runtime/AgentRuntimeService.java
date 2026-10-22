@@ -717,15 +717,24 @@ public class AgentRuntimeService {
             logTo(LogLevel.INFO, LogCategory.llm, "llm.done provider=" + provider + " model=" + model
                             + " round=" + round + " latency=" + (System.currentTimeMillis() - t0) + "ms"
                             + " tokens=" + (resp.promptTokens() + resp.completionTokens())
-                            + " toolCalls=" + (resp.toolCalls() == null ? 0 : resp.toolCalls().size()),
+                            + " toolCalls=" + (resp.toolCalls() == null ? 0 : resp.toolCalls().size())
+                            // 工具循环是否带得上思考链，只看这一行（0 也要带，见 toOpenAiMessage）
+                            + " reasoningLen=" + (resp.reasoning() == null ? "null" : resp.reasoning().length()),
                     traceId, runId, tenantId, agent.getAgentId());
 
             if (resp.toolCalls() == null || resp.toolCalls().isEmpty()) {
                 return resp.content() == null ? "" : resp.content();
             }
 
-            // ① 把模型这一轮的 assistant(tool_calls) 原样记回序列（见方法注释的第二条警告）
-            convo.add(ModelAdapter.ChatMessage.assistantToolCalls(resp.toolCalls()));
+            /*
+             * ① 把模型这一轮的 assistant(tool_calls) 原样记回序列（见方法注释的第二条警告）。
+             *
+             * **必须带上 reasoning**（2026-10-21）：thinking 模型要求回灌工具结果时，
+             * 上一轮 assistant 消息里的 `reasoning_content` 原样带回，否则第二轮请求直接
+             * HTTP 400 "The reasoning_content in the thinking mode must be passed back to the API"。
+             * 这个错只在"模型调了工具"时出现 —— 普通问答是单轮请求，不会暴露。
+             */
+            convo.add(ModelAdapter.ChatMessage.assistantToolCalls(resp.toolCalls(), resp.reasoning()));
 
             // ② 逐个执行，并以 role=tool 消息回灌（一次调用一条，id 一一对应）
             for (ModelAdapter.ToolCall call : resp.toolCalls()) {

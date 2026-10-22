@@ -1,4 +1,4 @@
 -------------------------------------------------------------------------------
 Test set: com.agentplatform.core.plugin.builtin.BuiltinWebContentPluginTest
 -------------------------------------------------------------------------------
-Tests run: 7, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.027 s -- in com.agentplatform.core.plugin.builtin.BuiltinWebContentPluginTest
+Tests run: 10, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.032 s -- in com.agentplatform.core.plugin.builtin.BuiltinWebContentPluginTest
