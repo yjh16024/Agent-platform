@@ -1,5 +1,7 @@
 package com.agentplatform.core.security.rbac;
 
+import com.agentplatform.framework.api.Tool;
+
 import java.util.Arrays;
 import java.util.LinkedHashSet;
 import java.util.Set;

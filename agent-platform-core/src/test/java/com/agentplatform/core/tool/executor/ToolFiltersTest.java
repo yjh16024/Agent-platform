@@ -1,9 +1,13 @@
 package com.agentplatform.core.tool.executor;
 
+import com.agentplatform.framework.api.ToolFilter;
+import com.agentplatform.framework.api.ToolInvocation;
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.ToolChain;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.util.JsonUtils;
-import com.agentplatform.core.tool.Tool;
-import com.agentplatform.core.tool.ToolContext;
-import com.agentplatform.core.tool.ToolResult;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.test.util.ReflectionTestUtils;

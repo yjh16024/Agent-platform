@@ -23,7 +23,7 @@ import java.time.LocalDateTime;
  * </p>
  */
 @Entity
-@Table(name = "session_def")
+@Table(name = "ap_session_def")
 @Getter
 @Setter
 @Builder

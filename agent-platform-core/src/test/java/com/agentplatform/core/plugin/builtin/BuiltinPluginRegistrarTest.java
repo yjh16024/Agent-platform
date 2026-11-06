@@ -1,5 +1,7 @@
 package com.agentplatform.core.plugin.builtin;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.core.plugin.runtime.ExtensionRegistry;
 import com.agentplatform.core.plugin.runtime.PluginRuntime;
 import com.agentplatform.core.tool.registry.ToolRegistry;
@@ -94,7 +96,7 @@ class BuiltinPluginRegistrarTest {
         when(repo.findByTenantIdAndPluginId(anyString(), anyString())).thenReturn(Optional.empty());
         when(repo.findByTenantIdOrderByUpdatedAtDesc(anyString())).thenReturn(List.of());
 
-        new BuiltinPluginRegistrar(runtimeOf(List.of(new DescribedPlugin())), repo, bindings).sync();
+        new BuiltinPluginRegistrar(runtimeOf(List.of(new DescribedPlugin())), repo, bindings, null).sync();
 
         ArgumentCaptor<PluginDef> captor = ArgumentCaptor.forClass(PluginDef.class);
         verify(repo).save(captor.capture());
@@ -125,7 +127,7 @@ class BuiltinPluginRegistrarTest {
         when(repo.findByTenantIdAndPluginId(anyString(), anyString())).thenReturn(Optional.of(stale));
         when(repo.findByTenantIdOrderByUpdatedAtDesc(anyString())).thenReturn(List.of(stale));
 
-        new BuiltinPluginRegistrar(runtimeOf(List.of(new DescribedPlugin())), repo, bindings).sync();
+        new BuiltinPluginRegistrar(runtimeOf(List.of(new DescribedPlugin())), repo, bindings, null).sync();
 
         verify(repo).save(stale);
         verify(repo, never()).delete(any(PluginDef.class));
@@ -148,7 +150,7 @@ class BuiltinPluginRegistrarTest {
         when(repo.findByTenantIdOrderByUpdatedAtDesc(anyString())).thenReturn(List.of(orphan));
         when(bindings.findByPluginId("plugin_removed")).thenReturn(List.of(bound));
 
-        new BuiltinPluginRegistrar(runtimeOf(List.of()), repo, bindings).sync();
+        new BuiltinPluginRegistrar(runtimeOf(List.of()), repo, bindings, null).sync();
 
         verify(bindings).delete(bound);
         verify(repo).delete(orphan);
@@ -161,7 +163,7 @@ class BuiltinPluginRegistrarTest {
         AgentPluginRepository bindings = mock(AgentPluginRepository.class);
         when(repo.findByTenantIdOrderByUpdatedAtDesc(anyString())).thenReturn(List.of());
 
-        new BuiltinPluginRegistrar(runtimeOf(List.of()), repo, bindings).sync();
+        new BuiltinPluginRegistrar(runtimeOf(List.of()), repo, bindings, null).sync();
 
         verify(repo, never()).save(any(PluginDef.class));
         verify(repo, never()).delete(any(PluginDef.class));

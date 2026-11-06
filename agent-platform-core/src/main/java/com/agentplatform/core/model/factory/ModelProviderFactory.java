@@ -1,8 +1,9 @@
 package com.agentplatform.core.model.factory;
 
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.core.model.adapter.AnthropicAdapter;
-import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.model.adapter.MockModelAdapter;
 import com.agentplatform.core.model.adapter.OpenAiCompatibleAdapter;
 import com.agentplatform.core.model.adapter.RuleEngineModelAdapter;
@@ -91,7 +92,16 @@ public class ModelProviderFactory {
      * 支持的服务商列表（统一走 LiteLLM 兼容协议 / 直连）。
      */
     public static final String[] SUPPORTED_PROVIDERS = {
-            "auto", "openai", "anthropic", "qwen", "ernie", "hunyuan", "deepseek", "local",
+            "auto", "openai", "anthropic", "qwen", "ernie", "hunyuan", "deepseek",
+            /*
+             * siliconflow（2026-10-23 补）。
+             *
+             * 这已经是**第四个**要改的地方了 —— normalize 的 switch、
+             * SpringAiChatModelFactory.family、DictSeeder 的字典，都登记过，
+             * 唯独漏了这个白名单，于是 ModelRouter 直接回
+             * "unsupported provider: siliconflow"，连适配器都没建。
+             */
+            "siliconflow", "local",
             "rule", "rule-engine"
     };
 
@@ -106,7 +116,14 @@ public class ModelProviderFactory {
     private String normalize(String provider) {
         String p = provider == null || provider.isBlank() ? "auto" : provider.toLowerCase();
         return switch (p) {
-            case "auto", "openai", "qwen", "ernie", "hunyuan", "deepseek" -> "openai";
+            /*
+             * siliconflow（硅基流动）也是 OpenAI 兼容协议（2026-10-23 补）。
+             *
+             * 之前它只出现在嵌入侧字典里，对话侧没登记 —— 智能体把 provider
+             * 设成 siliconflow 会走到 default 分支，建出一个不存在的适配器。
+             * 它和 qwen / deepseek 的区别只在 baseUrl。
+             */
+            case "auto", "openai", "qwen", "ernie", "hunyuan", "deepseek", "siliconflow" -> "openai";
             case "anthropic" -> "anthropic";   // Anthropic 走 Messages API 协议（x-api-key + /v1/messages）
             case "local", "mock" -> "local";
             case "rule", "rule-engine" -> "rule";   // 规则引擎：确定性应答，零成本

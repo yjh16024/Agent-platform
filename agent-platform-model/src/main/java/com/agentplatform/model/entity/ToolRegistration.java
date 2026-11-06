@@ -22,7 +22,7 @@ import java.util.Map;
  * <p>保存动态注册的 HTTP 工具定义，启动时重建，避免重启/重构后丢失。</p>
  */
 @Entity
-@Table(name = "tool_registration")
+@Table(name = "ap_tool_registration")
 @Getter
 @Setter
 @Builder

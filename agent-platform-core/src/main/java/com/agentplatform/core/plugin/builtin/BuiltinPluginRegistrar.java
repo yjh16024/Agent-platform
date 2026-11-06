@@ -1,6 +1,7 @@
 package com.agentplatform.core.plugin.builtin;
 
 import com.agentplatform.common.util.JsonUtils;
+import com.agentplatform.core.plugin.marketplace.PluginConfigSecrets;
 import com.agentplatform.core.plugin.runtime.PluginRuntime;
 import com.agentplatform.model.entity.AgentPlugin;
 import com.agentplatform.model.entity.PluginDef;
@@ -58,9 +59,21 @@ public class BuiltinPluginRegistrar {
     /** 内置插件所属租户（与 {@code PluginService} 的约定一致：内置插件对所有租户可见）。 */
     private static final String PLATFORM_TENANT = "__platform__";
 
+    /**
+     * 恢复挂载时用的租户（2026-10-22）。
+     *
+     * <p>必须与对话时的取值一致 —— {@code AgentRuntimeService.ensurePluginsAttached}
+     * 传的是请求的 RBAC 租户，桌面版恒为 {@code default}。
+     * 若这里写 {@code __platform__}，插件的 {@code PluginContext.tenantId()} 会和正常对话不一样，
+     * 那些按租户记账/查配置的插件就会对不上。</p>
+     */
+    private static final String RUNTIME_TENANT = "default";
+
     private final PluginRuntime pluginRuntime;
     private final PluginRepository pluginRepository;
     private final AgentPluginRepository agentPluginRepository;
+    /** 恢复挂载时要把库里的密文配置解回明文，否则插件拿到密文会调不通厂商（如 TTS key）。 */
+    private final PluginConfigSecrets pluginConfigSecrets;
 
     /**
      * 启动就绪时同步一次。
@@ -95,6 +108,61 @@ public class BuiltinPluginRegistrar {
         } else {
             log.info("[plugin] 内置插件无需变更（共 {} 个）", builtins.size());
         }
+        restoreAttachments();
+    }
+
+    /**
+     * 启动时恢复「智能体挂载了哪些插件」（2026-10-22）。
+     *
+     * <p><b>修的是什么</b>：插件对智能体贡献的工具注册在 {@code ExtensionRegistry}（内存），
+     * 而挂载关系存在 {@code agent_plugin} 表。重启后内存是空的，之前唯一的恢复路径是
+     * {@code AgentRuntimeService.ensurePluginsAttached} —— 它<b>只在对话时</b>才跑。</p>
+     *
+     * <p>于是出现这个现象：重启后插件市场显示「已挂载 / 贡献的工具：该插件不贡献工具」，
+     * 联网测试也通不过；必须手动点一次「挂载/更新」（走 {@code PluginService.attach}）才恢复，
+     * 或者跟该智能体先说一句话把它"唤"回来。</p>
+     *
+     * <p><b>为什么放在这里</b>：本类已经有 {@code PluginRuntime} 与 {@code AgentPluginRepository}，
+     * 而且 {@code sync()} 就在 {@link ApplicationReadyEvent} 上、内置插件元数据已就绪之后跑，
+     * 顺序天然正确（新起一个监听器还得处理 @Order）。</p>
+     *
+     * <p>幂等：已挂载的跳过；单条失败只记日志，不影响其他插件（插件可能已被删除，
+     * 但绑定还留着历史记录）。</p>
+     */
+    private void restoreAttachments() {
+        List<AgentPlugin> bindings;
+        try {
+            bindings = agentPluginRepository.findByEnabledTrue();
+        } catch (Exception e) {
+            log.warn("[plugin] 读取挂载关系失败，跳过恢复：{}", e.getMessage());
+            return;
+        }
+        if (bindings == null || bindings.isEmpty()) {
+            return;
+        }
+        int restored = 0;
+        int skipped = 0;
+        int failed = 0;
+        for (AgentPlugin b : bindings) {
+            if (pluginRuntime.isAttached(b.getAgentId(), b.getPluginId())) {
+                skipped++;
+                continue;
+            }
+            try {
+                Map<String, Object> config = b.getConfig() == null
+                        ? Map.of()
+                        // 单测里可能注入 null（没有密钥服务）；此时退化为直接使用库里的配置
+                        : (pluginConfigSecrets == null ? b.getConfig() : pluginConfigSecrets.reveal(b.getConfig()));
+                pluginRuntime.attach(b.getPluginId(), b.getAgentId(), RUNTIME_TENANT, config);
+                restored++;
+            } catch (Exception e) {
+                failed++;
+                log.warn("[plugin] 恢复挂载失败 plugin={} agent={}：{}",
+                        b.getPluginId(), b.getAgentId(), e.getMessage());
+            }
+        }
+        log.info("[plugin] 挂载关系已恢复：重建 {} / 已存在 {} / 失败 {}（共 {} 条）",
+                restored, skipped, failed, bindings.size());
     }
 
     /**

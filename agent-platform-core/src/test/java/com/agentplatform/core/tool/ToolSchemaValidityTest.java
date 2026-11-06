@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.core.tool.registry.ToolRegistry;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

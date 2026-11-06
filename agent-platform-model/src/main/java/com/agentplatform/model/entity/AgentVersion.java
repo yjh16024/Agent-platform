@@ -23,7 +23,7 @@ import java.util.Map;
  * <p>支持回滚与 Diff 对比。快照包含全量配置（含提示词哈希）。</p>
  */
 @Entity
-@Table(name = "agent_version")
+@Table(name = "ap_agent_version")
 @Getter
 @Setter
 @Builder

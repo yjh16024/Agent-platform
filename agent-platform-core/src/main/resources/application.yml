@@ -89,7 +89,14 @@ spring.ai:
 agent-platform:
   jwt:
     secret: ${JWT_SECRET:change-me-to-a-256-bit-secret-key-for-production-use-please}
-    expire-seconds: 86400            # 24h
+    # 30 天（2026-10-24 从 24h 调长）。
+    #
+    # 24 小时意味着**每天都要重新登录一次** —— 对本地单机应用是纯摩擦，没有任何
+    # 安全收益（能物理碰到这台机器的人，本来就能读 data/ 下的数据库）。
+    #
+    # 30 天足够日常使用；真要更久可以调成 31536000（一年）。
+    # 注意：改这个**只影响新签发的 token**，已经登录的旧 token 仍按旧时长过期。
+    expire-seconds: 2592000
   tenant:
     default-id: "default"
   # ---- Spring AI 通道开关（默认开启）----
@@ -104,6 +111,19 @@ agent-platform:
   model:
     default-provider: ${DEFAULT_PROVIDER:deepseek}    # 智能体未配置 provider 时的默认模型厂商
     default-name: ${DEFAULT_MODEL:deepseek-chat}      # 智能体未配置 model 时的默认模型名
+    # ---- 会话摘要（中期记忆）的门槛，2026-10-26 从硬编码常量改成可配 ----
+    #
+    # 这两个数和插件的「记忆轮数」（maxHistoryTurns）是配套的：
+    #   · summary-min-turns 必须 **≤** 插件的记忆轮数，
+    #     否则会出现「超过上下文窗口、但还没到摘要门槛」的空窗 —— 那一段真丢；
+    #   · summary-keep-turns 必须 **<** summary-min-turns，
+    #     否则摘要覆盖范围是空的（代码里会自动夹到 min - 1）。
+    #
+    # 默认 20 / 12：上下文带 20 轮原文，20 轮时把第 1~8 轮压成要点，
+    # 中间 8 轮重叠 —— 宁可重复，不要漏。
+    memory:
+      summary-min-turns: ${MEMORY_SUMMARY_MIN_TURNS:20}
+      summary-keep-turns: ${MEMORY_SUMMARY_KEEP_TURNS:12}
     # 思考模式（2026-10-19）：DeepSeek 的「深度思考」**必须显式开启**才返回 reasoning_content
     # （请求体 `{"thinking": {"type": "enabled"}}`）。不开也能正常对话，只是没有思考过程。
     # 代价：思考会消耗额外 tokens、增加首字延迟；不需要就设 MODEL_THINKING_ENABLED=false。

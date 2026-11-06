@@ -1,5 +1,7 @@
 package com.agentplatform.core.plugin.builtin;
 
+import com.agentplatform.framework.api.ToolResult;
+
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.plugin.sdk.ConfigFieldDef;
 import com.agentplatform.plugin.sdk.PluginContext;
@@ -83,6 +85,17 @@ public class BuiltinWebSearchPlugin implements ToolProvider, PluginDescriptor, U
     private static final String PROVIDER_TAVILY = "tavily";
     private static final String PROVIDER_DUCKDUCKGO = "duckduckgo";
 
+    /**
+     * DeepSeek 自研搜索（2026-10-28 开放）。
+     *
+     * <p>和 Tavily / Bing 的关键差别：返回里**直接带 {@code content}（正文）**，
+     * 还有 {@code authority}（权威性 0~4）和 {@code date}（发布时间）。</p>
+     */
+    private static final String PROVIDER_DEEPSEEK = "deepseek";
+
+    /** DeepSeek 官方地址（用户也可以填自定义 baseUrl 走代理）。 */
+    private static final String DEFAULT_DEEPSEEK_BASE_URL = "https://api.deepseek.com";
+
     private static final String DEFAULT_TAVILY_BASE_URL = "https://api.tavily.com";
     private static final String DDG_URL = "https://api.duckduckgo.com/";
 
@@ -152,7 +165,7 @@ public class BuiltinWebSearchPlugin implements ToolProvider, PluginDescriptor, U
                 @Override
                 public List<ConfigFieldDef> configFields() {
                 return List.of(
-                ConfigFieldDef.select(CFG_PROVIDER, "搜索服务商", List.of("bing", "tavily", "duckduckgo"))
+                ConfigFieldDef.select(CFG_PROVIDER, "搜索服务商", List.of("deepseek", "bing", "tavily", "duckduckgo"))
                         .hint("留空自动判断：填了密钥走 Tavily，否则走 **Bing 页面抓取**（零配置、国内可直连）。"
                                 + "DuckDuckGo 仅建议海外部署使用 —— 它的域名在国内直连会超时"),
                 ConfigFieldDef.secret(CFG_API_KEY, "Tavily API Key")
@@ -263,6 +276,8 @@ public class BuiltinWebSearchPlugin implements ToolProvider, PluginDescriptor, U
             String text;
             if (PROVIDER_TAVILY.equals(cfg.effectiveProvider())) {
                 text = searchTavily(query.trim(), cfg);
+            } else if (PROVIDER_DEEPSEEK.equals(cfg.effectiveProvider())) {
+                text = searchDeepSeek(query.trim(), cfg);
             } else if (PROVIDER_BING.equals(cfg.effectiveProvider())) {
                 text = searchBing(query.trim(), cfg);
             } else {
@@ -423,6 +438,80 @@ public class BuiltinWebSearchPlugin implements ToolProvider, PluginDescriptor, U
                     "snippet", text(r, "content")));
         }
         return render(query, "tavily", items, false);
+    }
+
+    // ---------------- DeepSeek 自研搜索（2026-10-28） ----------------
+
+    /**
+     * DeepSeek 自研搜索引擎（2026-10-28）。
+     *
+     * <p><b>为什么单独接它</b>：返回的每条结果里**直接带 {@code content}（正文）**，
+     * 还有 {@code authority}（权威性 0~4）和 {@code date}（发布时间）。</p>
+     *
+     * <p>对比现在的 Bing 抓取：「search → 拿 5 个 URL → fetch 3 个」要**四次往返**，
+     * 而且还得赌哪些链接能抓成功。DeepSeek 一次就把正文带回来了。</p>
+     *
+     * <p>接口 {@code POST https://api.deepseek.com/v1/tools/search}，
+     * $0.75 / 1000 次成功调用，**失败和空结果不计费**。</p>
+     */
+    private String searchDeepSeek(String query, SearchConfig cfg) throws Exception {
+        if (!cfg.hasApiKey()) {
+            throw new IllegalStateException("DeepSeek 搜索需要 API Key（在内置插件设置里填）");
+        }
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("query", query);
+        body.put("count", cfg.maxResults());
+
+        String endpoint = cfg.baseUrl() == null || cfg.baseUrl().isBlank()
+                ? DEFAULT_DEEPSEEK_BASE_URL
+                : cfg.baseUrl().replaceAll("/+$", "");
+        // 允许填 https://api.deepseek.com，也允许已经带到 /v1
+        String url = endpoint.endsWith("/v1")
+                ? endpoint + "/tools/search"
+                : endpoint + "/v1/tools/search";
+
+        Request request = new Request.Builder()
+                .url(url)
+                .post(RequestBody.create(JsonUtils.toJson(body), JSON))
+                .header("Accept", "application/json")
+                .header("Authorization", "Bearer " + cfg.apiKey())
+                .header("User-Agent", "agent-platform/1.0")
+                .build();
+
+        JsonNode response = execute(request, cfg);
+        JsonNode results = response.path("results");
+        if (!results.isArray() || results.isEmpty()) {
+            return "（没有检索到结果：" + query + "）";
+        }
+        List<Map<String, String>> items = new ArrayList<>();
+        for (JsonNode r : results) {
+            // 优先正文，退到 summary，再退到 snippet
+            String content = text(r, "content");
+            if (content.isBlank()) {
+                content = text(r, "summary");
+            }
+            if (content.isBlank()) {
+                content = text(r, "snippet");
+            }
+            // 1200 字上限：再多会挤占上下文，模型也用不上
+            if (content.length() > 1200) {
+                content = content.substring(0, 1200) + "…";
+            }
+            StringBuilder meta = new StringBuilder();
+            int authority = r.path("authority").asInt(-1);
+            if (authority >= 0) {
+                meta.append("【权威 ").append(authority).append("/4】");
+            }
+            String date = text(r, "date");
+            if (!date.isBlank()) {
+                meta.append("【").append(date.length() >= 10 ? date.substring(0, 10) : date).append("】");
+            }
+            items.add(Map.of(
+                    "title", text(r, "title"),
+                    "url", text(r, "url"),
+                    "snippet", meta + content));
+        }
+        return render(query, "deepseek", items, false);
     }
 
     // ---------------- DuckDuckGo（零配置兜底） ----------------

@@ -1,8 +1,9 @@
 package com.agentplatform.core.plugin.runtime;
 
-import com.agentplatform.core.tool.Tool;
-import com.agentplatform.core.tool.ToolContext;
-import com.agentplatform.core.tool.ToolResult;
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.plugin.sdk.PluginContext;
 import com.agentplatform.plugin.sdk.PluginTool;
 import tools.jackson.databind.JsonNode;

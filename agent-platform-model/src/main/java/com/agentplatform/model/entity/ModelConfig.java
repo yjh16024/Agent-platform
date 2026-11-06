@@ -29,7 +29,7 @@ import java.time.LocalDateTime;
  * </p>
  */
 @Entity
-@Table(name = "model_config")
+@Table(name = "ap_model_config")
 @Getter
 @Setter
 @Builder

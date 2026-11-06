@@ -74,4 +74,21 @@ contextBridge.exposeInMainWorld('apHost', {
   loadPlugin: (pluginId, dir, mainFile) => ipcRenderer.invoke('ap:plugin-load', { pluginId, dir, mainFile }),
   unloadPlugin: (pluginId) => ipcRenderer.invoke('ap:plugin-unload', { pluginId }),
   invokePlugin: (pluginId, method, args) => ipcRenderer.invoke('ap:plugin-invoke', { pluginId, method, args }),
-});
+  });
+
+  /*
+  * 加密凭据（2026-10-24）—— 记住登录账号密码用。
+  *
+  * 主进程用 `safeStorage`（Windows DPAPI / macOS Keychain / Linux libsecret）
+  * 加密后存文件，渲染进程只能拿到**解密后的值**，看不到密钥。
+  * 这跟 QQ「记住密码」是同一套做法，不是明文存。
+  *
+  * ⚠️ 只在 Electron 里存在。用浏览器直接访问 `http://127.0.0.1:8081` 时
+  * `window.apSecrets` 是 undefined，前端要能降级（只记账号、不自动登录）。
+  */
+  contextBridge.exposeInMainWorld('apSecrets', {
+  available: () => ipcRenderer.invoke('ap:secret-available'),
+  set: (key, value) => ipcRenderer.invoke('ap:secret-set', { key, value }),
+  get: (key) => ipcRenderer.invoke('ap:secret-get', { key }),
+  remove: (key) => ipcRenderer.invoke('ap:secret-remove', { key }),
+  });

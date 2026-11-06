@@ -1,8 +1,13 @@
 package com.agentplatform.core.tool.executor;
 
+import com.agentplatform.framework.api.ToolFilter;
+import com.agentplatform.framework.api.ToolInvocation;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.ToolChain;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.core.settings.PlatformSettingRegistry;
 import com.agentplatform.core.settings.PlatformSettingService;
-import com.agentplatform.core.tool.ToolResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;

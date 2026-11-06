@@ -1,8 +1,12 @@
 package com.agentplatform.core.tool.executor;
 
-import com.agentplatform.core.tool.Tool;
-import com.agentplatform.core.tool.ToolContext;
-import com.agentplatform.core.tool.ToolResult;
+import com.agentplatform.framework.api.ToolFilter;
+import com.agentplatform.framework.api.ToolInvocation;
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.ToolChain;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.core.tool.registry.ToolRegistry;
 import tools.jackson.databind.JsonNode;
 import lombok.RequiredArgsConstructor;

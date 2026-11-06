@@ -11,6 +11,13 @@
 
 > 全平台能力均通过「SPI / 注册表 / 策略链」接入，新增实现 = 新增 Bean，核心代码趋近零修改。
 
+> **先分清你要扩展的是哪个**：
+> - **在平台里加能力**（加一个工具、一个模型、一个插件）→ 看本节；
+> - **把运行时嵌进你自己的应用**（用 `AgentRuntime` / 换存储 / 接 Spring AI）→
+>   看 [framework-howto/](framework-howto/)，那里是面向开发者的四篇操作指南。
+>
+> 两者的接口是同一套（契约在 `agent-platform-framework-api`），差别只在**谁来装配**。
+
 | 扩展点 | 模式 | 接口 |
 |---|---|---|
 | 模型 | 策略 + 工厂 + 路由 | `ModelAdapter` |
@@ -28,7 +35,9 @@
 
 - **方式 A（推荐，零代码）**：在 `litellm-config.yaml` 的 `model_list` 增加模型，`ModelProviderFactory` 归一化后经 `OpenAiCompatibleAdapter` 以 OpenAI 兼容协议对接。
 - **例外**：`anthropic` 走 `AnthropicAdapter`（Messages API）；`local`/`mock` 走 `MockModelAdapter`；`rule`/`rule-engine` 走 `RuleEngineModelAdapter`（正则规则确定性应答，零成本，**不参与 `auto` 路由**）。
-- **方式 B（自定义适配器）**：实现 `ModelAdapter`（`provider()` / `capabilities()` / `chat()` / `stream()`），并把 provider 名加入 `ModelProviderFactory.SUPPORTED_PROVIDERS` 与 `normalize()`。
+- **方式 B（自定义适配器）**：实现 `ModelAdapter`（**契约在 `agent-platform-framework-api`**，
+  包名 `com.agentplatform.framework.api`；2026-11 重构后已从 `core.model.adapter` 迁出）
+  （`provider()` / `capabilities()` / `chat()` / `stream()`），并把 provider 名加入 `ModelProviderFactory.SUPPORTED_PROVIDERS` 与 `normalize()`。
 - 要点：`ModelCapability`（TEXT/VISION/AUDIO）决定多模态路由，`costWeight()` 决定成本路由，`isHealthy()` 决定降级。
 
 ### 1.2 新增工具
@@ -194,7 +203,6 @@ helm install agent-platform agent-platform-deploy/helm/agent-platform \
 ```bash
 -XX:+UseZGC -XX:+ZGenerational
 -XX:+UseContainerSupport -XX:MaxRAMPercentage=75
---enable-preview                             # JDK 21 预览特性（ScopedValue / StructuredTaskScope）
 --add-opens java.base/java.lang=ALL-UNNAMED  # 插件 SPI 反射
 ```
 
@@ -310,7 +318,7 @@ desktop\dev.bat
 
 前置：数据库二选一 —— `docker compose up -d`（MySQL）或 `--spring.profiles.active=embedded`（H2，免装库）；
 其余中间件可选（缺失自动降级）→ `mvn -pl agent-platform-core -am package -DskipTests` →
-`java --enable-preview -jar <jar>`（或 `start-core.bat rebuild` / `start-core.bat embedded rebuild`）。
+`java -jar <jar>`（或 `start-core.bat rebuild` / `start-core.bat embedded rebuild`）。
 
 | 步骤 | 命令要点 | 预期 |
 |---|---|---|

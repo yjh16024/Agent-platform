@@ -21,7 +21,6 @@ core:
   javaOpts: >-
     -XX:+UseZGC -XX:+ZGenerational
     -XX:+UseContainerSupport -XX:MaxRAMPercentage=75
-    --enable-preview
     --add-opens java.base/java.lang=ALL-UNNAMED
 
 gateway:

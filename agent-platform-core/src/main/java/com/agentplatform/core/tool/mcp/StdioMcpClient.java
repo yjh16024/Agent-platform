@@ -1,5 +1,8 @@
 package com.agentplatform.core.tool.mcp;
 
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.common.util.JsonUtils;
 import lombok.extern.slf4j.Slf4j;

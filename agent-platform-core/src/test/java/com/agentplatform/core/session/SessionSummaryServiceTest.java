@@ -27,8 +27,20 @@ class SessionSummaryServiceTest {
 
     private final MessageRepository messageRepository = mock(MessageRepository.class);
     private final SessionRepository sessionRepository = mock(SessionRepository.class);
+    /*
+     * 门槛改成可配置后，构造器多两个参数（2026-10-26）；
+     * 2026-11-01 加了模型提炼相关的三个（开关 / provider / model）和 ModelRouter。
+     *
+     * 这里显式传 20 / 12 —— 和 application.yml 的默认值一致，
+     * 免得测试因为"默认值变了"而莫名其妙地红。
+     *
+     * **llmEnabled 传 false**：单测验的是规则抽取与增量覆盖逻辑，
+     * 不该依赖真实模型（否则跑 CI 需要联网、还要 key）。
+     * 模型那条路径的失败降级由 try/catch 保证，不需要单测覆盖。
+     */
     private final SessionSummaryService service =
-            new SessionSummaryService(sessionRepository, messageRepository);
+            new SessionSummaryService(sessionRepository, messageRepository, 20, 12,
+                    false, "deepseek", "deepseek-chat", null);
 
     private Session session(int latestTurn, Integer summaryTurn, String summary) {
         return Session.builder()

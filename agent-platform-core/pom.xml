@@ -13,6 +13,16 @@
     <description>核心调度层：Agent Runtime、会话管理、模型适配、RAG、工具、工作流、插件运行时、日志诊断、提示词优化</description>
 
     <dependencies>
+        <!-- 框架契约层（ModelAdapter / ModelCapability 已迁入，见 docs/framework-plan.md §P0'） -->
+        <dependency>
+            <groupId>com.agentplatform</groupId>
+            <artifactId>agent-platform-framework-api</artifactId>
+        </dependency>
+        <!-- 框架运行时（SessionStore / ToolRegistry），P2' 起平台逐步改为它的消费者 -->
+        <dependency>
+            <groupId>com.agentplatform</groupId>
+            <artifactId>agent-platform-framework-runtime</artifactId>
+        </dependency>
         <dependency>
             <groupId>com.agentplatform</groupId>
             <artifactId>agent-platform-common</artifactId>
@@ -226,6 +236,14 @@
             <artifactId>h2</artifactId>
             <scope>runtime</scope>
         </dependency>
+
+        <!-- 架构门禁：把「api 不依赖 Spring / 平台只依赖框架公开包」变成可执行断言 -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>1.3.0</version>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 
     <build>
@@ -247,9 +265,8 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
-                    <!-- 项目使用 JDK 21 预览特性（ScopedValue），编译与运行都必须开启预览支持。
-                         不配置 jvmArguments 的话 `mvn spring-boot:run` 会因运行 JVM 未开启预览而加载失败。 -->
-                    <jvmArguments>--enable-preview</jvmArguments>
+                    <!-- 2026-11-06 起不再需要预览特性（TraceContext 已改用 ThreadLocal）。
+                         保留这段注释，是为了让后来者知道「这里曾经有个坑」，别又加回来。 -->
                 </configuration>
                 <executions>
                     <execution>

@@ -1,5 +1,8 @@
 package com.agentplatform.core.plugin.builtin;
 
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.plugin.builtin.BuiltinWebSearchPlugin.SearchConfig;
 import com.agentplatform.plugin.sdk.PluginContext;

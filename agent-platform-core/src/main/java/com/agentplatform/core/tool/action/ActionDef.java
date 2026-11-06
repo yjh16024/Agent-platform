@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.action;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.exception.BizException;
 
 import java.util.ArrayList;

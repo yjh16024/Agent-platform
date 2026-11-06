@@ -34,7 +34,7 @@ import java.time.LocalDateTime;
  * </ul>
  */
 @Entity
-@Table(name = "sys_tool_approval")
+@Table(name = "ap_sys_tool_approval")
 @Getter
 @Setter
 @Builder

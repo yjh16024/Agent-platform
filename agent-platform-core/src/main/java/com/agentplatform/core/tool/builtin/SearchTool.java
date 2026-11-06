@@ -1,10 +1,11 @@
 package com.agentplatform.core.tool.builtin;
 
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.core.rag.retriever.HybridRetriever;
 import com.agentplatform.core.rag.retriever.RetrievalResult;
-import com.agentplatform.core.tool.Tool;
-import com.agentplatform.core.tool.ToolContext;
-import com.agentplatform.core.tool.ToolResult;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.node.ArrayNode;
 import tools.jackson.databind.node.ObjectNode;

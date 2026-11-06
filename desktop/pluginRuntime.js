@@ -62,10 +62,28 @@ function log(level, ...args) {
 function callHost(method, args) {
   return new Promise((resolve, reject) => {
     const id = ++hostSeq;
+    /*
+     * 超时从 60 秒放宽到 5 分钟（2026-10-22）。
+     *
+     * 60 秒是早期按"普通对话一轮就返回"定的，但**智能体跑一次任务经常要
+     * 多轮工具循环**：实测换一次头像 = 搜图 → 视觉注入看图 → 画图 → 再看图 → 选图，
+     * 3 轮工具 + 每轮模型调用 3~10 秒，轻松破 60 秒。
+     *
+     * 后果特别坑：后端其实跑完了（日志里 `chat 完成` 都在），只是这边先放弃，
+     * 结果整段丢弃 —— 用户看到"没回复"，但她活儿干完了，只能手动救场
+     * （"图已经画好了，你现在可以去取"）。
+     *
+     * 5 分钟本来够，但 2026-11-02 撞上了不够的：她一轮里连生两张图，
+     * 每张 46 秒 + 中间三轮模型调用（每轮 17 秒），实测 18:49 那次
+     * 在 18:54:15 被这边掐断，而平台到 18:54:25 还在生成第二张 ——
+     * 活儿干了，结果全丢。
+     *
+     * 所以放宽到 10 分钟。真卡死时多等 5 分钟，也好过白做一轮。
+     */
     const timer = setTimeout(() => {
       pendingHostCalls.delete(id);
       reject(new Error(`platform 调用超时（${method}）`));
-    }, 60_000);
+    }, 600_000);
     pendingHostCalls.set(id, (msg) => {
       clearTimeout(timer);
       pendingHostCalls.delete(id);

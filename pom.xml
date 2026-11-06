@@ -12,6 +12,18 @@
     <description>白雾·智能体交互平台 - 多模型 · 上下文 · RAG · 工作流 · 多模态 · 工具调用 · Skills · 智能体管理 · 插件系统</description>
 
     <modules>
+        <!-- 框架契约层：零 Spring / 零 JPA / 零 spring-ai，且不继承父 pom 的 enable-preview 开关（见 docs/framework-plan.md §2.4） -->
+        <module>agent-platform-framework-bom</module>
+        <module>agent-platform-framework-api</module>
+        <module>agent-platform-framework-runtime</module>
+        <module>agent-platform-framework-springai</module>
+        <module>agent-platform-framework-rag</module>
+        <module>agent-platform-framework-starter</module>
+        <module>agent-platform-framework-starter-springai</module>
+        <module>agent-platform-framework-sample-minimal</module>
+        <module>agent-platform-framework-sample-web</module>
+        <module>agent-platform-framework-sample-springai</module>
+        <module>agent-platform-framework-sample-rag</module>
         <module>agent-platform-common</module>
         <module>agent-platform-model</module>
         <module>agent-platform-plugin-sdk</module>
@@ -90,6 +102,36 @@
             </dependency>
 
             <!-- Internal modules -->
+            <dependency>
+                <groupId>com.agentplatform</groupId>
+                <artifactId>agent-platform-framework-api</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agentplatform</groupId>
+                <artifactId>agent-platform-framework-runtime</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agentplatform</groupId>
+                <artifactId>agent-platform-framework-springai</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agentplatform</groupId>
+                <artifactId>agent-platform-framework-rag</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agentplatform</groupId>
+                <artifactId>agent-platform-framework-starter</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.agentplatform</groupId>
+                <artifactId>agent-platform-framework-starter-springai</artifactId>
+                <version>${project.version}</version>
+            </dependency>
             <dependency>
                 <groupId>com.agentplatform</groupId>
                 <artifactId>agent-platform-common</artifactId>
@@ -205,9 +247,11 @@
                         <source>${java.version}</source>
                         <target>${java.version}</target>
                         <parameters>true</parameters>
-                        <compilerArgs>
-                            <arg>--enable-preview</arg>
-                        </compilerArgs>
+                        <!--
+                            2026-11-06 移除预览特性开关：框架要能被第三方应用嵌入，
+                            不能要求宿主的构建流水线开启预览特性（TraceContext 已改用 ThreadLocal）。
+                            若将来又要用预览 API，请先确认它不会成为嵌入方的硬门槛。
+                        -->
                     </configuration>
                 </plugin>
                 <plugin>
@@ -227,9 +271,6 @@
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
                     <version>${maven-surefire-plugin.version}</version>
-                    <configuration>
-                        <argLine>--enable-preview</argLine>
-                    </configuration>
                 </plugin>
             </plugins>
         </pluginManagement>

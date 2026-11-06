@@ -1,5 +1,7 @@
 package com.agentplatform.core.observability;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.dto.ApiResponse;
 import com.agentplatform.core.security.rbac.RequiresPermission;
 import com.agentplatform.model.entity.LogIndex;

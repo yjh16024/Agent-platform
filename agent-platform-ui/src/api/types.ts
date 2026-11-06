@@ -19,6 +19,15 @@ export interface GenerationConfig {
   topP?: number;
   topK?: number;
   maxTokens?: number;
+  /**
+   * 采样惩罚（2026-10-27）。
+   *
+   * `frequencyPenalty` 压制重复用词和口癖（DeepSeek 的「不是A而是B」「其实/确实」）；
+   * `presencePenalty` 压制「反复围绕同一组词打转」。
+   * **留空 = 不传**，后端跳过这两个字段。
+   */
+  frequencyPenalty?: number;
+  presencePenalty?: number;
   responseFormat?: string;
   timeoutMs?: number;
   retry?: { maxAttempts?: number; backoffMs?: number };

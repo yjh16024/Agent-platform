@@ -1,8 +1,9 @@
 package com.agentplatform.core.model.router;
 
+import com.agentplatform.framework.api.ModelAdapter;
+import com.agentplatform.framework.api.ModelCapability;
+
 import com.agentplatform.common.exception.BizException;
-import com.agentplatform.core.model.ModelCapability;
-import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.model.factory.ModelProviderFactory;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

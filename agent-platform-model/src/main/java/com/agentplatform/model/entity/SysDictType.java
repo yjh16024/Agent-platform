@@ -24,7 +24,7 @@ import java.time.LocalDateTime;
  * 无法表达"刚建好、还没加项的字典"，管理界面（左类型 / 右字典项）也就做不出来。</p>
  */
 @Entity
-@Table(name = "sys_dict_type")
+@Table(name = "ap_sys_dict_type")
 @Getter
 @Setter
 @Builder

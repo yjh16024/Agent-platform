@@ -1,13 +1,15 @@
 package com.agentplatform.core.model.springai;
 
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.agentplatform.core.model.adapter.MockModelAdapter;
-import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.model.adapter.OpenAiCompatibleAdapter;
 import com.agentplatform.core.model.factory.ModelProviderFactory;
 import com.agentplatform.core.model.router.ModelRouter;
-import com.agentplatform.core.tool.Tool;
-import com.agentplatform.core.tool.ToolContext;
-import com.agentplatform.core.tool.ToolResult;
 import com.agentplatform.core.tool.executor.ToolExecutor;
 import com.agentplatform.core.tool.registry.ToolRegistry;
 import tools.jackson.databind.JsonNode;

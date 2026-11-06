@@ -3,7 +3,7 @@ $env:JAVA_HOME = 'C:\Program Files\Java\jdk-21.0.12'
 $root = Split-Path -Parent $PSScriptRoot
 $jar = "$root\agent-platform-core\target\agent-platform-core-1.1.0.jar"
 $port = 18112
-$proc = Start-Process -FilePath "$env:JAVA_HOME\bin\java.exe" -ArgumentList '--enable-preview', '-Xms128m', '-Xmx1g', '-jar', $jar, '--spring.profiles.active=embedded', "--server.port=$port" -RedirectStandardOutput "$env:TEMP\ap-ho.log" -RedirectStandardError "$env:TEMP\ap-ho.err" -PassThru -WorkingDirectory $root
+$proc = Start-Process -FilePath "$env:JAVA_HOME\bin\java.exe" -ArgumentList '-Xms128m', '-Xmx1g', '-jar', $jar, '--spring.profiles.active=embedded', "--server.port=$port" -RedirectStandardOutput "$env:TEMP\ap-ho.log" -RedirectStandardError "$env:TEMP\ap-ho.err" -PassThru -WorkingDirectory $root
 
 $base = "http://127.0.0.1:$port"
 $H = @{ 'X-Tenant-Id' = 'default' }

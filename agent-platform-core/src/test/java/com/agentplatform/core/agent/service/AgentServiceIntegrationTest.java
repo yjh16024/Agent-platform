@@ -1,5 +1,9 @@
 package com.agentplatform.core.agent.service;
 
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.core.agent.dto.AgentCreateRequest;
 import com.agentplatform.core.agent.dto.AgentResponse;
@@ -52,7 +56,7 @@ class AgentServiceIntegrationTest {
         // 使用 Mock 模型 + 手工路由，无需真实 LLM
         ModelRouter router = mock(ModelRouter.class);
         when(router.chat(any(), any())).thenAnswer(inv -> {
-            var req = inv.getArgument(1, com.agentplatform.core.model.adapter.ModelAdapter.ChatRequest.class);
+            var req = inv.getArgument(1, ModelAdapter.ChatRequest.class);
             return new MockModelAdapter().chat(req);
         });
         ExtensionRegistry registry = new ExtensionRegistry(new ToolRegistry());

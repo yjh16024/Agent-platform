@@ -1,5 +1,7 @@
 package com.agentplatform.core.plugin.marketplace;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.common.util.IdGenerator;
 import com.agentplatform.common.util.JsonUtils;

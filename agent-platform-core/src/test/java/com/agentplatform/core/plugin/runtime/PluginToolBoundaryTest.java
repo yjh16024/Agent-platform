@@ -1,10 +1,11 @@
 package com.agentplatform.core.plugin.runtime;
 
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.dto.ApiResponse;
-import com.agentplatform.core.tool.Tool;
-import com.agentplatform.core.tool.ToolContext;
 import com.agentplatform.core.tool.ToolController;
-import com.agentplatform.core.tool.ToolResult;
 import com.agentplatform.core.tool.registry.ToolRegistrationService;
 import com.agentplatform.core.tool.registry.ToolRegistry;
 import com.agentplatform.plugin.sdk.PluginTool;

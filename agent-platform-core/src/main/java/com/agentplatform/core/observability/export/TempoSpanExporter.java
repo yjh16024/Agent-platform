@@ -1,5 +1,7 @@
 package com.agentplatform.core.observability.export;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.log.LogEvent;
 import com.agentplatform.core.log.LogEventSink;

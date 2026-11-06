@@ -3,7 +3,7 @@
 // - 单实例锁；退出/窗口关闭回收后端子进程；日志写入 userData/app.log 便于排查。
 'use strict';
 
-const { app, BrowserWindow, ipcMain, nativeTheme, Menu, dialog, utilityProcess } = require('electron');
+const { app, BrowserWindow, ipcMain, nativeTheme, Menu, dialog, utilityProcess, safeStorage } = require('electron');
 const { spawn } = require('child_process');
 const http = require('http');
 const net = require('net');
@@ -234,7 +234,6 @@ async function startBackend() {
   //  - UseSerialGC：小堆用串行 GC，省掉并行 GC 线程的初始化开销；
   //  - lazy-initialization：bean 延迟初始化，缩短启动阻塞（代价：某功能首次点击时才初始化）。
   const args = [
-    '--enable-preview',
     '-Xms128m', '-Xmx1g',
     '-XX:TieredStopAtLevel=1',
     '-XX:+UseSerialGC',
@@ -401,6 +400,97 @@ if (!gotLock) {
       hostBridge.setAuth(payload || {});
     }
     return { ok: true };
+  });
+
+  /*
+   * ---- 加密凭据存储（2026-10-24）----
+   *
+   * 用途：记住登录账号密码、自动登录。QQ / 微信都是这么做的 ——
+   * **不是明文存密码**，而是交给系统级加密：
+   *   · Windows  → DPAPI（绑当前用户，换个用户/拷走文件都解不开）
+   *   · macOS    → Keychain
+   *   · Linux    → libsecret / kwallet
+   *
+   * Electron 把这三者统一成 `safeStorage`，所以这套代码跨平台通用。
+   *
+   * 为什么不用 localStorage：
+   *   ① 明文，任何人打开 DevTools 就能读到；
+   *   ② 浏览器配置文件拷走就等于密码泄露；
+   *   ③ 明文密码还会被安全软件当"泄露凭证"报警。
+   *
+   * 为什么放主进程：只有主进程能调 safeStorage，渲染进程（网页）拿不到密钥。
+   * 存到 `userData/secrets.json`，值是 base64 的密文。
+   */
+  const secretsFilePath = () => path.join(app.getPath('userData'), 'secrets.json');
+
+  const readSecrets = () => {
+    try {
+      const raw = JSON.parse(fs.readFileSync(secretsFilePath(), 'utf8'));
+      return raw && typeof raw === 'object' ? raw : {};
+    } catch {
+      return {};   // 没有文件 = 第一次用，正常
+    }
+  };
+
+  const writeSecrets = (obj) => {
+    fs.writeFileSync(secretsFilePath(), JSON.stringify(obj, null, 2), 'utf8');
+  };
+
+  /** 系统加密是否可用（少数精简版 Linux 没装 libsecret 时会返回 false）。 */
+  ipcMain.handle('ap:secret-available', () => {
+    try {
+      return safeStorage.isEncryptionAvailable();
+    } catch {
+      return false;
+    }
+  });
+
+  ipcMain.handle('ap:secret-set', (_e, payload) => {
+    const key = String((payload && payload.key) || '');
+    const value = payload && payload.value;
+    if (!key || typeof value !== 'string') {
+      return { ok: false, error: '参数不合法' };
+    }
+    if (!safeStorage.isEncryptionAvailable()) {
+      return { ok: false, error: '当前系统不支持加密存储' };
+    }
+    try {
+      const all = readSecrets();
+      all[key] = safeStorage.encryptString(value).toString('base64');
+      writeSecrets(all);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  ipcMain.handle('ap:secret-get', (_e, payload) => {
+    const key = String((payload && payload.key) || '');
+    if (!key) {
+      return { ok: false, error: '参数不合法' };
+    }
+    const b64 = readSecrets()[key];
+    if (!b64) {
+      return { ok: true, value: null };   // 没存过
+    }
+    try {
+      return { ok: true, value: safeStorage.decryptString(Buffer.from(b64, 'base64')) };
+    } catch {
+      // 换电脑 / 换 Windows 用户 / 密文损坏 —— 让前端清掉重填
+      return { ok: false, error: '解密失败（换了电脑或用户？）' };
+    }
+  });
+
+  ipcMain.handle('ap:secret-remove', (_e, payload) => {
+    const key = String((payload && payload.key) || '');
+    try {
+      const all = readSecrets();
+      delete all[key];
+      writeSecrets(all);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
   });
 
   ipcMain.handle('ap:host-status', (_e, payload) => {

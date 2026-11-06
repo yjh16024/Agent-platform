@@ -32,7 +32,7 @@ public interface ChunkRepository extends JpaRepository<Chunk, Long> {
      * （如单字）可能无命中，调用方需回退到顺序扫描。</p>
      */
     @Query(value = """
-            SELECT c.* FROM chunk c
+            SELECT c.* FROM ap_chunk c
             WHERE c.kb_id IN (:kbIds)
               AND MATCH(c.content) AGAINST (:query IN NATURAL LANGUAGE MODE)
             LIMIT :limit

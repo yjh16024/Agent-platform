@@ -23,7 +23,7 @@ import java.util.Map;
  * Skill 定义实体（导入的 Skill 包元数据）。
  */
 @Entity
-@Table(name = "skill_def")
+@Table(name = "ap_skill_def")
 @Getter
 @Setter
 @Builder

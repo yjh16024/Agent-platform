@@ -28,7 +28,7 @@ import java.time.LocalDateTime;
  * </p>
  */
 @Entity
-@Table(name = "sys_user")
+@Table(name = "ap_sys_user")
 @Getter
 @Setter
 @Builder

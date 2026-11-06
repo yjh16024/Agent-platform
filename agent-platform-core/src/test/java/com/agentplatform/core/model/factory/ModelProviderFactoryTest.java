@@ -1,7 +1,8 @@
 package com.agentplatform.core.model.factory;
 
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.agentplatform.core.model.adapter.MockModelAdapter;
-import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.model.adapter.OpenAiCompatibleAdapter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;

@@ -166,6 +166,52 @@ class BuiltinWebContentPluginTest {
     }
 
     @Test
+    @DisplayName("图片搜索：堆糖解析（object_list[].photo.path，无图的跳过）")
+    void parsesDuitang() {
+        String json = "{\"data\":{\"object_list\":["
+                + "{\"msg\":\"头像动漫\",\"photo\":{\"path\":\"https://a-ho-img.dtstatic.com/1.jpg\",\"width\":1440}},"
+                + "{\"msg\":\"这条没有图\"},"
+                + "{\"msg\":\"\",\"photo\":{\"path\":\"https://a-ho-img.dtstatic.com/2.jpeg\"}}]}}";
+
+        List<String[]> items = BuiltinWebContentPlugin.parseDuitang(json, 10);
+
+        assertEquals(2, items.size());
+        assertEquals("头像动漫", items.get(0)[0]);
+        assertEquals("https://a-ho-img.dtstatic.com/1.jpg", items.get(0)[1]);
+        assertEquals("https://a-ho-img.dtstatic.com/2.jpeg", items.get(1)[1]);
+    }
+
+    @Test
+    @DisplayName("图片搜索：花瓣解析（file.url 优先，缺则用 key 拼）")
+    void parsesHuaban() {
+        String json = "{\"pins\":["
+                + "{\"raw_text\":\"♡JUICY♡\",\"file\":{\"url\":\"https://gd-hbimg-edge.huaban.com/abc?auth_key=1\"}},"
+                + "{\"raw_text\":\"\",\"file\":{\"key\":\"def\"}},"
+                + "{\"raw_text\":\"无文件\"}]}";
+
+        List<String[]> items = BuiltinWebContentPlugin.parseHuaban(json, 10);
+
+        assertEquals(2, items.size(), "第三个 pin 没有 file，应跳过");
+        assertEquals("https://gd-hbimg-edge.huaban.com/abc?auth_key=1", items.get(0)[1]);
+        assertEquals("https://hbimg.huaban.com/def", items.get(1)[1]);
+    }
+
+    @Test
+    @DisplayName("图片搜索：多源合并时按 URL 去重")
+    void dedupesAcrossSources() {
+        List<String[]> raw = List.of(
+                new String[]{"a", "https://x.com/1.jpg"},
+                new String[]{"b", "https://x.com/2.jpg"},
+                new String[]{"c", "https://x.com/1.jpg"});
+
+        List<String[]> out = BuiltinWebContentPlugin.dedupe(raw, 10);
+
+        assertEquals(2, out.size());
+        assertEquals("https://x.com/1.jpg", out.get(0)[1]);
+        assertEquals("https://x.com/2.jpg", out.get(1)[1]);
+    }
+
+    @Test
     @DisplayName("图片搜索：360 JSON 解析（img / thumb）")
     void parsesSoImages() {
         String json = "{\"list\":["

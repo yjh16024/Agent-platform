@@ -40,6 +40,15 @@ public interface MessageRepository extends JpaRepository<Message, Long> {
     long countBySessionId(String sessionId);
 
     /**
+     * 列出所有有消息的会话 ID（框架 {@code SessionStore.conversationIds} 用）。
+     *
+     * <p>不用 {@code session_def} 而用 {@code message} 去重：框架的语义是
+     * 「有历史的会话」，与平台「建过会话但没说过话」的空壳区分开。</p>
+     */
+    @Query("SELECT DISTINCT m.sessionId FROM Message m")
+    List<String> findDistinctSessionIds();
+
+    /**
      * 按业务 ID 批量取消息（**向量记忆召回后回取原文用**）。
      *
      * <p>为什么必须回取原文、而不是把文本一并塞进向量库的 metadata：

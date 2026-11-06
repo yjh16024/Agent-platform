@@ -33,7 +33,7 @@ import java.time.LocalDateTime;
  * </p>
  */
 @Entity
-@Table(name = "agent_def")
+@Table(name = "ap_agent_def")
 @Getter
 @Setter
 @Builder

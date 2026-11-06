@@ -1,10 +1,13 @@
 package com.agentplatform.core.agent.runtime;
 
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.agentplatform.core.agent.dto.AgentRunRequest;
 import com.agentplatform.core.agent.service.AgentService;
 import com.agentplatform.core.memory.ConversationMemoryService;
 import com.agentplatform.core.memory.UserFactService;
-import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.model.router.ModelRouter;
 import com.agentplatform.core.plugin.runtime.AgentPipeline;
 import com.agentplatform.core.plugin.runtime.ExtensionRegistry;
@@ -89,6 +92,9 @@ class AgentRuntimeServicePromptParityTest {
 
         ReflectionTestUtils.setField(service, "userFactService", facts);
         ReflectionTestUtils.setField(service, "conversationMemoryService", vector);
+        // 该字段只有 @Value 没有初始值，手工 new 出来的实例恒为 false，
+        // 会让 recallHistory 直接短路（本测试要验的正是召回注入，必须显式打开）。
+        ReflectionTestUtils.setField(service, "memoryRecallEnabled", true);
     }
 
     private AgentDefinition agentDef() {

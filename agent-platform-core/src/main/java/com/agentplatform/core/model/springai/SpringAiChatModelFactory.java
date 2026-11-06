@@ -182,7 +182,8 @@ public class SpringAiChatModelFactory {
     public static String family(String provider) {
         String p = provider == null || provider.isBlank() ? "auto" : provider.toLowerCase();
         return switch (p) {
-            case "auto", "openai", "qwen", "ernie", "hunyuan", "deepseek" -> OPENAI_FAMILY;
+            // siliconflow 同样是 OpenAI 兼容协议（2026-10-23 补，此前对话侧漏登记）
+            case "auto", "openai", "qwen", "ernie", "hunyuan", "deepseek", "siliconflow" -> OPENAI_FAMILY;
             case "anthropic" -> ANTHROPIC_FAMILY;
             default -> p;
         };

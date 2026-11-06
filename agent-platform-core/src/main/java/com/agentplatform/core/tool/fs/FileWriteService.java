@@ -1,5 +1,8 @@
 package com.agentplatform.core.tool.fs;
 
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.exception.BizException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

@@ -26,7 +26,7 @@ import java.util.Map;
  * </p>
  */
 @Entity
-@Table(name = "log_index")
+@Table(name = "ap_log_index")
 @Getter
 @Setter
 @Builder

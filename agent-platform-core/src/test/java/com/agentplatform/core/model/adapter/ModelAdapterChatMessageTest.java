@@ -1,5 +1,9 @@
 package com.agentplatform.core.model.adapter;
 
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelAdapter;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import tools.jackson.databind.JsonNode;
@@ -266,6 +270,37 @@ class ModelAdapterChatMessageTest {
         assertEquals("assistant", msg.get("role"));
         assertTrue(msg.containsKey("reasoning_content"), "thinking 模式下 assistant 必须带这个字段");
         assertEquals("", msg.get("reasoning_content"));
+    }
+
+    @Test
+    @DisplayName("★ 多模态：带图片的消息 → content 变成 text + image_url 数组（2026-10-22）")
+    void openAiBuildsImageContent() {
+        ModelAdapter.ChatMessage m = ModelAdapter.ChatMessage.withImages(
+                "user", "看着这些图挑一张",
+                List.of("https://img1.baidu.com/a.jpg", "https://img2.baidu.com/b.png"));
+
+        Map<String, Object> msg = openai.toOpenAiMessage(m);
+
+        assertEquals("user", msg.get("role"));
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> parts = (List<Map<String, Object>>) msg.get("content");
+        assertEquals(3, parts.size(), "1 段文字 + 2 张图");
+        assertEquals("text", parts.get(0).get("type"));
+        assertEquals("看着这些图挑一张", parts.get(0).get("text"));
+        assertEquals("image_url", parts.get(1).get("type"));
+
+        @SuppressWarnings("unchecked")
+        Map<String, Object> img = (Map<String, Object>) parts.get(1).get("image_url");
+        assertEquals("https://img1.baidu.com/a.jpg", img.get("url"));
+    }
+
+    @Test
+    @DisplayName("没有图片的消息仍走纯文本（不受多模态改动影响）")
+    void plainMessageStaysText() {
+        Map<String, Object> msg = openai.toOpenAiMessage(
+                new ModelAdapter.ChatMessage("user", "你好"));
+
+        assertEquals("你好", msg.get("content"));
     }
 
     @Test

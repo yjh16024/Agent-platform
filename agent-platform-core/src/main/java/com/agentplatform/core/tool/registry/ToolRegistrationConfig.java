@@ -1,6 +1,7 @@
 package com.agentplatform.core.tool.registry;
 
-import com.agentplatform.core.tool.Tool;
+import com.agentplatform.framework.api.Tool;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.event.ApplicationReadyEvent;

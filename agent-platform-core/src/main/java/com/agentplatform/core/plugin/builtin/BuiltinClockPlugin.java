@@ -1,5 +1,7 @@
 package com.agentplatform.core.plugin.builtin;
 
+import com.agentplatform.framework.api.ToolResult;
+
 import com.agentplatform.plugin.sdk.PluginContext;
 import com.agentplatform.plugin.sdk.PluginDescriptor;
 import com.agentplatform.plugin.sdk.PluginTool;

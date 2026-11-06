@@ -1,8 +1,12 @@
 package com.agentplatform.core.model.adapter;
 
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelAdapter;
+import com.agentplatform.framework.api.ModelCapability;
+
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.common.util.JsonUtils;
-import com.agentplatform.core.model.ModelCapability;
 import tools.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.MediaType;

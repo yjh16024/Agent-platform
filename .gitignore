@@ -1,5 +1,8 @@
 # Maven
 target/
+# 构建输出现在固定写到 target/tmp-build（见 agent-platform-core/pom.xml）；
+# 这一条是保险：万一以后有脚本在根目录生成同名目录，也不该进版本库
+target-build/
 *.jar
 *.war
 !.mvn/wrapper/maven-wrapper.jar
@@ -39,6 +42,11 @@ docs/design.md
 docs/technology.md
 docs/phase-reports.md
 docs/workflow-canvas-feasibility.md
+docs/framework-plan.md
+docs/框架重构实施计划.md
+docs/框架重构技术方案.md
+docs/开题报告批注改动建议.md
+docs/灵感涌现实现设计.md
 
 # IDE/工具运行时数据
 .codebuddy/
@@ -46,3 +54,16 @@ docs/workflow-canvas-feasibility.md
 .claude/settings.local.json
 /个人简历-姚嘉昊1.docx
 /docs/roadmap.md
+# 部署文档（含服务器路径、端口等环境信息，不进版本库）
+/docs/deployment.md
+/2.3-山西大学本科毕业论文（设计）开题报告(1).doc
+/2.3-山西大学本科毕业论文（设计）开题报告-修订版-v2.doc
+/2.3-山西大学本科毕业论文（设计）开题报告-修订版-v3.doc
+/2.3-山西大学本科毕业论文（设计）开题报告-修订版.doc
+
+# 两个插件的源码不随本仓库提交（QQ 机器人 / MC 助手）。
+# 随平台分发的形态是 plugin-web-example/*.zip（预设内置插件），所以只排除解包后的目录。
+plugin-web-example/qq-agent/
+plugin-web-example/mc-agent/
+# 临时自检脚本（跑完即删，别再进版本库）
+/desktop/_probe-*

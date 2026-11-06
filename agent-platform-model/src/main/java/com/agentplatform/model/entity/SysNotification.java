@@ -36,7 +36,7 @@ import java.time.LocalDateTime;
  * （{@code IdGenerator.generate("notice")}），对外只暴露后者。</p>
  */
 @Entity
-@Table(name = "sys_notification")
+@Table(name = "ap_sys_notification")
 @Getter
 @Setter
 @Builder

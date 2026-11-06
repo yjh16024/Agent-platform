@@ -1,5 +1,7 @@
 package com.agentplatform.core.agent.dto;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.core.tool.executor.ToolCallRecord;
 
 import java.util.List;

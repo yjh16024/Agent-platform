@@ -23,7 +23,7 @@ import java.util.Map;
  * <p>MySQL 存元数据 + 内容 + 引用溯源；向量存 Milvus（external_id 关联）。</p>
  */
 @Entity
-@Table(name = "chunk")
+@Table(name = "ap_chunk")
 @Getter
 @Setter
 @Builder

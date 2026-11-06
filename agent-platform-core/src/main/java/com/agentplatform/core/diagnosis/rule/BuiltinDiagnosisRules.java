@@ -1,5 +1,7 @@
 package com.agentplatform.core.diagnosis.rule;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.model.enums.ErrorSeverity;
 import com.agentplatform.model.record.DiagnosticReport;
 import org.springframework.stereotype.Component;

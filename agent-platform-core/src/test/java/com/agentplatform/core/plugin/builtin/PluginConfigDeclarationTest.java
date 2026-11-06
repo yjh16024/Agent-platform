@@ -187,13 +187,35 @@ class PluginConfigDeclarationTest {
      */
     private static JsonNode probeFor(ConfigFieldDef f) {
         return switch (f.kind()) {
-            case number -> JsonNodeFactory.instance.numberNode(
-                    f.min() != null ? f.min() : 7.5);
+            case number -> JsonNodeFactory.instance.numberNode(probeNumber(f));
             // 开关要探与默认相反的值：取 true 就会撞上默认 true 的字段（如"失败时推送"）
             case bool -> JsonNodeFactory.instance.booleanNode(!"true".equalsIgnoreCase(f.defaultValue()));
             case select -> JsonNodeFactory.instance.textNode(pickNotDefault(f));
             default -> JsonNodeFactory.instance.textNode(PROBE);
         };
+    }
+
+    /**
+     * 数值字段的探测值：取范围内**与默认值不同**的数。
+     *
+     * <p>原来直接取 {@code min}，结果 {@code seed}（范围 0..2147483647、默认 0）
+     * 的探测值正好等于默认值，解析结果不变，被误判成「这个键没被读到」。
+     * 与上面 select 的坑是同一类：<b>探测值必须能体现差异</b>。</p>
+     */
+    private static double probeNumber(ConfigFieldDef f) {
+        double min = f.min() == null ? 0d : f.min();
+        double max = f.max() == null ? min + 100d : f.max();
+        double candidate = min;
+        if (f.defaultValue() != null) {
+            try {
+                if (Double.parseDouble(f.defaultValue().trim()) == candidate) {
+                    candidate = Math.min(candidate + 1d, max);
+                }
+            } catch (NumberFormatException ignored) {
+                // 默认值不是数字：保持 min 即可
+            }
+        }
+        return candidate;
     }
 
     /** 从选项里挑一个与默认值不同的；全等则用探测串。 */

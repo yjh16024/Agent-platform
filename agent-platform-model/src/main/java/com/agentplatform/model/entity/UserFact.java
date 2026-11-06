@@ -35,7 +35,7 @@ import java.time.LocalDateTime;
  * （仓储方法签名强制，不提供"只按 factId 查"的方法）；并支持用户一键清除。
  */
 @Entity
-@Table(name = "sys_user_fact")
+@Table(name = "ap_sys_user_fact")
 @Getter
 @Setter
 @Builder

@@ -19,7 +19,7 @@ import java.time.LocalDateTime;
  * 知识库实体。
  */
 @Entity
-@Table(name = "knowledge_base")
+@Table(name = "ap_knowledge_base")
 @Getter
 @Setter
 @Builder

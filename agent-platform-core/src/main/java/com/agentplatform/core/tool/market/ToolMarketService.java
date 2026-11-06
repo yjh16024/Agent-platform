@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.market;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.tool.registry.ToolRegistrationService;

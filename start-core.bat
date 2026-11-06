@@ -2,7 +2,7 @@
 REM ============================================================
 REM Agent Platform - Windows one-click startup
 REM Flow: kill stale instance -> start local Redis -> optional build -> run Core 8081
-REM Prereq: JDK 21 (project uses Java preview feature, run requires --enable-preview),
+REM Prereq: JDK 21 (no preview feature required since 2026-11-06),
 REM         Maven 3.9+, local MySQL running (db agent_platform, user agent)
 REM Usage:  double-click, or in cmd run:  start-core.bat
 REM         start-core.bat rebuild   force rebuild before start
@@ -93,7 +93,7 @@ if not defined JWT_SECRET set "JWT_SECRET=local-dev-only-change-me-32bytes-01234
 set "JAVA_CMD=java"
 if defined JAVA_HOME set "JAVA_CMD=%JAVA_HOME%\bin\java.exe"
 echo [3/3] Starting core service on port 8081 (DB_MODE=%DB_MODE%)...
-"%JAVA_CMD%" --enable-preview -XX:+UseZGC -Xms256m -Xmx1g -jar "%JAR_FILE%" --spring.profiles.active=%DB_MODE%
+"%JAVA_CMD%" -XX:+UseZGC -Xms256m -Xmx1g -jar "%JAR_FILE%" --spring.profiles.active=%DB_MODE%
 if errorlevel 1 goto :fail
 goto :eof
 

@@ -1,7 +1,12 @@
 package com.agentplatform.core.tool.executor;
 
+import com.agentplatform.framework.api.ToolFilter;
+import com.agentplatform.framework.api.ToolInvocation;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.ToolChain;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.util.TraceContext;
-import com.agentplatform.core.tool.ToolResult;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.annotation.Order;
@@ -45,8 +50,8 @@ import java.util.concurrent.TimeoutException;
  * <h3>为什么用虚拟线程执行后续链</h3>
  * 因为需要"在另一个执行体上跑、在主线程限时等"这一件事。虚拟线程按需创建、
  * 阻塞时开销极小，正好适合（工具执行绝大多数时间都花在等待上）。
- * <b>同时必须重新绑定 {@code TraceContext}</b>：ScopedValue 不随新线程继承
- * （区别于 ThreadLocal 的 inheritable），不重绑的话工具内部的日志会各自生成随机 traceId，
+ * <b>同时必须重新绑定 {@code TraceContext}</b>：它的 ThreadLocal 不是 inheritable，
+ * 不会随新线程继承；不重绑的话工具内部的日志会各自生成随机 traceId，
  * 一次运行的日志就被打散了。
  */
 @Slf4j
@@ -86,7 +91,7 @@ public class TimeoutToolFilter implements ToolFilter {
         }
 
         String toolName = invocation.toolName();
-        // 先取上下文：ScopedValue 要在新线程里重新绑定（见类注释）
+        // 先取上下文：TraceContext 要在新线程里重新绑定（见类注释）
         String traceId = TraceContext.traceId();
         String runId = TraceContext.runId();
         String tenantId = invocation.ctx() == null ? null : invocation.ctx().tenantId();

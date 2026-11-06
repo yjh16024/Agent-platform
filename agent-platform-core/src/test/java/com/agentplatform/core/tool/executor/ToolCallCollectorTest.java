@@ -1,6 +1,8 @@
 package com.agentplatform.core.tool.executor;
 
-import com.agentplatform.core.tool.ToolResult;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

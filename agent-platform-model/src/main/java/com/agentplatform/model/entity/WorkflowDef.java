@@ -22,7 +22,7 @@ import java.util.Map;
  * 工作流定义实体。
  */
 @Entity
-@Table(name = "workflow_def")
+@Table(name = "ap_workflow_def")
 @Getter
 @Setter
 @Builder

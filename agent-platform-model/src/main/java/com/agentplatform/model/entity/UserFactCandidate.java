@@ -42,7 +42,7 @@ import java.time.LocalDateTime;
  * 所以重复抽取是 upsert 覆盖而不是堆积。</p>
  */
 @Entity
-@Table(name = "sys_user_fact_candidate")
+@Table(name = "ap_sys_user_fact_candidate")
 @Getter
 @Setter
 @Builder

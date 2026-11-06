@@ -19,7 +19,7 @@ import java.time.LocalDateTime;
  * 上传文档实体（元数据 + 处理状态）。
  */
 @Entity
-@Table(name = "document")
+@Table(name = "ap_document")
 @Getter
 @Setter
 @Builder

@@ -1,9 +1,11 @@
 package com.agentplatform.core.tool.registry;
 
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.tool.executor.HttpApiTool;
-import com.agentplatform.core.tool.ToolResult;
-import com.agentplatform.core.tool.ToolContext;
 import com.agentplatform.model.entity.ToolRegistration;
 import com.agentplatform.model.repository.ToolRegistrationRepository;
 import tools.jackson.databind.JsonNode;

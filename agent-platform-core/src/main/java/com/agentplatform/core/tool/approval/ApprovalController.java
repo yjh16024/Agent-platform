@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.approval;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.dto.ApiResponse;
 import com.agentplatform.common.dto.PageResult;
 import com.agentplatform.core.security.rbac.RbacContext;

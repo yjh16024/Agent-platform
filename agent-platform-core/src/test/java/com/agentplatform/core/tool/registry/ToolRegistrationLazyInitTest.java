@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.registry;
 
+import com.agentplatform.framework.api.Tool;
+
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;

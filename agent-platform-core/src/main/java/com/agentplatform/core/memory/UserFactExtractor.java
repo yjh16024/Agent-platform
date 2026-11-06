@@ -1,7 +1,8 @@
 package com.agentplatform.core.memory;
 
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.agentplatform.common.util.JsonUtils;
-import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.model.router.ModelRouter;
 import com.agentplatform.core.settings.PlatformSettingRegistry;
 import com.agentplatform.core.settings.PlatformSettingService;

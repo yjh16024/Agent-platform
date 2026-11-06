@@ -1,10 +1,11 @@
 package com.agentplatform.core.diagnosis.strategy;
 
+import com.agentplatform.framework.api.ModelAdapter;
+import com.agentplatform.framework.api.ModelCapability;
+
 import com.agentplatform.common.util.IdGenerator;
 import com.agentplatform.core.diagnosis.DiagnosisContext;
 import com.agentplatform.core.diagnosis.DiagnosisStrategy;
-import com.agentplatform.core.model.ModelCapability;
-import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.model.router.ModelRouter;
 import com.agentplatform.model.enums.ErrorSeverity;
 import com.agentplatform.model.enums.SolutionType;

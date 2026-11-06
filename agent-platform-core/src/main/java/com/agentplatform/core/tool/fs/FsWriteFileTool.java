@@ -1,10 +1,11 @@
 package com.agentplatform.core.tool.fs;
 
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.security.rbac.RbacContext;
-import com.agentplatform.core.tool.Tool;
-import com.agentplatform.core.tool.ToolContext;
-import com.agentplatform.core.tool.ToolResult;
 import com.agentplatform.core.tool.approval.ApprovalService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

@@ -21,7 +21,7 @@ import java.time.LocalDateTime;
  * 的既有做法一致，按类型取项时免回表 {@code sys_dict_type}。</p>
  */
 @Entity
-@Table(name = "sys_dict_item")
+@Table(name = "ap_sys_dict_item")
 @Getter
 @Setter
 @Builder

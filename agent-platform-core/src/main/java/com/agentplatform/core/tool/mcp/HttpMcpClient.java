@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.mcp;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.common.util.JsonUtils;
 import tools.jackson.databind.JsonNode;

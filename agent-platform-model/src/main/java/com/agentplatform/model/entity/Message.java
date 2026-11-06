@@ -26,7 +26,7 @@ import java.util.Map;
  * </p>
  */
 @Entity
-@Table(name = "message")
+@Table(name = "ap_message")
 @Getter
 @Setter
 @Builder
@@ -72,6 +72,15 @@ public class Message {
 
     @Column(name = "model", length = 64)
     private String model;
+
+    /**
+     * 工具调用 ID（仅 {@code role=tool} 时非空，2026-11-06 R10）。
+     *
+     * <p>没有它，读回的历史就只剩纯文本工具消息，上游会把"没有对应调用的工具结果"
+     * 判为非法请求。可空是因为绝大多数消息本来就没有工具调用。</p>
+     */
+    @Column(name = "tool_call_id", length = 120)
+    private String toolCallId;
 
     @Column(name = "created_at", nullable = false, insertable = false, updatable = false)
     private LocalDateTime createdAt;

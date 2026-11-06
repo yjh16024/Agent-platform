@@ -568,7 +568,7 @@ function createHostBridge(opts) {
    * <p>插件导出约定：`{ start(api), stop(), methods: { name: fn } }`；
    * `api` = `{ pluginId, dataDir, logger, platform.request }`。</p>
    */
-  async function loadPlugin(pluginId, pluginDir, mainFile) {
+  async function loadPluginNow(pluginId, pluginDir, mainFile) {
     try {
       ensurePluginId(pluginId);
       if (!pluginDir) {
@@ -583,7 +583,12 @@ function createHostBridge(opts) {
       if (!utilityProcess || !runtimeScript) {
         // 极旧 Electron 的兜底：主进程内加载（隔离失效，明确记一笔）
         log('[host] utilityProcess 不可用，插件将运行在主进程内（**没有崩溃隔离**）');
-        return await inlineLoad(pluginId, pluginDir, mainFile);
+        const r = await inlineLoad(pluginId, pluginDir, mainFile);
+        // 兜底路径也要能热重载，否则这条分支上"改文件没反应"根本查不出来
+        if (r.ok) {
+          watchPlugin(pluginId, pluginDir, mainFile);
+        }
+        return r;
       }
 
       const child = utilityProcess.fork(runtimeScript, [], {
@@ -613,6 +618,8 @@ function createHostBridge(opts) {
         return { ok: false, error: res.error || '插件加载失败' };
       }
       audit({ type: 'plugin-load', pluginId, isolated: true });
+      // 加载成功后开热重载：之后改 main.js 不用重启 dev（2026-10-23）
+      watchPlugin(pluginId, pluginDir, mainFile);
       return { ok: true };
     } catch (e) {
       return { ok: false, error: (e && e.stack) || String(e) };
@@ -652,7 +659,7 @@ function createHostBridge(opts) {
   }
 
   /** 卸载插件的 Node 侧：先请它优雅 stop，再杀进程（停不掉就强杀，避免僵尸）。 */
-  async function unloadPlugin(pluginId) {
+  async function unloadPluginNow(pluginId) {
     const session = children.get(pluginId);
     if (session) {
       await request(session, { type: 'stop' }, 10_000);
@@ -674,6 +681,207 @@ function createHostBridge(opts) {
     }
     loadedPlugins.delete(pluginId);
     return { ok: true };
+  }
+
+  // ---------------------------------------------------------------- 串行化（2026-11-04）
+
+  /**
+   * 每个插件一条串行队列（load / unload 不再互相插队）。
+   *
+   * <p><b>为什么必须串行</b>：界面上"关掉再打开"时，卸载是从 Disposer 里
+   * `void unloadPlugin(...)` 发起的 —— **没有 await**。用户手快一点，
+   * `loadPlugin` 会在 unload 还没跑完时就到达；那一刻 `children` 里还是旧进程，
+   * 于是 `loadPlugin` 命中 `already:true` 直接返回成功，**新代码根本没加载**，
+   * 老进程继续跑。表现就是"开关了插件，版本却没变"。</p>
+   *
+   * <p>串行之后：load 一定排在 unload 之后，`children` 已被清空，必然是真正的新进程。</p>
+   */
+  const pluginOps = new Map();
+
+  function enqueueOp(pluginId, fn) {
+    const prev = pluginOps.get(pluginId) || Promise.resolve();
+    const next = prev.catch(() => {}).then(fn);
+    // 队列不能因为某次失败就断掉，所以这里吞掉拒绝（调用方拿到的仍是原 promise）
+    pluginOps.set(pluginId, next.catch(() => {}));
+    return next;
+  }
+
+  /** 加载（串行：会等前一个 unload 完成）。 */
+  function loadPlugin(pluginId, pluginDir, mainFile) {
+    return enqueueOp(pluginId, () => loadPluginNow(pluginId, pluginDir, mainFile));
+  }
+
+  /** 卸载（串行）。 */
+  function unloadPlugin(pluginId) {
+    return enqueueOp(pluginId, () => unloadPluginNow(pluginId));
+  }
+
+  // ---------------------------------------------------------------- 热重载（2026-10-23）
+
+  /** pluginId → { watcher, timer, pluginDir, mainFile } */
+  const pluginWatchers = new Map();
+
+  /**
+   * 监听插件的**入口文件**，一变就重启它的子进程。
+   *
+   * <p><b>为什么需要</b>：插件 `main.js` 是子进程启动时加载的，改文件不会热更新。
+   * 以前每次改插件都得重启整个 dev（连着 Electron 一起），一次迭代 20 秒起步，
+   * 一天几十次就是十几分钟的纯等待。</p>
+   *
+   * <p><b>为什么从"递归监听目录"改成"逐文件轮询"（2026-11-04）</b>：
+   * 原来用 `fs.watch(dir, { recursive: true })`，它在 Windows 上要给**每个子目录**
+   * 建一个句柄。QQ 助手的 `node_modules` 只有一个 `ws`，所以没事；但 MC 助手的
+   * `node_modules` 有 90+ 个包、上千个文件/目录 —— 注册就慢，还很容易撞上
+   * `EPERM` / `ENOSPC`（句柄耗尽），一旦抛错就落到 `目录不可监听（热重载关闭）`，
+   * 之后改文件**完全没反应**。用户看到的现象就是"QQ 插件能热重载，MC 插件不行"。</p>
+   *
+   * <p>`fs.watchFile` 是 stat 轮询：不建句柄、不关心目录里有多少东西，
+   * 800ms 一次对本地开发完全够用，只盯 `main.js` / `manifest.json` / `package.json`
+   * 这三个真正需要重启的文件。</p>
+   *
+   * <p><b>代价</b>：内存态会丢（连接、计时器、打字中状态）。落盘的数据都在，影响可接受。</p>
+   */
+  function watchPlugin(pluginId, pluginDir, mainFile) {
+    if (pluginWatchers.has(pluginId)) {
+      return;
+    }
+    const state = { pluginDir, mainFile: mainFile || 'main.js', timer: null, watchers: [] };
+    const entryName = state.mainFile;
+
+    const trigger = (f) => {
+      /*
+       * 插件已经卸载/禁用时不要再把它拉起来 ——
+       * 否则用户在插件页点了"停用"，随便动一下文件它就自己活了。
+       */
+      if (!children.has(pluginId) && !loadedPlugins.has(pluginId)) {
+        return;
+      }
+      clearTimeout(state.timer);
+      state.timer = setTimeout(() => {
+        log(`[plugin:${pluginId}] ${f} 变了，自动重启插件进程`);
+        restartPlugin(pluginId).catch((e) => log(`[plugin:${pluginId}] 热重载失败：${e && e.message}`));
+      }, 600);
+    };
+
+    for (const name of [entryName, 'manifest.json', 'package.json']) {
+      const p = path.join(pluginDir, name);
+      try {
+        fs.watchFile(p, { interval: 800 }, (cur, prev) => {
+          if (!cur || !prev) {
+            return;
+          }
+          /*
+           * `ino` 也要比（2026-11-04）：**覆盖安装常常保留压缩包里原来的时间戳**，
+           * 新文件的 mtime 可能比旧的还早 —— 只比 mtime 的话会判成"没变化"，
+           * 于是"装上了但还在跑旧代码"。文件被替换时 inode/fileId 一定会变。
+           */
+          if (cur.mtimeMs !== prev.mtimeMs || cur.size !== prev.size || cur.ino !== prev.ino) {
+            trigger(name);
+          }
+        });
+        state.watchers.push(p);
+      } catch (e) {
+        log(`[plugin:${pluginId}] 无法监听 ${name}：${e && e.message}`);
+      }
+    }
+
+    /*
+     * 再加一层**目录级（非递归）**监听：上传 zip / 整目录覆盖时，
+     * 是"删目录 + 移动新目录"，文件可能带着旧时间戳、inode 也可能撞车，
+     * 而目录里的 create/rename 事件一定会来。非递归只占一个句柄，
+     * 不会像递归监听那样被 node_modules 的几千个目录拖垮。
+     */
+    try {
+      state.dirWatcher = fs.watch(pluginDir, (_evt, filename) => {
+        const f = String(filename || '');
+        if (!f || f.startsWith('.') || f.startsWith('node_modules')) {
+          return;
+        }
+        if (f === entryName || f === 'manifest.json' || f === 'package.json') {
+          trigger(f);
+        }
+      });
+    } catch (e) {
+      log(`[plugin:${pluginId}] 目录级监听不可用（只靠轮询）：${e && e.message}`);
+    }
+
+    pluginWatchers.set(pluginId, state);
+    log(`[plugin:${pluginId}] 已开启热重载（轮询 ${state.watchers.map((p) => path.basename(p)).join('/')}`
+      + `${state.dirWatcher ? ' + 目录事件' : ''}）`);
+  }
+
+  /** 重启插件：卸载 → 等进程退出 → 重新加载。 */
+  async function restartPlugin(pluginId) {
+    const state = pluginWatchers.get(pluginId);
+    if (!state) {
+      return { ok: false, error: '没有这个插件的监听记录' };
+    }
+
+    /*
+     * 先等它把手上的活干完（2026-10-25）。
+     *
+     * <p>实测事故：保存插件文件触发热重载时，用户那条消息刚发出请求 8 秒、
+     * 模型还没返回。重启直接把子进程杀了 —— 请求中断，回复丢失，
+     * 日志停在 `call platform` 那一行，看起来就是"她没回"。</p>
+     *
+     * <p>插件侧暴露了 `isBusy()`。忙就每秒问一次，最多等 20 秒；
+     * 插件没实现这个方法（或已经死了）就直接重启，不阻塞。</p>
+     */
+    for (let i = 0; i < 20; i++) {
+      let busy = false;
+      try {
+        /*
+         * ⚠️ `invokePlugin` 返回的是 `{ ok, data }` 包装对象，**不是裸值**（2026-10-26 修）。
+         *
+         * 上一版写成 `busy = !!(await invokePlugin(...))` —— 对象永远为真，
+         * 于是它一直以为插件在忙，等满 20 秒后照样重启，保护形同虚设。
+         * 实测就这样掐断了一次正常的回复。
+         */
+        const r = await invokePlugin(pluginId, 'isBusy');
+        busy = !!(r && r.ok && r.data);
+      } catch {
+        break;   // 问不到就不等了
+      }
+      if (!busy) {
+        break;
+      }
+      if (i === 0) {
+        log(`[plugin:${pluginId}] 正在处理消息，推迟热重载`);
+      }
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+
+    try {
+      await unloadPlugin(pluginId);
+    } catch (e) {
+      // 卸载失败也继续尝试重载 —— 总比什么都不做强
+      log(`[plugin:${pluginId}] 卸载时出错（继续重启）：${e && e.message}`);
+    }
+
+    /*
+     * 兜底强杀（2026-11-04）。
+     *
+     * <p>`loadPlugin` 开头有 `if (children.has(pluginId)) return { ok:true, already:true }`。
+     * 只要旧子进程没被清掉（stop 超时、进程卡在死循环、kill 失败），
+     * 重载就会**静默返回成功但什么也没加载** —— 表现正是"改了代码没生效，
+     * 而且日志里还写着热重载完成"。这里补一刀，保证 children 一定是干净的。</p>
+     */
+    if (children.has(pluginId)) {
+      const stale = children.get(pluginId);
+      try {
+        stale.child.kill();
+      } catch {
+        /* 已经退了 */
+      }
+      children.delete(pluginId);
+      log(`[plugin:${pluginId}] 旧进程未随 stop 退出，已强制结束`);
+    }
+
+    // 等旧进程真正退出，否则新进程可能抢不到端口或文件锁
+    await new Promise((r) => setTimeout(r, 400));
+    const res = await loadPlugin(pluginId, state.pluginDir, state.mainFile);
+    log(`[plugin:${pluginId}] 热重载${res.ok ? '完成' : `失败：${res.error || ''}`}${res.already ? '（旧实例仍在，已跳过加载）' : ''}`);
+    return res;
   }
 
   /** 调插件 main.js 里导出的 `methods[name]`（子进程或兜底路径）。 */
@@ -698,8 +906,24 @@ function createHostBridge(opts) {
     }
   }
 
-  /** 退出前统一停掉所有插件进程（它们的定时器/网络连接不该拖住退出）。 */
+  /** 退出前统一停掉所有插件进程与文件监听（它们的定时器/网络连接不该拖住退出）。 */
   async function dispose() {
+    for (const [, st] of pluginWatchers) {
+      clearTimeout(st.timer);
+      try {
+        if (st.dirWatcher) st.dirWatcher.close();
+      } catch {
+        /* 已关闭 */
+      }
+      for (const p of st.watchers || []) {
+        try {
+          fs.unwatchFile(p);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    pluginWatchers.clear();
     for (const id of [...children.keys()]) {
       // eslint-disable-next-line no-await-in-loop
       await unloadPlugin(id);
@@ -720,6 +944,7 @@ function createHostBridge(opts) {
     setAuth,
     loadPlugin,
     unloadPlugin,
+    restartPlugin,
     invokePlugin,
     dispose,
     // 便于诊断

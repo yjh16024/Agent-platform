@@ -1,6 +1,7 @@
 package com.agentplatform.core.rag.retriever;
 
-import com.agentplatform.core.model.adapter.ModelAdapter;
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.agentplatform.core.model.config.ModelConfigService;
 import com.agentplatform.core.model.config.ModelConfigService.EmbeddingBinding;
 import com.agentplatform.core.model.factory.ModelProviderFactory;

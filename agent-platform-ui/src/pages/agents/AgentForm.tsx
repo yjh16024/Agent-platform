@@ -9,10 +9,11 @@ import { AgentResponse, KnowledgeBase } from '../../api/types';
 const TONES = ['formal', 'friendly', 'humorous', 'concise', 'empathetic'];
 
 // 选中这些具体云服务商时，必须填写 API Key（直连厂商 / 网关均需真实凭证）
-const CLOUD_PROVIDERS = ['deepseek', 'openai', 'qwen', 'ernie', 'hunyuan', 'anthropic'];
+const CLOUD_PROVIDERS = ['deepseek', 'openai', 'qwen', 'ernie', 'hunyuan', 'anthropic', 'siliconflow'];
 
 const PROVIDERS = [
   { value: 'auto', label: 'auto（自动路由）' },
+  { value: 'siliconflow', label: 'siliconflow（硅基流动）' },
   { value: 'deepseek', label: 'deepseek' },
   { value: 'openai', label: 'openai' },
   { value: 'qwen', label: 'qwen（通义千问）' },
@@ -23,6 +24,14 @@ const PROVIDERS = [
 ];
 
 const PROVIDER_MODELS: Record<string, string[]> = {
+  // 硅基流动是聚合平台，模型名要带组织前缀（2026-10-23 补）
+  siliconflow: [
+    'deepseek-ai/DeepSeek-V3',
+    'deepseek-ai/DeepSeek-R1',
+    'Qwen/Qwen2.5-72B-Instruct',
+    'Qwen/Qwen2.5-7B-Instruct',
+    'THUDM/glm-4-9b-chat',
+  ],
   deepseek: ['deepseek-v4-flash', 'deepseek-v4-pro', 'deepseek-chat', 'deepseek-reasoner'],
   openai: ['gpt-4o-mini', 'gpt-4o', 'gpt-4.1', 'o3-mini'],
   qwen: ['qwen-turbo', 'qwen-plus', 'qwen-max'],
@@ -34,6 +43,7 @@ const PROVIDER_MODELS: Record<string, string[]> = {
 };
 
 const PROVIDER_BASE_URL: Record<string, string> = {
+  siliconflow: 'https://api.siliconflow.cn/v1',
   deepseek: 'https://api.deepseek.com/v1',
   openai: 'https://api.openai.com/v1',
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -85,6 +95,9 @@ export default function AgentForm({
         role: editing.persona?.role,
         temperature: editing.generationConfig?.temperature ?? 0.7,
         maxTokens: editing.generationConfig?.maxTokens ?? 2048,
+        // 采样惩罚（2026-10-27）：默认**留空**，留空就不传，行为与以前一致
+        frequencyPenalty: editing.generationConfig?.frequencyPenalty,
+        presencePenalty: editing.generationConfig?.presencePenalty,
         provider: editing.modelBinding?.provider,
         model: editing.modelBinding?.model,
         baseUrl: editing.modelBinding?.baseUrl,
@@ -107,7 +120,13 @@ export default function AgentForm({
       description: v.description,
       systemPrompt: v.systemPrompt,
       persona: { tone: v.tone, role: v.role },
-      generationConfig: { temperature: v.temperature, maxTokens: v.maxTokens },
+      generationConfig: {
+        temperature: v.temperature,
+        maxTokens: v.maxTokens,
+        // 留空时是 undefined，JSON 里会被丢掉 → 后端拿到 null → 不传该参数
+        frequencyPenalty: v.frequencyPenalty,
+        presencePenalty: v.presencePenalty,
+      },
       capabilities: {
         // 合并已有能力，避免覆盖 skills/plugins 等其它绑定
         ...(editing?.capabilities ?? {}),
@@ -295,6 +314,43 @@ export default function AgentForm({
           <Col span={12}>
             <Form.Item name="maxTokens" label="maxTokens">
               <InputNumber style={{ width: '100%' }} min={1} max={32768} />
+            </Form.Item>
+          </Col>
+        </Row>
+        {/*
+          采样惩罚（2026-10-27）。
+          「频繁复读/口癖」调 frequency，「老围着一个话题转」调 presence。
+          中文对惩罚比较敏感，建议都从 0.3 起试；留空 = 不传（行为与以前一致）。
+        */}
+        <Row gutter={16}>
+          <Col span={12}>
+            <Form.Item
+              name="frequencyPenalty"
+              label="frequency_penalty"
+              tooltip="压制重复用词和口癖。中文敏感，建议 0.3 起试；留空 = 不传"
+            >
+              <InputNumber
+                style={{ width: '100%' }}
+                min={0}
+                max={2}
+                step={0.1}
+                placeholder="留空不传"
+              />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item
+              name="presencePenalty"
+              label="presence_penalty"
+              tooltip="压制反复围绕同一话题打转。建议 0.3 起试；留空 = 不传"
+            >
+              <InputNumber
+                style={{ width: '100%' }}
+                min={0}
+                max={2}
+                step={0.1}
+                placeholder="留空不传"
+              />
             </Form.Item>
           </Col>
         </Row>

@@ -1,11 +1,13 @@
 package com.agentplatform.core.model.springai;
 
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.common.util.TraceContext;
-import com.agentplatform.core.model.adapter.ModelAdapter;
-import com.agentplatform.core.tool.Tool;
-import com.agentplatform.core.tool.ToolContext;
-import com.agentplatform.core.tool.ToolResult;
 import com.agentplatform.core.tool.ToolSchemas;
 import com.agentplatform.core.tool.executor.ToolExecutor;
 import com.agentplatform.core.tool.registry.ToolRegistry;
@@ -30,7 +32,7 @@ import java.util.List;
  * 模型看到的是标准 assistant(tool_calls) → tool(result) 序列，语义更准确。
  * 轮次上限仍由 {@link SpringAiModelAdapter} 控制（{@code MAX_TOOL_ROUNDS}），避免模型死循环。
  * </p>
- * <p>租户 / 运行上下文从 {@link TraceContext}（ScopedValue）读取，与运行入口保持一致。</p>
+ * <p>租户 / 运行上下文从 {@link TraceContext}（ThreadLocal）读取，与运行入口保持一致。</p>
  */
 @Slf4j
 @Component

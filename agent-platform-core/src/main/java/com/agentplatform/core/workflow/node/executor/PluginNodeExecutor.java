@@ -1,7 +1,9 @@
 package com.agentplatform.core.workflow.node.executor;
 
-import com.agentplatform.core.tool.ToolContext;
-import com.agentplatform.core.tool.ToolResult;
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.core.tool.executor.ToolExecutor;
 import com.agentplatform.core.workflow.dag.NodeExecutor;
 import com.agentplatform.core.workflow.dag.WorkflowContext;

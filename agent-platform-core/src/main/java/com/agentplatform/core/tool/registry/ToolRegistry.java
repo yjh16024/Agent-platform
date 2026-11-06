@@ -1,7 +1,8 @@
 package com.agentplatform.core.tool.registry;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.exception.BizException;
-import com.agentplatform.core.tool.Tool;
 import org.springframework.stereotype.Component;
 
 import java.util.Collection;

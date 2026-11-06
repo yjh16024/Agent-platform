@@ -1,5 +1,7 @@
 package com.agentplatform.core.settings;
 
+import com.agentplatform.framework.api.Tool;
+
 import java.util.List;
 
 /**

@@ -1,5 +1,7 @@
 package com.agentplatform.core.plugin.builtin;
 
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.agentplatform.core.multimodal.QuotaService;
 import com.agentplatform.plugin.sdk.ConfigFieldDef;
 import com.agentplatform.plugin.sdk.EventSubscriber;

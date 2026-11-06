@@ -1,8 +1,9 @@
 package com.agentplatform.core.plugin.host;
 
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.agentplatform.common.dto.ApiResponse;
 import com.agentplatform.common.exception.BizException;
-import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.model.router.ModelRouter;
 import com.agentplatform.core.model.secret.ModelBindingService;
 import lombok.RequiredArgsConstructor;

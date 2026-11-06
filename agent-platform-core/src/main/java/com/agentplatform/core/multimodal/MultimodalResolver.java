@@ -1,6 +1,7 @@
 package com.agentplatform.core.multimodal;
 
-import com.agentplatform.core.model.ModelCapability;
+import com.agentplatform.framework.api.ModelCapability;
+
 import org.springframework.stereotype.Component;
 
 import java.util.List;

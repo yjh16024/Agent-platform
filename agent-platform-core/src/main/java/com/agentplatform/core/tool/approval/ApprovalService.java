@@ -1,5 +1,8 @@
 package com.agentplatform.core.tool.approval;
 
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.common.util.IdGenerator;
 import com.agentplatform.core.tool.fs.FileWriteService;

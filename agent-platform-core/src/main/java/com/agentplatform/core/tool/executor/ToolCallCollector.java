@@ -1,5 +1,9 @@
 package com.agentplatform.core.tool.executor;
 
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelAdapter;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -22,7 +26,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 所以在那一处按 {@code runId} 记一笔，两条路径就都覆盖了，且不必改动任何适配器。</p>
  *
  * <h3>为什么不用 ScopedValue 传递</h3>
- * 项目里 {@code TraceContext} 用的是 {@code ScopedValue}，看起来更适合。但流式链路
+ * 项目里 {@code TraceContext} 用的是 {@code ThreadLocal}（2026-11-06 起），看起来更适合。但流式链路
  * 会 {@code subscribeOn(虚拟线程)}：{@code ScopedValue} **不会**自动继承到新线程
  * （不同于 ThreadLocal 的 inheritable），作用域建在外层线程时，内层虚拟线程上取不到。
  * 而按 runId 的容器对执行线程没有任何要求。

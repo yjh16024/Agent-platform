@@ -1,6 +1,10 @@
 package com.agentplatform.core.model.adapter;
 
-import com.agentplatform.core.model.ModelCapability;
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelAdapter;
+import com.agentplatform.framework.api.ModelCapability;
+
 import lombok.extern.slf4j.Slf4j;
 import reactor.core.publisher.Flux;
 

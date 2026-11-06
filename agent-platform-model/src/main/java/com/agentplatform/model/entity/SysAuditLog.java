@@ -23,7 +23,7 @@ import java.time.LocalDateTime;
  * 表也没有 {@code updated_at}。清理只能按时间整段删除。</p>
  */
 @Entity
-@Table(name = "sys_audit_log")
+@Table(name = "ap_sys_audit_log")
 @Getter
 @Setter
 @Builder

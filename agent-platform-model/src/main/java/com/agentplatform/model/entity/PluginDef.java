@@ -22,7 +22,7 @@ import java.util.Map;
  * 插件元数据实体（plugin_def）。
  */
 @Entity
-@Table(name = "plugin_def")
+@Table(name = "ap_plugin_def")
 @Getter
 @Setter
 @Builder

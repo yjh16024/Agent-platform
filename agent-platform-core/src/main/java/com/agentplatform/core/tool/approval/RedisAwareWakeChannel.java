@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.approval;
 
+import com.agentplatform.framework.api.Tool;
+
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;

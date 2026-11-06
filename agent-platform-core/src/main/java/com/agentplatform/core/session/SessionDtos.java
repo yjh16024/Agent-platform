@@ -39,8 +39,15 @@ public final class SessionDtos {
             String role,
             String content,
             String model,
-            LocalDateTime createdAt
+            LocalDateTime createdAt,
+            /** 工具调用 ID（仅 role=tool 时非空，R10）；对前端非必填，故放最后并允许为 null。 */
+            String toolCallId
     ) {
+        /** 兼容签名：不带工具调用 ID（老的构造点）。 */
+        public MessageDto(String messageId, String sessionId, String runId, Integer turnNo, Integer seqNo,
+                          String role, String content, String model, LocalDateTime createdAt) {
+            this(messageId, sessionId, runId, turnNo, seqNo, role, content, model, createdAt, null);
+        }
     }
 
     /** 会话详情（会话元数据 + 全部消息）。 */

@@ -1,8 +1,12 @@
 package com.agentplatform.core.model.adapter;
 
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelAdapter;
+import com.agentplatform.framework.api.ModelCapability;
+
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.common.util.JsonUtils;
-import com.agentplatform.core.model.ModelCapability;
 import tools.jackson.databind.JsonNode;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.MediaType;
@@ -385,6 +389,25 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
         return out;
     }
 
+    /**
+     * 拼 OpenAI 多模态 content（text + 若干 **公网图片地址**）。
+     *
+     * <p>与 {@link #multimodalContent} 的区别：那个接的是 base64（用户上传的图），
+     * 这个接的是 URL（工具从网上找回来的图）—— 不用下载转码，直接让上游去取。</p>
+     */
+    private static java.util.List<Map<String, Object>> urlImageContent(
+            String text, java.util.List<String> urls) {
+        java.util.List<Map<String, Object>> parts = new java.util.ArrayList<>(1 + urls.size());
+        parts.add(Map.of("type", "text", "text", text));
+        for (String u : urls) {
+            if (u == null || u.isBlank()) {
+                continue;
+            }
+            parts.add(Map.of("type", "image_url", "image_url", Map.of("url", u)));
+        }
+        return parts;
+    }
+
     /** 拼 OpenAI 多模态 content（text + 若干 image_url）。 */
     private static java.util.List<Map<String, Object>> multimodalContent(
             String text, java.util.List<Map<String, String>> images) {
@@ -444,7 +467,18 @@ public class OpenAiCompatibleAdapter implements ModelAdapter {
             return msg;
         } else {
             msg.put("role", m.role());
-            msg.put("content", m.content() == null ? "" : m.content());
+            /*
+             * 带图片的消息 → 多模态 content（2026-10-22）。
+             *
+             * 这是"让模型真的看到搜索结果"的关键：只给 URL 文本时，模型原话是
+             * "我这边读不了图，只凭关键词猜，很容易挑错"，于是不敢做决定。
+             */
+            if (m.hasImages()) {
+                msg.put("content", urlImageContent(
+                        m.content() == null ? "" : m.content(), m.imageUrls()));
+            } else {
+                msg.put("content", m.content() == null ? "" : m.content());
+            }
         }
 
         /*

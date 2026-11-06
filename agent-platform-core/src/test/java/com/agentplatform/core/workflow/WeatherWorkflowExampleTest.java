@@ -1,5 +1,7 @@
 package com.agentplatform.core.workflow;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.tool.registry.ToolRegistrationService;
 import com.agentplatform.core.workflow.node.WorkflowDefinition;

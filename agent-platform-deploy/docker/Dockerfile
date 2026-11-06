@@ -35,7 +35,6 @@ RUN groupadd -r app && useradd -r -g app app
 # 分代 ZGC + 容器感知 + 插件 SPI 反射
 ENV JAVA_OPTS="-XX:+UseZGC -XX:+ZGenerational \
 -XX:+UseContainerSupport -XX:MaxRAMPercentage=75 \
---enable-preview \
 --add-opens java.base/java.lang=ALL-UNNAMED"
 
 # 拷贝制品

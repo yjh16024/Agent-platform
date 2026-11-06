@@ -23,7 +23,7 @@ import java.time.LocalDateTime;
  * </p>
  */
 @Entity
-@Table(name = "tenant_quota")
+@Table(name = "ap_tenant_quota")
 @Getter
 @Setter
 @Builder

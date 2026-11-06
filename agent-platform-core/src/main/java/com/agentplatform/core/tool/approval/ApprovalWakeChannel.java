@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.approval;
 
+import com.agentplatform.framework.api.Tool;
+
 import java.util.function.Consumer;
 
 /**
@@ -23,7 +25,7 @@ import java.util.function.Consumer;
  * <h3>为什么默认是"什么都不做"的实现</h3>
  * 广播依赖 Redis（{@link RedisApprovalWakeChannel}）。而没有 Redis 的部署
  * （桌面版就是）**必然是单实例**，本来就不存在这个问题 ——
- * 此时广播是纯浪费。所以默认用 {@link LocalOnlyWakeChannel}，
+ * 此时广播是纯浪费。所以默认用一个「只记日志、不做广播」的空实现，
  * 有 Redis 时才自动换成真正广播的实现。
  *
  * <p>换实现不需要改 {@code ApprovalService} 的任何逻辑：它只管

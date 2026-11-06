@@ -1,7 +1,10 @@
 package com.agentplatform.core.model.springai;
 
-import com.agentplatform.core.model.ModelCapability;
-import com.agentplatform.core.model.adapter.ModelAdapter;
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelAdapter;
+import com.agentplatform.framework.api.ModelCapability;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.anthropic.AnthropicChatOptions;
 import org.springframework.ai.chat.messages.AssistantMessage;

@@ -10,6 +10,69 @@
 都有开关与降级，缺谁都能跑，接上才算数。因此它可以从「克隆 → 启动 → 发一条消息拿到 Mock 回复」
 开始，逐步长成一套生产可用的智能体服务。
 
+## 从这里开始
+
+先确认你是谁，再看对应的三步。**两条路线互不影响**：用平台不需要懂框架，用框架也不需要部署平台。
+
+| 你是谁 | 想看什么 | 三步跑起来 |
+|---|---|---|
+| **① 部署一套平台**（运维 / 运营者） | 界面、账号、权限、插件、日志 | [安装](#安装) → [配置](#配置) → [前端](#前端仪表盘) |
+| **② 把框架嵌进自己的应用**（开发者） | `AgentRuntime`、会话、工具、拦截 | [框架章节](#框架把同一套运行时嵌进你自己的应用) → [how-to](docs/framework-howto/) → [方案](docs/framework-plan.md) |
+| **③ 改这套代码**（贡献者） | 契约在哪、门禁怎么跑 | [核心结构](#核心结构) → [开发与验证](#开发与验证) → [status.md](docs/status.md) |
+
+### 路线 ①：我要部署平台
+
+```bash
+# 最省事：内置 H2，不用装 MySQL
+mvn -pl agent-platform-core -am package -DskipTests
+java -jar agent-platform-core/target/agent-platform-core-1.5.0.jar --spring.profiles.active=embedded
+# 打开 http://localhost:8081
+```
+
+不想装 JDK/Maven 就用桌面绿色版（`desktop\build.bat` → 双击 exe），服务器部署与 K8s 见
+[deployment.md](docs/deployment.md) 与 [guides.md](docs/guides.md)。
+**下一步**：进「平台设置」配模型 Key → 建一个智能体 → 对话页发一条消息。
+
+### 路线 ②：我要用框架
+
+```xml
+<!-- 1. 加依赖（BOM 锁版本，starter 自动装配） -->
+<dependency>
+  <groupId>com.agentplatform</groupId>
+  <artifactId>agent-platform-framework-starter</artifactId>
+</dependency>
+```
+
+```java
+// 2. 提供一个模型通道（或直接用 starter-springai 接 Spring AI）
+@Bean ModelAdapter modelAdapter() { return new MyAdapter(); }
+
+// 3. 注入即用
+RunResult r = runtime.run(RunCommand.builder("my-agent").text("你好").build());
+```
+
+只有 JDK 21 + 一个 `ModelAdapter` Bean 就能跑，**不需要数据库、不需要 Web**。
+想先看效果：`agent-platform-framework-sample-minimal`（无容器，40 行）、
+`sample-web`（HTTP + 观测）、`sample-springai`（纯 Spring AI 项目只加一个依赖）、
+`sample-rag`（官方检索器直接消费我们的实现）。
+**下一步**：按你的场景读 [how-to](docs/framework-howto/)——记忆 / 拦截 / 向量 / 工具与策略四篇。
+
+### 路线 ③：我要改代码
+
+- **契约在 `agent-platform-framework-api`**（`ModelAdapter` / `Tool` / `SessionStore` / 各策略 SPI），
+  平台只是它们的使用者；改能力前先看契约里有没有现成的 SPI。
+- 门禁会随构建自动跑：ArchUnit（`api` 不依赖 Spring）+ Enforcer（starter 不带 JPA/Flyway）。
+- 平台测试 670 例、框架测试 80 例，命令见 [开发与验证](#开发与验证)。
+
+## 目录
+
+- [从这里开始](#从这里开始) · [文档导航](#文档导航) · [它解决什么问题](#它解决什么问题)
+- [核心结构](#核心结构) · [一次运行如何被处理](#一次运行如何被处理)
+- [框架：把同一套运行时嵌进你自己的应用](#框架把同一套运行时嵌进你自己的应用)
+- [安装](#安装) · [配置顺序](#配置顺序) · [配置](#配置) · [前端（仪表盘）](#前端仪表盘)
+- [数据目录](#数据目录运行时自动创建无需预先存在) · [API 概览](#api-概览前缀-apiv1)
+- [日志与排查](#日志与排查) · [使用边界](#使用边界) · [从演示到生产](#从演示到生产) · [开发与验证](#开发与验证)
+
 当前版本：`1.5.0`。提供统一运行入口（JSON / SSE）、多模型路由与凭证分层、
 会话记忆（**四层：短期缓存 + 早期摘要 + 用户画像 + 向量召回**）、RAG 知识库、
 工具与 MCP（**四种传输**，每次调用过**五环责任链**）、自研 DAG 工作流（含循环 / 并行复合节点）、
@@ -28,13 +91,37 @@ Skills 开放标准目录、插件体系（**7 个内置插件 + 声明式配置
 
 ## 文档导航
 
-- **功能清单与实现状态**（每条能力对应到类/文件，标了「已实现 / 部分 / 未做」）：[docs/status.md](docs/status.md)
-- **扩展指南与部署（K8s/Helm、演示脚本、可观测性运维）**：[docs/guides.md](docs/guides.md)
+**平台侧（面向运维 / 运营者）**
+
+| 我想… | 文档 |
+|---|---|
+| 部署到服务器 / K8s / Docker | [docs/deployment.md](docs/deployment.md)、[docs/guides.md](docs/guides.md) §二 |
+| 看「已经实现了什么」（每条能力对应到类/文件） | [docs/status.md](docs/status.md) |
+| 做二次开发（加工具、加模型、加插件） | [docs/guides.md](docs/guides.md) §一 |
+| 看还没做什么、为什么 | [docs/roadmap.md](docs/roadmap.md)、[docs/backlog.md](docs/backlog.md) |
+| 了解技术选型与取舍 | [docs/technology.md](docs/technology.md) |
+
+**框架侧（面向开发者，可嵌入到别的 Spring Boot 应用）**
+
+| 我想… | 文档 |
+|---|---|
+| **先跑起来** | 本文 [框架章节](#框架把同一套运行时嵌进你自己的应用)；四条 sample 见下 |
+| **接线**（记忆 / 拦截 / 向量 / 工具与策略） | [docs/framework-howto/](docs/framework-howto/) |
+| 看整体怎么拆的、做到哪一步 | [docs/framework-plan.md](docs/framework-plan.md) |
+| 看 E1–E4 的设计依据与验证方法 | [docs/框架重构技术方案.md](docs/框架重构技术方案.md) |
+| 复现整个改造过程 | [docs/框架重构实施计划.md](docs/框架重构实施计划.md) |
+
+四个可直接运行的 sample：
+[minimal](agent-platform-framework-sample-minimal/)（无容器）·
+[web](agent-platform-framework-sample-web/)（加依赖即用）·
+[springai](agent-platform-framework-sample-springai/)（真外部集成）·
+[rag](agent-platform-framework-sample-rag/)（官方检索器消费）
+
+**通用**
+
 - 端到端演示脚本：[docs/demo-script.sh](docs/demo-script.sh)
 - 桌面应用（Electron 壳 + jlink 运行时，**绿色版免安装**）：[desktop/](desktop/)（构建与分发见 [docs/guides.md](docs/guides.md) §2.7）
 - 可观测栈（Loki / Tempo / Prometheus / Grafana）：[docker-compose.observability.yml](docker-compose.observability.yml)
-
-> 
 
 ## 它解决什么问题
 
@@ -63,6 +150,11 @@ Skills 开放标准目录、插件体系（**7 个内置插件 + 声明式配置
 「按需装配」体现在运行时的每个可选依赖都是 `@Autowired(required = false)`：注入了就生效，
 没注入就跳过，且跳过不会抛错。这让同一份代码既能跑在完整生产环境，也能跑在「没有 MySQL 的
 最小环境」——内置库模式（H2）下甚至外部数据库都不需要。
+
+> **契约在框架模块里（2026-11 重构后）**：`ModelAdapter`、`Tool`、`ToolFilter`、`ToolContext`、
+> `ToolResult`、`SessionHandle` 等接口已从 `core` 迁到 `agent-platform-framework-api`；
+> 平台只是它们的使用者。因此看核心结构时请记住：**`core` 里是平台实现，`framework-api` 里是契约**。
+> 新增能力的推荐顺序是「先看契约有没有现成的 SPI，再决定要不要动 core」。
 
 ### 模型层：一个抽象，多种后端
 
@@ -131,7 +223,7 @@ Skills 开放标准目录、插件体系（**7 个内置插件 + 声明式配置
 - **短期**：近期上下文走 `SessionRecentCache`（Redis List，25 轮 / 50 条 / 24h）——
   读优先缓存、miss 回 DB 回填、写后追加裁剪。Redis 缺失时全程降级到 DB，功能不减，只是少一层加速。
 - **中期（早期摘要）**：会话超过 40 轮后，上下文窗口开始截断最早轮次 —— `SessionSummaryService`
-  会把这段「即将被丢弃」的早期消息懒压缩成要点，续接进系统提示词（`session_def.summary`，幂等）。
+  会把这段「即将被丢弃」的早期消息懒压缩成要点，续接进系统提示词（`ap_session_def.summary`，幂等）。
   长对话因此仍「记得开头」；摘要当前为离线要点式，可平滑替换为 LLM 语义摘要。
 - **长期（用户画像）**：`sys_user_fact` 存「用户是什么样的人」，跨会话生效；
   **自动抽取的候选不直接写入** —— 而是另建一张待确认表，用户在前端一键采纳或忽略后才进入长期层。
@@ -347,6 +439,11 @@ Loki 日志、Tempo / Jaeger Span。故障排查有三级诊断（规则 → 向
 
 ## 一次运行如何被处理
 
+> 下图是**默认（`engine=legacy`）**的链路。设 `agent-platform.runtime.engine=framework` 时，
+> 配额、会话落库、工具执行、插件钩子会改由框架的 `QuotaPolicy` / `SessionStore` /
+> `ToolCatalog` / `RunInterceptor` 承担（平台侧不再重复做，避免双计与双写），
+> 而提示词组装、RAG、Skill 仍在平台侧完成后按轮传给运行时。
+
 ```mermaid
 flowchart TD
     R[POST /api/v1/agent/run] --> Q[配额校验 model_calls]
@@ -390,13 +487,100 @@ flowchart TD
 返回响应（含 usage、引用溯源、插件产物）
 ```
 
+## 框架：把同一套运行时嵌进你自己的应用
+
+本项目现在分成两件可独立使用的东西（详见 [docs/framework-plan.md](docs/framework-plan.md)）：
+
+| | 框架（`agent-platform-framework-*`） | 平台（`agent-platform-core`） |
+|---|---|---|
+| 定位 | 智能体运行时：会话 / 记忆 / 工具治理 / 拦截 / 配额 / 观测 | 完整产品：控制台 UI、RBAC、审计、报表、插件市场、工作流画布 |
+| 受众 | 开发者（写代码嵌进去） | 运维 / 运营者（部署、配置、看数据） |
+| 形态 | Maven 依赖（jar / starter） | 可执行 jar / Docker / 桌面绿色版 |
+| 依赖 | 零 Spring、零 JPA、零 `spring-ai`（可选模块除外） | Spring Boot 4.1 + JPA + Flyway + MySQL |
+
+一句话：**Spring AI 提供 `ChatModel`，本框架提供 `AgentRuntime`**——补的是「一次智能体运行怎么跑对」
+（会话、记忆、工具循环、失败、记账），不是重做模型接入。
+
+### 六个框架模块
+
+```
+framework-api             纯契约：AgentRuntime / RunCommand / RunEvent / Tool / ModelAdapter / 各策略 SPI
+framework-runtime         编排内核 + 内存实现（零 Spring）
+framework-springai        E1 记忆仓储 + E3 Advisor（唯一允许 import spring-ai 的核心模块）
+framework-rag             E4：用 Spring AI 标准 VectorStore 接口实现检索
+framework-starter         自动装配（不引 spring-ai）
+framework-starter-springai  可选：装配 E1 + E3
+framework-bom             版本清单，宿主 import 一次锁全套版本
+```
+
+依赖方向硬规则（由 ArchUnit 强制）：`api ← runtime ← starter`；`platform-*` 只准依赖 `api` / `starter`。
+
+### 三种用法
+
+**A. 不用 Spring 容器**（最轻，适合 CLI / 批处理）
+
+```java
+AgentRuntime runtime = DefaultAgentRuntime.builder()
+        .adapter(myModelAdapter)        // 实现 ModelAdapter 即可
+        .tool(new ClockTool())
+        .build();
+
+RunResult result = runtime.run(RunCommand.builder("my-agent")
+        .text("现在几点了")
+        .tools(ToolOptions.all(3))
+        .build());
+```
+
+完整可运行示例：`agent-platform-framework-sample-minimal`（40 行，无容器、无数据库）。
+
+**B. Spring Boot + starter**（推荐）
+
+```xml
+<dependency>
+  <groupId>com.agentplatform</groupId>
+  <artifactId>agent-platform-framework-starter</artifactId>
+</dependency>
+```
+
+```java
+@RestController
+public class ChatController {
+    private final AgentRuntime runtime;      // starter 自动提供
+
+    @PostMapping("/chat")
+    public String chat(@RequestBody String message) {
+        return runtime.run(RunCommand.builder("demo").text(message).build()).reply();
+    }
+}
+```
+
+只要再提供一个 `ModelAdapter`（或 `Tool`）Bean 就能跑。示例：`agent-platform-framework-sample-web`。
+
+**C. 已有一个 Spring AI 项目**——只加 `framework-starter-springai`，你的 `ChatClient`
+立刻获得持久化记忆（E1）与上下文注入（E3），业务代码不用改。
+示例：`agent-platform-framework-sample-springai`。
+
+### 框架文档怎么读
+
+| 文档 | 讲什么 | 什么时候看 |
+|---|---|---|
+| [docs/framework-plan.md](docs/framework-plan.md) | 拆分与分发方案：阶段、边界、门禁、进度、风险与待决策 | 想知道「整体怎么拆的、做到哪一步了」 |
+| [docs/framework-howto/](docs/framework-howto/) | 四篇扩展点操作指南（E1/E3/E4/工具与策略） | 动手接的时候看，**含真实踩坑** |
+| [docs/框架重构技术方案.md](docs/框架重构技术方案.md) | E1–E4 的设计依据与验证方法 | 想知道「为什么这么做」 |
+| [docs/框架重构实施计划.md](docs/框架重构实施计划.md) | 施工清单与回滚开关 | 想按步骤复现改造过程 |
+
+框架当前状态：`api` / `runtime` / `springai` / `rag` / `starter` / `bom` 六个模块均已落地，
+4 个 sample 可运行，`mvn test` 全绿（框架侧 80+ 例、平台侧 670 例）。
+
+---
+
 ## 安装
 
 ### 环境要求
 
 | 依赖 | 版本 | 是否必需 | 说明 |
 |------|------|----------|------|
-| JDK | **21 或更高** | ✅ 必需 | 使用预览特性 `ScopedValue`，编译/运行均需 `--enable-preview`（脚本已自动带） |
+| JDK | **21 或更高** | ✅ 必需 | 标准 JDK 21 即可（2026-11-06 起不再需要预览特性：`TraceContext` 已改用 ThreadLocal，诊断引擎改用虚拟线程 + `invokeAny`） |
 | Maven | 3.9+ | ✅ 必需 | 构建依赖；首次构建需联网 |
 | MySQL | 8.x | ✅（默认） | 默认必需；不想装 MySQL 可改用内置 H2：启动脚本加 **`embedded` 参数**（见「快速开始」方式 C）。⚠️ **不要把 `DB_MODE` 当作环境变量** —— 那是 `start-core.bat` 的内部变量，对 `java -jar` 无效 |
 | Redis | 7 | ❌ 可选 | 缺失时仅健康检查 DOWN，配额与会话缓存走内存兜底 |
@@ -477,14 +661,14 @@ chmod +x start-core.sh
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests
-java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.5.0.jar
+java -jar agent-platform-core/target/agent-platform-core-1.5.0.jar
 ```
 
 启动成功日志含 `Tomcat started on port 8081`，随后浏览器打开 **http://localhost:8081/**。
 
 > - 若 **8081 被占用**，脚本会自动杀掉旧进程（Windows）或提示（Linux/macOS）。
 > - Redis 没有也不影响核心功能（日志会提示 redis DOWN）。
-> - 手动方式启动内置库：`java --enable-preview -jar agent-platform-core/target/agent-platform-core-1.5.0.jar --spring.profiles.active=embedded`
+> - 手动方式启动内置库：`java -jar agent-platform-core/target/agent-platform-core-1.5.0.jar --spring.profiles.active=embedded`
 
 #### 4. 验证
 
@@ -540,7 +724,7 @@ curl http://localhost:8081/actuator/health
 ```bash
 docker compose up -d                      # 全部可选设施（含 Kafka broker）
 export VECTOR_STORE=milvus STORAGE_TYPE=minio SECURITY_ENABLED=true
-start-core.sh rebuild                     # 或手动 java --enable-preview -jar ...
+start-core.sh rebuild                     # 或手动 java -jar ...
 ```
 
 | 能力 | 接线方式 |
@@ -646,17 +830,27 @@ cd agent-platform-ui && npm install && npm run dev   # 访问 http://localhost:5
 
 ```bash
 mvn -pl agent-platform-core -am package -DskipTests   # 构建可执行 jar
-mvn test                                              # 597 个单元测试（含 Spring AI 通道、内置库迁移、记忆、平台设置、工具、工作流画布后端、插件与配置声明、可执行界面/界面插件等）
+mvn test                                              # 平台侧 670 个单测（Spring AI 通道、内置库迁移、记忆、工具、工作流画布、插件与配置声明等）
+
+# 框架侧（与平台测试相互独立，不需要数据库）
+mvn -pl agent-platform-framework-api,agent-platform-framework-runtime,agent-platform-framework-springai,agent-platform-framework-rag,agent-platform-framework-starter -am test
+mvn -pl agent-platform-framework-sample-web,agent-platform-framework-sample-springai,agent-platform-framework-sample-rag -am test
+
 cd agent-platform-ui && npm test                      # 92 个前端单测（画布 adapter / Markdown 解析器 / 插件配置表单 / 画布工具参数 / DSH 转译器；零新增依赖，用 esbuild + node:test）
 warmup.bat                                            # Windows：依赖预热，"warmup.bat verify" 校验离线构建
 cd agent-platform-ui && npm run build:prod            # 前端构建，产物同步到 core 的 static/
 ```
+
+框架侧还有两条**结构性门禁**（会随构建自动执行，不需要单独跑）：
+
+- **ArchUnit**：`api` 不得依赖 Spring / JPA，`runtime` 同理，`api` 不得反向依赖 `runtime` / `core`
+- **Enforcer**：`api` / `runtime` / `starter` 的传递依赖里不得出现 Web / JPA / Flyway / MySQL / `spring-ai`
 
 构建产物位于 `agent-platform-core/target/`。Windows 上若 8081 仍有进程监听，jar 会被占用而打包失败，
 先停服务再构建。
 
 ---
 
-技术栈：Java 21（虚拟线程 + ScopedValue）、Spring Boot 4.1、Spring Data JPA + Flyway、
+技术栈：Java 21（虚拟线程）、Spring Boot 4.1、Spring Data JPA + Flyway、
 MySQL 8（或内置 H2，启动加 `embedded`）、Redis（可选）、Milvus（可选）、Spring AI 2.0.1（可选通道）、
 React + Vite + antd、**FlowGram**（拖拽式工作流画布，与 Coze 同源内核）、**Electron + jlink**（桌面绿色版）。

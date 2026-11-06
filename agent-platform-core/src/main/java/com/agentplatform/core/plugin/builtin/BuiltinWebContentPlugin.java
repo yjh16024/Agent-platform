@@ -1,6 +1,9 @@
 package com.agentplatform.core.plugin.builtin;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.util.JsonUtils;
+import com.agentplatform.plugin.sdk.ConfigFieldDef;
 import com.agentplatform.plugin.sdk.PluginContext;
 import com.agentplatform.plugin.sdk.PluginDescriptor;
 import com.agentplatform.plugin.sdk.PluginTool;
@@ -94,6 +97,58 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
     /** 360 图片（备用引擎，实测结果偏少，仅作兜底）。 */
     private static final String SO_IMAGE_URL = "https://image.so.com/j";
 
+    /**
+     * 看一个 B 站视频（2026-10-23）。
+     *
+     * <p><b>为什么需要</b>：原来只有 {@code bilibili_hot}，她只能看到榜单标题 ——
+     * "知道有这些视频"，但**看不到内容**，也没法说"这个视频讲了什么"。</p>
+     *
+     * <p>视频的内容信息 90% 在**字幕**里，情绪和梗在**弹幕**里。所以这个工具做三件事：
+     * 取详情（标题/简介/时长/播放）、取弹幕（前 30 条）、取 AI 字幕（**需要登录 cookie**）。
+     * 没有 cookie 时字幕拿不到，但详情和弹幕仍然可用 —— 零配置也能跑。</p>
+     */
+    public static final String TOOL_BILI_VIDEO = "bilibili_video";
+
+    /**
+     * 搜歌（2026-10-25）。
+     *
+     * <p><b>为什么需要</b>：她之前说"这首"，然后开始描述"一个人一把吉他、很慢" ——
+     * 因为她**手上没有任何音乐能力**，连歌名都给不出，只能演。有了这个工具，
+     * 她可以说出歌名 + 发一个能点开的链接。</p>
+     *
+     * <p>走 QQ 音乐的公开搜索接口，实测**不需要签名、不需要登录**，
+     * `format=json` 去掉 JSONP 包装。</p>
+     */
+    public static final String TOOL_MUSIC_SEARCH = "music_search";
+
+    /** QQ 音乐搜索（公开接口，无需 key）。 */
+    private static final String QQ_MUSIC_SEARCH = "https://c.y.qq.com/soso/fcgi-bin/client_search_cp";
+
+    /** 视频详情（bvid → aid/cid/标题/简介）。 */
+    private static final String BILI_VIEW = "https://api.bilibili.com/x/web-interface/view";
+    /** 播放器信息（含字幕列表，需要 SESSDATA）。 */
+    private static final String BILI_PLAYER = "https://api.bilibili.com/x/player/v2";
+    /** 弹幕 XML。 */
+    private static final String BILI_DANMAKU = "https://api.bilibili.com/x/v1/dm/list.so";
+
+    /**
+     * 堆糖搜索接口（2026-10-22，**画师站首选**）。
+     *
+     * <p>实测：200 / 339ms / 24 条，图片 {@code a-ho-img.dtstatic.com} 直连下载
+     * 200 / 349~578KB，尺寸 1440×1440。堆糖是国内最大的头像/插画社区，
+     * 质量明显高于搜索引擎的通用结果。</p>
+     */
+    private static final String DUITANG_SEARCH_URL = "https://www.duitang.com/napi/blog/list/by_search/";
+
+    /**
+     * 花瓣搜索接口（2026-10-22，画师站次选）。
+     *
+     * <p>实测：200 / 407ms / 20 条，{@code pins[].file.url} 自带 auth_key 签名
+     * （{@code gd-hbimg-edge.huaban.com}），也可用 key 拼 {@code hbimg.huaban.com/<key>}，
+     * 两者都 200 / 222KB，尺寸 1080×1440。</p>
+     */
+    private static final String HUABAN_SEARCH_URL = "https://huaban.com/v3/search/pin";
+
     /** 抓页面必须带浏览器 UA：默认 UA 常被返回简化页或验证码页。 */
     private static final String BROWSER_UA =
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -177,6 +232,28 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
                 .put("type", "integer")
                 .put("description", "返回条数，默认 10，上限 20");
 
+        ObjectNode biliVideoSchema = mapper.createObjectNode();
+        biliVideoSchema.put("type", "object");
+        ObjectNode bvProps = biliVideoSchema.putObject("properties");
+        bvProps.putObject("bvid")
+                .put("type", "string")
+                .put("description", "BV 号或完整链接（BV1xx411c7mD 或 https://www.bilibili.com/video/BV...）");
+        bvProps.putObject("maxSubtitleChars")
+                .put("type", "integer")
+                .put("description", "字幕最多带回多少字，默认 3000（太长会淹掉对话）");
+        biliVideoSchema.putArray("required").add("bvid");
+
+        ObjectNode musicSchema = mapper.createObjectNode();
+        musicSchema.put("type", "object");
+        ObjectNode msProps = musicSchema.putObject("properties");
+        msProps.putObject("keyword")
+                .put("type", "string")
+                .put("description", "歌名，或「歌名 歌手」（如「晴天 周杰伦」）—— 带上歌手更准");
+        msProps.putObject("limit")
+                .put("type", "integer")
+                .put("description", "返回几条，默认 3，最多 10");
+        musicSchema.putArray("required").add("keyword");
+
         ObjectNode rssSchema = mapper.createObjectNode();
         rssSchema.put("type", "object");
         ObjectNode rssProps = rssSchema.putObject("properties");
@@ -202,8 +279,9 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
                 .put("description", "返回几张，默认 10，上限 20");
         imgProps.putObject("engine")
                 .put("type", "string")
-                .put("description", "搜索引擎：baidu（默认，中文场景最准）/ bing / so。"
-                        + "中文关键词或找头像时用 baidu；bing 适合英文查询，且支持 site 限定");
+                .put("description", "图源。默认 auto：**先搜画师站（堆糖、花瓣）**，质量高；"
+                        + "不够再用百度补。也可指定 duitang / huaban / baidu / bing / so。"
+                        + "找头像、插画时保持默认 auto 即可");
         imgProps.putObject("site")
                 .put("type", "string")
                 .put("description", "限定站点，**仅 bing 引擎有效**。找头像/插画可传 duitang.com"
@@ -223,6 +301,20 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
                                 + "比凭空猜测流行内容可靠。",
                         biliSchema,
                         this::handleBiliHot),
+                new PluginTool(TOOL_BILI_VIDEO,
+                        "看一个 B 站视频：取标题、简介、时长、播放量、**热门弹幕**，"
+                                + "以及 **AI 字幕全文**（字幕需要配置 B 站 cookie，见 biliSessdata）。"
+                                + "要聊某个视频讲了什么、弹幕什么反应时用它。"
+                                + "⚠️ 没字幕的视频只能拿到简介和弹幕 —— 这时如实说\"没字幕\"，"
+                                + "不要凭标题编内容。",
+                        biliVideoSchema,
+                        this::handleBiliVideo),
+                new PluginTool(TOOL_MUSIC_SEARCH,
+                        "搜一首歌，返回歌名、歌手、专辑、时长和**可以直接点开的 QQ 音乐链接**。"
+                                + "想推荐歌、聊到某首歌时用它 —— 拿到链接再发出去，"
+                                + "比只说「这首」强得多（你没法真的播放音乐，别装）。",
+                        musicSchema,
+                        this::handleMusicSearch),
                 new PluginTool(TOOL_RSS,
                         "读取一个 RSS / Atom 订阅源，返回最近若干条的标题、时间、链接与摘要。"
                                 + "适合订阅新闻站、博客、以及由 RSSHub 生成的社交平台源"
@@ -235,12 +327,40 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
                                 + "需要一张具体的图时用它（例如换头像、找配图）—— "
                                 + "注意它和 web_search 的区别：web_search 给的是网页地址，"
                                 + "这个给的是图片本身的地址，可以直接拿去下载/设置头像。"
-                                + "返回的是**地址列表**（你读到的是文字）；如果你想把某张发给对方看，"
-                                + "用 `[发图 <图片地址>]`，插件会把那张图真的发出去。"
-                                + "默认走百度图片（中文场景最准，找头像/插画首选）；"
-                                + "英文查询或要限定站点时传 engine=bing + site。",
+                                + "返回的是地址列表；**搜索完成后系统会把前 3 张图直接给你看**，"
+                                + "看着挑即可。若要把某张发给对方，用 `[发图 <图片地址>]`。"
+                                + "默认 engine=auto：**先搜画师站（堆糖、花瓣）**，质量更高；"
+                                + "不够再用百度补齐。找头像/插画保持默认即可。",
                         imgSchema,
                         this::handleImageSearch));
+    }
+
+    /**
+     * 挂载配置（2026-10-23）。
+     *
+     * <p>只有一项：B 站 `SESSDATA`，给 {@code bilibili_video} 取 AI 字幕用。</p>
+     *
+     * <p><b>不填也能用</b> —— 视频详情和弹幕走公开接口就能拿到，只是缺"内容"这一半。
+     * 填了之后她才说得清"这个视频讲了什么"，而不是只看到弹幕在刷梗。</p>
+     */
+    @Override
+    public List<ConfigFieldDef> configFields() {
+        return List.of(
+                new ConfigFieldDef(
+                        "biliSessdata",
+                        "B 站 SESSDATA（可选，用于读视频字幕）",
+                        ConfigFieldDef.Kind.text,
+                        "",
+                        false,
+                        true,
+                        null,
+                        null,
+                        null,
+                        null,
+                        "粘贴 SESSDATA 的值",
+                        "登录 bilibili.com → F12 → Application → Cookies → 复制 SESSDATA。"
+                                + "不填也能用（详情 + 弹幕），但拿不到 AI 字幕，她就说不了视频讲了什么。"
+                                + "**建议用小号** —— 这个值等于登录态。"));
     }
 
     // ---------------- image_search ----------------
@@ -262,20 +382,38 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
         }
         int limit = clamp(args.path("limit").asInt(10), 1, 20);
         String q = query.trim();
-        String engine = args.path("engine").asText("baidu").trim().toLowerCase(java.util.Locale.ROOT);
+        String engine = args.path("engine").asText("auto").trim().toLowerCase(java.util.Locale.ROOT);
         String site = args.path("site").asText("").trim();
 
         /*
-         * 多引擎（2026-10-22）：默认百度。
+         * 图源选择（2026-10-22）。
          *
-         * 换掉 Bing 的理由是实测出来的：同一句「动漫 白发 少女 插画 头像」，
-         * Bing 返回"白银还有近 20% 上涨空间""9999 银粒定制"（中文分词把"银白发"切成"白银"），
-         * 百度返回 30 条"白发头像女动漫""白发动漫女生头像"，图片来自 img*.baidu.com 可直接下载。
+         * 默认 auto = **画师站优先**：堆糖 → 花瓣 → 百度。
+         *
+         * 为什么不用"搜索引擎 + site: 限定"：实测百度和必应**都不认** site 语法 ——
+         * 六个站点（huaban / pixiv / duitang / lofter / weibo）的返回完全一样。
+         * 所以只能直连画师站自己的搜索接口。实测两者质量明显高于通用引擎：
+         *   堆糖 1440×1440、578KB；花瓣 1080×1440、222KB。
+         *
+         * 为什么仍保留百度兜底：画师站只覆盖头像/插画，查"某产品图""新闻配图"时
+         * 通用引擎才管用。
          */
         String label;
-        List<String[]> items;
+        List<String[]> items = new ArrayList<>();
         try {
             switch (engine) {
+                case "duitang" -> {
+                    items = searchDuitang(q, limit);
+                    label = "堆糖";
+                }
+                case "huaban" -> {
+                    items = searchHuaban(q, limit);
+                    label = "花瓣";
+                }
+                case "baidu" -> {
+                    items = searchBaiduImages(q, limit);
+                    label = "百度";
+                }
                 case "bing" -> {
                     if (!site.isEmpty() && !site.matches("^[A-Za-z0-9.\\-]+$")) {
                         throw new IllegalArgumentException("site 只接受域名，例如 duitang.com");
@@ -288,14 +426,29 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
                     label = "360";
                 }
                 default -> {
-                    items = searchBaiduImages(q, limit);
-                    label = "百度";
+                    /*
+                     * auto：逐个源补齐，**单个源失败不影响整体** ——
+                     * "画师站搜不到就退回引擎"正是这个模式的全部意义，
+                     * 不能因为堆糖超时就让整次搜索失败。
+                     */
+                    List<String> used = new ArrayList<>();
+                    items.addAll(trySource("堆糖", used, () -> searchDuitang(q, limit)));
+                    if (items.size() < limit) {
+                        int need = limit - items.size();
+                        items.addAll(trySource("花瓣", used, () -> searchHuaban(q, need)));
+                    }
+                    if (items.size() < limit) {
+                        int need = limit - items.size();
+                        items.addAll(trySource("百度", used, () -> searchBaiduImages(q, need)));
+                    }
+                    items = dedupe(items, limit);
+                    label = used.isEmpty() ? "无可用图源" : String.join(" + ", used);
                 }
             }
         } catch (Exception e) {
             log.warn("[web-content] image_search failed query={} engine={} reason={}", q, engine, e.getMessage());
             throw new IllegalStateException("图片搜索失败（" + engine + "）：" + e.getMessage()
-                    + "。可以换关键词，或换 engine（baidu / bing / so）重试。");
+                    + "。可以换关键词，或换 engine（auto / duitang / huaban / baidu / bing / so）重试。");
         }
         if (items.isEmpty()) {
             throw new IllegalStateException("图片搜索没有结果（" + engine + "）：可能被要求人机验证，或关键词太生僻。");
@@ -311,6 +464,166 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
         }
         log.info("[web-content] image_search ok engine={} query={} items={}", engine, q, items.size());
         return JsonNodeFactory.instance.textNode(sb.toString());
+    }
+
+    /**
+     * 尝试一个图源；失败只记日志并返回空列表。
+     *
+     * <p>auto 模式的语义是"画师站搜不到就退回引擎" —— 所以单个源超时、被限流
+     * **绝不能**让整次搜索失败。</p>
+     */
+    private List<String[]> trySource(String name, List<String> used, SourceCall call) {
+        try {
+            List<String[]> got = call.get();
+            if (got != null && !got.isEmpty()) {
+                used.add(name);
+                return got;
+            }
+        } catch (Exception e) {
+            log.warn("[web-content] {} 搜索失败: {}", name, e.getMessage());
+        }
+        return List.of();
+    }
+
+    /** 可抛异常的图源调用（各 searchXxx 都抛 IOException）。 */
+    @FunctionalInterface
+    private interface SourceCall {
+        List<String[]> get() throws Exception;
+    }
+
+    /** 按 URL 去重并截断（不同图源可能返回同一张图）。 */
+    static List<String[]> dedupe(List<String[]> items, int limit) {
+        List<String[]> out = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (String[] it : items) {
+            if (out.size() >= limit) {
+                break;
+            }
+            if (it == null || it.length < 2 || it[1] == null || !seen.add(it[1])) {
+                continue;
+            }
+            out.add(it);
+        }
+        return out;
+    }
+
+    // ---------------- image_search：堆糖（画师站首选） ----------------
+
+    private List<String[]> searchDuitang(String query, int limit) throws IOException {
+        String url = DUITANG_SEARCH_URL + "?kw=" + URLEncoder.encode(query, StandardCharsets.UTF_8)
+                + "&start=0&limit=" + Math.min(limit * 2, 40) + "&type=feed";
+        Request request = new Request.Builder()
+                .url(url)
+                .header("User-Agent", BROWSER_UA)
+                .header("Accept-Language", "zh-CN,zh;q=0.9")
+                .header("Referer", "https://www.duitang.com/")
+                .get()
+                .build();
+        try (Response response = http.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                throw new IllegalStateException("HTTP " + response.code());
+            }
+            String text = response.body() == null ? "" : response.body().string();
+            return parseDuitang(text, limit);
+        }
+    }
+
+    /** 解析堆糖搜索结果：{@code data.object_list[].photo.path} + {@code msg}。 */
+    static List<String[]> parseDuitang(String json, int limit) {
+        List<String[]> out = new ArrayList<>();
+        if (json == null || json.isBlank()) {
+            return out;
+        }
+        JsonNode root;
+        try {
+            root = JsonUtils.toJsonNode(json);
+        } catch (Exception e) {
+            return out;
+        }
+        JsonNode list = root.path("data").path("object_list");
+        if (!list.isArray()) {
+            return out;
+        }
+        for (JsonNode o : list) {
+            if (out.size() >= limit) {
+                break;
+            }
+            if (o == null || o.isNull()) {
+                continue;
+            }
+            String img = o.path("photo").path("path").asText("");
+            if (img.isEmpty()) {
+                continue;
+            }
+            out.add(new String[]{o.path("msg").asText("").trim(), img});
+        }
+        return out;
+    }
+
+    // ---------------- image_search：花瓣 ----------------
+
+    private List<String[]> searchHuaban(String query, int limit) throws IOException {
+        String url = HUABAN_SEARCH_URL + "?q=" + URLEncoder.encode(query, StandardCharsets.UTF_8)
+                + "&limit=" + Math.min(limit * 2, 40);
+        Request request = new Request.Builder()
+                .url(url)
+                .header("User-Agent", BROWSER_UA)
+                .header("Accept-Language", "zh-CN,zh;q=0.9")
+                .header("Accept", "application/json")
+                .header("Referer", "https://huaban.com/")
+                .get()
+                .build();
+        try (Response response = http.newCall(request).execute()) {
+            if (!response.isSuccessful()) {
+                throw new IllegalStateException("HTTP " + response.code());
+            }
+            String text = response.body() == null ? "" : response.body().string();
+            return parseHuaban(text, limit);
+        }
+    }
+
+    /**
+     * 解析花瓣搜索结果。
+     *
+     * <p>{@code pins[].file.url} 自带 {@code auth_key} 签名，可直接下载；
+     * 没有 url 时用 {@code file.key} 拼 {@code hbimg.huaban.com/<key>}（实测两种都 200）。</p>
+     */
+    static List<String[]> parseHuaban(String json, int limit) {
+        List<String[]> out = new ArrayList<>();
+        if (json == null || json.isBlank()) {
+            return out;
+        }
+        JsonNode root;
+        try {
+            root = JsonUtils.toJsonNode(json);
+        } catch (Exception e) {
+            return out;
+        }
+        JsonNode pins = root.path("pins");
+        if (!pins.isArray()) {
+            return out;
+        }
+        for (JsonNode p : pins) {
+            if (out.size() >= limit) {
+                break;
+            }
+            if (p == null || p.isNull()) {
+                continue;
+            }
+            JsonNode file = p.path("file");
+            String img = file.path("url").asText("");
+            if (img.isEmpty()) {
+                String key = file.path("key").asText("");
+                if (!key.isEmpty()) {
+                    img = "https://hbimg.huaban.com/" + key;
+                }
+            }
+            if (img.isEmpty()) {
+                continue;
+            }
+            out.add(new String[]{p.path("raw_text").asText("").trim(), img});
+        }
+        return out;
     }
 
     // ---------------- image_search：百度 ----------------
@@ -629,10 +942,10 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
                 .replace("&#39;", "'")
                 .replace("&lt;", "<")
                 .replace("&gt;", ">")
-                .replace("&ldquo;", "“")
-                .replace("&rdquo;", "”")
-                .replace("&lsquo;", "‘")
-                .replace("&rsquo;", "’")
+                .replace("&ldquo;", "\u201C")
+                .replace("&rdquo;", "\u201D")
+                .replace("&lsquo;", "'")
+                .replace("&rsquo;", "'")
                 .replace("&hellip;", "…")
                 .replace("&mdash;", "—")
                 .replace("&ndash;", "–")
@@ -904,6 +1217,310 @@ public class BuiltinWebContentPlugin implements ToolProvider, PluginDescriptor {
             log.warn("[web-content] bilibili hot failed: {}", e.getMessage());
             throw new IllegalStateException("获取 B 站热门失败：" + e.getMessage()
                     + "。可以换 web_search 试试。");
+        }
+    }
+
+    // ---------------- bilibili_video ----------------
+
+    /**
+     * 看一个 B 站视频（2026-10-23）。
+     *
+     * <p>取三样东西：详情（标题/简介/时长/播放/UP）、热门弹幕、AI 字幕。
+     * 字幕要 `SESSDATA`；没有就跳过，其余照常返回 —— **零配置也能用**。</p>
+     *
+     * <p>没有字幕时必须让模型知道"我看不到内容"，否则它会凭标题瞎编一大段。</p>
+     */
+    private JsonNode handleBiliVideo(JsonNode args, PluginContext ctx) {
+        String raw = args == null ? "" : args.path("bvid").asText("").trim();
+        String bvid = extractBvid(raw);
+        if (bvid == null) {
+            throw new IllegalArgumentException("bvid 不合法：要 BV 号或视频链接（含 /video/BV...）");
+        }
+        int maxChars = clamp(args.path("maxSubtitleChars").asInt(3000), 500, 8000);
+        String sessdata = ctx == null ? "" : ctx.configAsString("biliSessdata", "");
+
+        JsonNode data = biliJson(BILI_VIEW + "?bvid=" + bvid, sessdata, "视频详情");
+        long aid = data.path("aid").asLong(0);
+        long cid = data.path("cid").asLong(0);
+        String title = data.path("title").asText("");
+        String desc = data.path("desc").asText("");
+        long duration = data.path("duration").asLong(0);
+        String up = data.path("owner").path("name").asText("");
+        long view = data.path("stat").path("view").asLong(0);
+        long danmakuCount = data.path("stat").path("danmaku").asLong(0);
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("【视频】").append(title).append('\n');
+        sb.append("UP：").append(up).append("　时长：").append(fmtDuration(duration))
+                .append("　播放：").append(view).append("　弹幕数：").append(danmakuCount).append('\n');
+        if (!desc.isBlank()) {
+            sb.append("简介：").append(desc.length() > 400 ? desc.substring(0, 400) + "…" : desc).append('\n');
+        }
+        sb.append("链接：https://www.bilibili.com/video/").append(bvid).append('\n');
+
+        List<String> dm = fetchDanmaku(cid, 30);
+        if (!dm.isEmpty()) {
+            sb.append("\n【弹幕（前 ").append(dm.size()).append(" 条）】\n");
+            for (String d : dm) {
+                sb.append("  · ").append(d).append('\n');
+            }
+        }
+
+        String subtitle = fetchSubtitle(aid, cid, sessdata, maxChars);
+        if (subtitle != null && !subtitle.isBlank()) {
+            sb.append("\n【字幕】\n").append(subtitle).append('\n');
+        } else if (sessdata.isBlank()) {
+            sb.append("\n【字幕】拿不到 —— 没有配置 B 站 cookie（biliSessdata）。\n")
+                    .append("  → 只能凭简介和弹幕判断，**不要编视频内容**。\n");
+        } else {
+            sb.append("\n【字幕】这个视频没有 AI 字幕。\n")
+                    .append("  → 只能凭简介和弹幕判断，**不要编视频内容**。\n");
+        }
+
+        log.info("[web-content] bilibili video ok bvid={} danmaku={} subtitleLen={}",
+                bvid, dm.size(), subtitle == null ? 0 : subtitle.length());
+        return JsonNodeFactory.instance.textNode(sb.toString());
+    }
+
+    // ---------------- music_search ----------------
+
+    /**
+     * 搜歌（2026-10-25）。
+     *
+     * <p>实测 QQ 音乐的 `client_search_cp` 接口**不需要签名、不需要登录**，
+     * 带上 `format=json` 就返回纯 JSON（否则是 JSONP）。原唱通常排在第一位。</p>
+     *
+     * <p>返回里明确写"你没法真的播放" —— 否则她会只说歌名不给链接，
+     * 或者干脆假装按了播放键。</p>
+     */
+    private JsonNode handleMusicSearch(JsonNode args, PluginContext ctx) {
+        String kw = args == null ? "" : args.path("keyword").asText("").trim();
+        if (kw.isBlank()) {
+            throw new IllegalArgumentException("keyword 不能为空（歌名，或「歌名 歌手」）");
+        }
+        int limit = clamp(args.path("limit").asInt(3), 1, 10);
+        String url = QQ_MUSIC_SEARCH
+                + "?w=" + URLEncoder.encode(kw, StandardCharsets.UTF_8)
+                + "&format=json&n=" + limit + "&p=1";
+
+        JsonNode root;
+        try {
+            Request request = new Request.Builder()
+                    .url(url)
+                    .header("User-Agent", BROWSER_UA)
+                    .header("Referer", "https://y.qq.com/")
+                    .get()
+                    .build();
+            String body;
+            try (Response response = http.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    throw new IOException("HTTP " + response.code());
+                }
+                body = response.body() == null ? "" : response.body().string();
+            }
+            root = mapper.readTree(body);
+        } catch (Exception e) {
+            throw new IllegalStateException("搜歌失败：" + e.getMessage()
+                    + "。可以换 web_search 试试。");
+        }
+
+        JsonNode list = root.path("data").path("song").path("list");
+        if (!list.isArray() || list.isEmpty()) {
+            return JsonNodeFactory.instance.textNode(
+                    "没搜到「" + kw + "」。换个写法试试 —— 歌名后面带上歌手会更准。");
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("【搜到 ").append(list.size()).append(" 首】\n");
+        for (JsonNode s : list) {
+            String name = s.path("songname").asText("");
+            StringBuilder singers = new StringBuilder();
+            for (JsonNode ar : s.path("singer")) {
+                if (singers.length() > 0) {
+                    singers.append('/');
+                }
+                singers.append(ar.path("name").asText(""));
+            }
+            String album = s.path("albumname").asText("");
+            long sec = s.path("interval").asLong(0);
+            String mid = s.path("songmid").asText("");
+            sb.append("· ").append(name).append(" — ").append(singers).append('\n');
+            sb.append("  专辑：").append(album.isBlank() ? "-" : album)
+                    .append("　时长：").append(fmtDuration(sec)).append('\n');
+            if (!mid.isBlank()) {
+                sb.append("  链接：https://y.qq.com/n/ryqq/songDetail/").append(mid).append('\n');
+            }
+        }
+        sb.append("\n（把链接发出去就行 —— 你没法真的播放音乐。）");
+        log.info("[web-content] music search ok keyword={} n={}", kw, list.size());
+        return JsonNodeFactory.instance.textNode(sb.toString());
+    }
+
+    /** 从 BV 号或任意含 BV 的链接里取出 bvid。 */
+    static String extractBvid(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        Matcher m = Pattern.compile("(BV[0-9A-Za-z]{10})").matcher(raw);
+        return m.find() ? m.group(1) : null;
+    }
+
+    /** 秒数 → 「3 分 20 秒」。 */
+    static String fmtDuration(long seconds) {
+        if (seconds <= 0) {
+            return "-";
+        }
+        long h = seconds / 3600;
+        long mm = (seconds % 3600) / 60;
+        long ss = seconds % 60;
+        if (h > 0) {
+            return h + " 时 " + mm + " 分";
+        }
+        if (mm > 0) {
+            return mm + " 分 " + ss + " 秒";
+        }
+        return ss + " 秒";
+    }
+
+    /** 带 cookie 的 B 站 GET，返回 `data` 节点；code != 0 抛错并说明该怎么办。 */
+    private JsonNode biliJson(String url, String sessdata, String what) {
+        try {
+            Request.Builder builder = new Request.Builder()
+                    .url(url)
+                    .header("User-Agent", BROWSER_UA)
+                    .header("Referer", "https://www.bilibili.com/")
+                    .get();
+            if (sessdata != null && !sessdata.isBlank()) {
+                builder.header("Cookie", "SESSDATA=" + sessdata);
+            }
+            String body;
+            try (Response response = http.newCall(builder.build()).execute()) {
+                if (!response.isSuccessful()) {
+                    throw new IOException("HTTP " + response.code());
+                }
+                body = response.body() == null ? "" : response.body().string();
+            }
+            JsonNode root = mapper.readTree(body);
+            int code = root.path("code").asInt(-1);
+            if (code != 0) {
+                String msg = root.path("message").asText("");
+                String advice = (sessdata == null || sessdata.isBlank())
+                        ? "可能需要登录 cookie（biliSessdata）"
+                        : "cookie 可能已过期，或触发了风控";
+                throw new IllegalStateException(what + " 返回 code=" + code
+                        + (msg.isBlank() ? "" : "（" + msg + "）") + "，" + advice);
+            }
+            return root.path("data");
+        } catch (Exception e) {
+            throw new IllegalStateException("取" + what + "失败：" + e.getMessage());
+        }
+    }
+
+    /** 弹幕 XML → 前 N 条纯文本。 */
+    private List<String> fetchDanmaku(long cid, int limit) {
+        List<String> out = new ArrayList<>();
+        if (cid <= 0) {
+            return out;
+        }
+        try {
+            Request request = new Request.Builder()
+                    .url(BILI_DANMAKU + "?oid=" + cid)
+                    .header("User-Agent", BROWSER_UA)
+                    .header("Referer", "https://www.bilibili.com/")
+                    .get()
+                    .build();
+            String xml;
+            try (Response response = http.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    return out;
+                }
+                xml = response.body() == null ? "" : response.body().string();
+            }
+            Matcher m = Pattern.compile("<d p=\"[^\"]*\">([^<]{1,80})</d>").matcher(xml);
+            while (m.find() && out.size() < limit) {
+                String t = m.group(1).trim();
+                if (!t.isEmpty()) {
+                    out.add(t);
+                }
+            }
+        } catch (Exception e) {
+            log.debug("[web-content] danmaku failed: {}", e.getMessage());
+        }
+        return out;
+    }
+
+    /**
+     * 取 AI 字幕（需要 SESSDATA）。
+     *
+     * <p>流程：`player/v2` 拿字幕列表 → 优先中文 → 下载 `subtitle_url` 的 JSON →
+     * 拼成纯文本。任何一步失败都返回 null，由上层给出"没字幕"的说明。</p>
+     */
+    private String fetchSubtitle(long aid, long cid, String sessdata, int maxChars) {
+        if (sessdata == null || sessdata.isBlank() || aid <= 0 || cid <= 0) {
+            return null;
+        }
+        try {
+            JsonNode data = biliJson(BILI_PLAYER + "?aid=" + aid + "&cid=" + cid, sessdata, "播放器信息");
+            JsonNode subs = data.path("subtitle").path("subtitles");
+            if (!subs.isArray() || subs.isEmpty()) {
+                return null;
+            }
+            String subUrl = null;
+            for (JsonNode item : subs) {
+                String lan = item.path("lan").asText("");
+                String u = item.path("subtitle_url").asText("");
+                if (u.isBlank()) {
+                    continue;
+                }
+                if (u.startsWith("//")) {
+                    u = "https:" + u;
+                }
+                if (subUrl == null) {
+                    subUrl = u;
+                }
+                if (lan.startsWith("zh")) {
+                    subUrl = u;
+                    break;
+                }
+            }
+            if (subUrl == null) {
+                return null;
+            }
+
+            Request request = new Request.Builder()
+                    .url(subUrl)
+                    .header("User-Agent", BROWSER_UA)
+                    .header("Referer", "https://www.bilibili.com/")
+                    .get()
+                    .build();
+            String json;
+            try (Response response = http.newCall(request).execute()) {
+                if (!response.isSuccessful()) {
+                    return null;
+                }
+                json = response.body() == null ? "" : response.body().string();
+            }
+            JsonNode arr = mapper.readTree(json).path("body");
+            if (!arr.isArray()) {
+                return null;
+            }
+            StringBuilder sb = new StringBuilder();
+            for (JsonNode line : arr) {
+                String c = line.path("content").asText("").trim();
+                if (c.isEmpty()) {
+                    continue;
+                }
+                sb.append(c);
+                if (sb.length() >= maxChars) {
+                    sb.setLength(maxChars);
+                    sb.append("…（后面省略）");
+                    break;
+                }
+            }
+            return sb.length() == 0 ? null : sb.toString();
+        } catch (Exception e) {
+            log.debug("[web-content] subtitle failed: {}", e.getMessage());
+            return null;
         }
     }
 

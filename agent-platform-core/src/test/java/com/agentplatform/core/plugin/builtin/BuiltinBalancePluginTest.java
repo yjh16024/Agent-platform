@@ -1,5 +1,7 @@
 package com.agentplatform.core.plugin.builtin;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.core.model.balance.ModelBalanceView;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

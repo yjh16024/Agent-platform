@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.action;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.tool.fs.WorkspaceService;
 import com.agentplatform.core.tool.registry.ToolRegistry;

@@ -1,10 +1,11 @@
 package com.agentplatform.core.dict;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.util.IdGenerator;
 import com.agentplatform.core.log.LogCategory;
 import com.agentplatform.core.log.LogLevel;
 import com.agentplatform.core.rag.chunker.Chunker;
-import com.agentplatform.core.tool.Tool;
 import com.agentplatform.model.entity.SysDictItem;
 import com.agentplatform.model.entity.SysDictType;
 import com.agentplatform.model.repository.SysDictItemRepository;
@@ -153,6 +154,13 @@ public class DictSeeder {
 
     /** 对话侧服务商（与 ModelSettingsPage 原来的 CHAT_PROVIDERS 对齐）。 */
     private static final Map<String, String> CHAT_PROVIDERS = new LinkedHashMap<>() {{
+        /*
+         * siliconflow 补进对话侧（2026-10-23）。
+         *
+         * 它一直只在嵌入侧字典里，所以「模型设置 → 对话模型」的服务商下拉里根本没有它 ——
+         * 而它既是 OpenAI 兼容协议，又有 DeepSeek / Qwen 的一堆模型，是最常用的聚合入口。
+         */
+        put("siliconflow", "siliconflow（硅基流动）");
         put("deepseek", "deepseek");
         put("openai", "openai");
         put("qwen", "qwen（通义千问）");

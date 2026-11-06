@@ -79,4 +79,4 @@ fi
 echo "[3/3] Starting core service on port 8081 (profile=$DB_MODE)..."
 # profile 名与 application-embedded.yml 的 on-profile 对应；mysql 时传的是同名 profile
 # （没有 application-mysql.yml，激活它不会覆盖任何默认配置，仅为与 .bat 行为一致）。
-exec "$JAVA_CMD" --enable-preview -XX:+UseZGC -Xms256m -Xmx1g -jar "$JAR_FILE" --spring.profiles.active="$DB_MODE"
+exec "$JAVA_CMD" -XX:+UseZGC -Xms256m -Xmx1g -jar "$JAR_FILE" --spring.profiles.active="$DB_MODE"

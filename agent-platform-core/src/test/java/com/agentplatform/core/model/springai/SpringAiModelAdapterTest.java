@@ -1,6 +1,7 @@
 package com.agentplatform.core.model.springai;
 
-import com.agentplatform.core.model.adapter.ModelAdapter;
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.sun.net.httpserver.HttpServer;
 import org.junit.jupiter.api.Test;
 

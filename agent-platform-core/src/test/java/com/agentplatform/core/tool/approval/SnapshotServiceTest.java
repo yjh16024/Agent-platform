@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.approval;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.core.tool.fs.WorkspaceService;
 import org.junit.jupiter.api.BeforeEach;

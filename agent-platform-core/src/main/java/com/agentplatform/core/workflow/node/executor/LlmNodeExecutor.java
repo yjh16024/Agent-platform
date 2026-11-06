@@ -1,6 +1,7 @@
 package com.agentplatform.core.workflow.node.executor;
 
-import com.agentplatform.core.model.adapter.ModelAdapter;
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.agentplatform.core.model.router.ModelRouter;
 import com.agentplatform.core.model.secret.ModelBindingService;
 import com.agentplatform.core.workflow.dag.NodeExecutor;

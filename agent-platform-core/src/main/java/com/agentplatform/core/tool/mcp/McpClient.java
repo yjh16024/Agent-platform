@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.mcp;
 
+import com.agentplatform.framework.api.Tool;
+
 import java.util.List;
 import java.util.Map;
 

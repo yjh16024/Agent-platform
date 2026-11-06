@@ -1,5 +1,7 @@
 package com.agentplatform.core.plugin.builtin;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.plugin.sdk.ConfigFieldDef;
 import com.agentplatform.plugin.sdk.EventSubscriber;
 import com.agentplatform.plugin.sdk.PluginContext;

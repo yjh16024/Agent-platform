@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { App as AntApp, Button, Form, Input, InputNumber, Modal, Select, Switch, Typography } from 'antd';
+import { App as AntApp, Button, Form, Input, InputNumber, Modal, Select, Switch, Tabs, Typography } from 'antd';
 import type { PluginConfigField, WebPluginItem } from '../../api/pluginWeb';
 import { createPluginConfig } from '../../plugins/host/services';
 import { listAgents } from '../../api/agents';
@@ -193,6 +193,73 @@ export default function PluginConfigModal({
     );
   };
 
+  /**
+   * 从一个字段的 label 里取出分组名（2026-10-24）。
+   *
+   * <p>插件在 manifest 里把 label 写成 `【① 基础连接】启用接管`，
+   * 这里把 `① 基础连接` 抽出来当 Tab 名，剩下的 `启用接管` 才是字段名。</p>
+   *
+   * <p><b>为什么不加新字段</b>：`ConfigFieldDef` 没有 `group`，加它要动后端
+   * schema + SDK + 所有插件。而 label 前缀已经存在（50 项全都写了），
+   * 直接解析零成本，老插件不写前缀也能工作（归到「其它」）。</p>
+   */
+  const groupOf = (label?: string): string => {
+    const m = String(label ?? '').match(/^【([^】]+)】/);
+    return m ? m[1] : '其它';
+  };
+
+  /** 去掉 label 里的分组前缀，只留字段名。 */
+  const nameOf = (label?: string, fallback?: string): string => {
+    const t = String(label ?? '').replace(/^【[^】]+】\s*/, '').trim();
+    return t || String(fallback ?? '');
+  };
+
+  /** 按分组把字段归类，**保持声明顺序**（这样面板的顺序就是作者写 manifest 的顺序）。 */
+  const groupFields = (list: PluginConfigField[]) => {
+    const order: string[] = [];
+    const map = new Map<string, PluginConfigField[]>();
+    for (const f of list) {
+      const g = groupOf(f.label);
+      if (!map.has(g)) {
+        map.set(g, []);
+        order.push(g);
+      }
+      map.get(g)!.push(f);
+    }
+    return order.map((g) => ({ group: g, items: map.get(g)! }));
+  };
+
+  const groups = groupFields(fields);
+  /**
+   * Tab 标题：去掉圈号（① ② …），只留中文名 + 项数。
+   *
+   * <p>10 个 Tab 挤在 560px 宽的弹窗里，`① 基础连接 · 5` 太长会被折叠成
+   * 「更多」下拉；`基础连接 5` 勉强能平铺完。</p>
+   */
+  const tabTitle = (g: string, n: number) => `${g.replace(/^[①②③④⑤⑥⑦⑧⑨⑩]\s*/, '')} ${n}`;
+
+  /** 渲染一个分组内的表单。 */
+  const renderGroup = (items: PluginConfigField[]) => (
+    <Form layout="vertical">
+      {items.map((f) => (
+        <Form.Item
+          key={f.key}
+          label={nameOf(f.label, f.key)}
+          extra={
+            f.description ? (
+              <Text type="secondary" style={{ fontSize: 12 }}>
+                {f.description}
+              </Text>
+            ) : undefined
+          }
+          style={{ marginBottom: 14 }}
+        >
+          {control(f)}
+        </Form.Item>
+      ))}
+    </Form>
+  );
+
   return (
     <Modal
       title={`${plugin?.name ?? ''} · 设置`}
@@ -216,24 +283,25 @@ export default function PluginConfigModal({
               ? '保存后会同时写入插件自己的配置文件（它跑在独立进程里，读的是那份）。'
               : '值保存在本机（`ap.plugin.' + (plugin?.id ?? '') + '.config`）。'}
           </Paragraph>
-          <Form layout="vertical">
-            {fields.map((f) => (
-              <Form.Item
-                key={f.key}
-                label={f.label ?? f.key}
-                extra={
-                  f.description ? (
-                    <Text type="secondary" style={{ fontSize: 12 }}>
-                      {f.description}
-                    </Text>
-                  ) : undefined
-                }
-                style={{ marginBottom: 14 }}
-              >
-                {control(f)}
-              </Form.Item>
-            ))}
-          </Form>
+          {/*
+            分页（2026-10-24）。
+            50 项平铺在一屏里根本找不到东西；按 label 前缀分组后用 Tabs 切换，
+            一组一屏，顶部栏点一下就换。
+            只有一组时不显示 Tab（纯前端小插件通常就两三个字段，没必要分页）。
+          */}
+          {groups.length > 1 ? (
+            <Tabs
+              size="small"
+              tabBarGutter={10}
+              items={groups.map(({ group, items }) => ({
+                key: group,
+                label: tabTitle(group, items.length),
+                children: renderGroup(items),
+              }))}
+            />
+          ) : (
+            renderGroup(fields)
+          )}
         </>
       )}
       <div style={{ textAlign: 'right' }}>

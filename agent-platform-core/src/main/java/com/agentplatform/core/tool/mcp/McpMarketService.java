@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.mcp;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.util.JsonUtils;
 import lombok.extern.slf4j.Slf4j;
 import okhttp3.OkHttpClient;

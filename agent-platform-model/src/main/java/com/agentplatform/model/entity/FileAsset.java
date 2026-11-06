@@ -18,7 +18,7 @@ import java.time.LocalDateTime;
  * 文件资产实体（多模态资源元数据）。
  */
 @Entity
-@Table(name = "file_asset")
+@Table(name = "ap_file_asset")
 @Getter
 @Setter
 @Builder

@@ -1,5 +1,17 @@
 package com.agentplatform.core.agent.runtime;
 
+import com.agentplatform.framework.api.Principal;
+import com.agentplatform.framework.api.RunCommand;
+import com.agentplatform.framework.api.RunResult;
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolOptions;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelAdapter;
+import com.agentplatform.framework.api.ModelCapability;
+import com.agentplatform.framework.api.SessionHandle;
+
 import com.agentplatform.common.util.IdGenerator;
 import com.agentplatform.common.util.TraceContext;
 import com.agentplatform.core.agent.dto.AgentRunRequest;
@@ -12,7 +24,6 @@ import com.agentplatform.core.log.LogLevel;
 import com.agentplatform.core.log.LogService;
 import com.agentplatform.core.notification.NotificationService;
 import com.agentplatform.core.memory.UserFactExtractor;
-import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.rag.ConversationAttachmentService;
 import com.agentplatform.core.rag.retriever.HybridRetriever;
 import com.agentplatform.core.rag.retriever.RetrievalResult;
@@ -35,14 +46,10 @@ import com.agentplatform.plugin.sdk.model.EventTypes;
 import com.agentplatform.core.session.SessionService;
 import com.agentplatform.core.session.SessionSummaryService;
 import com.agentplatform.core.skill.SkillService;
-import com.agentplatform.core.tool.Tool;
-import com.agentplatform.core.tool.ToolContext;
 import com.agentplatform.core.tool.ToolSchemas;
-import com.agentplatform.core.tool.ToolResult;
 import com.agentplatform.core.tool.executor.ToolExecutor;
 import com.agentplatform.core.tool.registry.ToolRegistry;
 import com.agentplatform.model.entity.AgentDefinition;
-import com.agentplatform.model.entity.Session;
 import com.agentplatform.model.record.Capabilities;
 import com.agentplatform.model.record.GenerationConfig;
 import com.agentplatform.model.record.Persona;
@@ -60,6 +67,7 @@ import java.util.LinkedHashMap;
 import java.util.concurrent.Executors;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -75,7 +83,13 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class AgentRuntimeService {
 
-    private static final Pattern TEMPLATE_VAR = Pattern.compile("\\{\\{\\s*([a-zA-Z0-9_\\-\\.]+)\\s*}}");
+    /*
+     * 提示词模板变量 `{{var}}`。
+     *
+     * 字符类里的 `.` 不需要转义（只有类外才是"任意字符"），写成 `\\.` 会被静态检查
+     * 标为"冗余转义"。`-` 放在末尾也不必转义。
+     */
+    private static final Pattern TEMPLATE_VAR = Pattern.compile("\\{\\{\\s*([a-zA-Z0-9_.\\-]+)\\s*}}");
 
     private final AgentService agentService;
     private final ModelRouter modelRouter;
@@ -90,6 +104,31 @@ public class AgentRuntimeService {
     /** 会话早期摘要（中期记忆，可选：未注入时不做摘要续接，保持原行为）。 */
     @Autowired(required = false)
     private SessionSummaryService sessionSummaryService;
+
+    /**
+     * 框架引擎（可选，默认 {@code legacy}）。
+     *
+     * <p>它存在时并不代表立刻接管——只有 {@code agent-platform.runtime.engine=framework}
+     * 且本轮请求满足条件时才会走它。默认关闭是刻意的：切换要以「行为等价」为前提。</p>
+     */
+    @Autowired(required = false)
+    private FrameworkRunEngine frameworkRunEngine;
+
+    /**
+     * 跨会话向量记忆开关（2026-10-28）。
+     *
+     * <p><b>它是什么</b>：每轮对话会拿当前这句话去做一次 embedding，
+     * 然后从**该用户其它会话**里召回语义相关的片段。</p>
+     *
+     * <p><b>为什么要开关</b>：这是**每轮同步执行**的，要花一次 embedding 调用
+     * （约 200~500ms）。对 QQ 单聊场景，`/clear` 之后的记忆主要靠
+     * {@code writeSessionMemory}（插件侧存的要点）+ 画像，向量记忆只是补充。</p>
+     *
+     * <p>默认开启（保持原行为）。觉得慢可以在 application.yml 里关掉：
+     * {@code agent-platform.memory.recall-enabled: false}。</p>
+     */
+    @Value("${agent-platform.memory.recall-enabled:true}")
+    private boolean memoryRecallEnabled;
 
     /** 用户长期画像（长期记忆，可选：未注入时不注入画像，保持原行为与单测可用）。 */
     @Autowired(required = false)
@@ -238,7 +277,7 @@ public class AgentRuntimeService {
             AgentDefinition agent,
             String userMessage,
             Map<String, Object> imageExtra,
-            Session session,
+            SessionHandle session,
             GenerationConfig gc,
             ModelBindingService.ResolvedModel resolved,
             RagRender rag,
@@ -268,15 +307,86 @@ public class AgentRuntimeService {
      */
     private PreparedRun prepare(AgentRunRequest req, String runId, String traceId, String tenantId,
                                 boolean streaming) {
+        return prepare(req, runId, traceId, tenantId, streaming, true);
+    }
+
+    /**
+     * 走框架运行时跑一轮（{@code agent-platform.runtime.engine=framework} 时）。
+     *
+     * <p><b>与 legacy 路径的三处刻意差异</b>：
+     * <ol>
+     *   <li><b>不预占配额</b>：{@code prepare(..., reserveQuota=false)}，
+     *       配额由框架的 {@code QuotaPolicy} 在运行开始占一次。两处都占就是双计。</li>
+     *   <li><b>不调 {@code recordExchange}</b>：框架的 {@code SessionStore}
+     *       （平台实现是 {@code MessageTableSessionStore}）已经写同一张 message 表，再写一次就是双写。</li>
+     *   <li><b>不跑平台侧收尾</b>：向量索引、画像抽取、失败通知都留在 legacy 路径——
+     *       它们依赖平台独有的服务，强行搬进来等于把平台语义塞回框架。</li>
+     * </ol>
+     *
+     * <p>工具调用记录直接取框架返回的 {@code RunResult.toolCalls()}，
+     * 不再经过 {@code toolCallCollector}（那条收集器是 legacy 的旁路）。</p>
+     */
+    private AgentRunResponse runOnFramework(AgentRunRequest req, String runId, String traceId, String tenantId) {
+        // 准备阶段同样复用：提示词组装、会话落库、模型绑定解析都由平台算好，框架不重算
+        PreparedRun p = prepare(req, runId, traceId, tenantId, false, false);
+        AgentDefinition agent = p.agent();
+
+        RunCommand command = FrameworkRunDispatcher.toCommand(
+                agent.getAgentId(),
+                p.userMessage(),
+                req.sessionId(),
+                tenantId,
+                principalOf(req, tenantId),
+                agent,
+                p.resolved(),
+                p.effectivePrompt(),
+                List.of(),
+                ToolOptions.all(3),
+                p.imageExtra());
+
+        try {
+            RunResult result = frameworkRunEngine.run(command);
+            logTo(LogLevel.INFO, LogCategory.agent,
+                    "run.completed engine=framework agent=" + agent.getName() + " model=" + result.model(),
+                    traceId, runId, tenantId, agent.getAgentId());
+            return FrameworkRunDispatcher.toResponse(result, req.mode(), traceId);
+        } catch (RuntimeException e) {
+            logTo(LogLevel.ERROR, LogCategory.agent,
+                    "run.failed engine=framework agent=" + agent.getName() + " error=" + e.getMessage(),
+                    traceId, runId, tenantId, agent.getAgentId(), stackTraceOf(e));
+            throw e;
+        }
+    }
+
+    /**
+     * 组装调用者身份。没有 {@code user_id} 时返回 {@code null}——
+     * 框架的默认策略放行，平台的 RBAC 策略（若启用）会 fail-closed 拒绝。
+     */
+    private Principal principalOf(AgentRunRequest req, String tenantId) {
+        String userId = req.userId();
+        if (userId == null || userId.isBlank()) {
+            return null;
+        }
+        return new Principal(userId, tenantId, Set.of());
+    }
+
+    /**
+     * @param reserveQuota 是否在准备阶段预占配额。
+     *                     框架引擎分支传 {@code false}：那里由 {@code QuotaPolicy} 在运行开始时占一次，
+     *                     两处都占就是**双计**（不报错，但账单翻倍）。
+     */
+    private PreparedRun prepare(AgentRunRequest req, String runId, String traceId, String tenantId,
+                                boolean streaming, boolean reserveQuota) {
         AgentDefinition agent = agentService.getOrThrow(tenantId, req.agentId());
 
         logTo(LogLevel.INFO, LogCategory.agent, "run.start agent=" + agent.getName()
                         + " mode=" + req.mode() + " session=" + req.sessionId()
-                        + (streaming ? " streaming=true" : ""),
+                        + (streaming ? " streaming=true" : "")
+                        + (frameworkRunEngine != null && frameworkRunEngine.isEnabled() ? " engine=framework" : ""),
                 traceId, runId, tenantId, agent.getAgentId());
 
         // ⓪ 配额校验（多租户，流式同样计入一次调用）
-        if (quotaService != null) {
+        if (reserveQuota && quotaService != null) {
             quotaService.checkAndIncrement(tenantId, "model_calls", null);
         }
 
@@ -288,10 +398,33 @@ public class AgentRuntimeService {
         String userMessage = extractUserMessage(req, tenantId);
         // ②.1 提取图片附件（方案 B：image part → 字节 → base64，随请求走视觉通道）
         List<Map<String, String>> imageData = collectImageData(req, tenantId);
-        Map<String, Object> imageExtra = imageData.isEmpty() ? Map.of() : Map.of("images", imageData);
+        /*
+         * extra 一并带上采样惩罚（2026-10-27）。
+         *
+         * <p>{@code frequency_penalty} / {@code presence_penalty} 是治「模型口癖」的：
+         * DeepSeek 自带「不是A，而是B」「你以为是X，其实是Y」「首先/其次」这类句式，
+         * 长对话里还会反复围绕同一主题打转。这两个值在 {@link GenerationConfig}
+         * 里**早就有字段**，但从来没被传给适配器 —— 典型的"定义了没人用"。</p>
+         *
+         * <p>适配器的 extra 会原样 {@code body.putAll(...)}，所以这里塞进去就生效，
+         * 不用动适配器。**没配就不传**（null 忽略），保持"默认行为不动"。</p>
+         *
+         * <p>中文对惩罚比较敏感，值调大了会句子断裂；前端默认留空，让用户自己试。</p>
+         */
+        Map<String, Object> extraMap = new java.util.LinkedHashMap<>();
+        if (!imageData.isEmpty()) {
+            extraMap.put("images", imageData);
+        }
+        if (gc.frequencyPenalty() != null) {
+            extraMap.put("frequency_penalty", gc.frequencyPenalty());
+        }
+        if (gc.presencePenalty() != null) {
+            extraMap.put("presence_penalty", gc.presencePenalty());
+        }
+        Map<String, Object> imageExtra = Map.copyOf(extraMap);
 
         // ③ 会话解析（提前到提示词组装前：历史较长时需读取早期摘要；sessionId 为空返回 null 不持久化）
-        Session session = sessionService == null ? null
+        SessionHandle session = sessionService == null ? null
                 : sessionService.resolve(tenantId, agent.getAgentId(), req.userId(), req.sessionId(), userMessage);
 
         // ④.1 组装基础系统提示词（人格 → 提示词合并 + 变量填充 + Skill 注入）
@@ -309,14 +442,31 @@ public class AgentRuntimeService {
         String basePrompt = Boolean.FALSE.equals(req.renderGuide())
                 ? basePromptRaw
                 : withRenderGuide(basePromptRaw);
+        /*
+         * 插件注入的运行时上下文（2026-10-27）。
+         *
+         * <p>QQ 插件把「现在几点、对方是谁、最近日记、分寸」这些放在
+         * {@code metadata.injectContext} 里传过来，**不再拼进 userMessage** ——
+         * 因为那会被 {@code persistExchange} 原样存进 {@code message} 表。</p>
+         *
+         * <p>实测后果：353 条 user 消息平均 **1654 字**，而她的回复只有 154 字，
+         * 也就是说**每条里有 1500 字是注入**（占 83%）。历史回放时这些过期信息
+         * 又被全部带回来，token 直接膨胀约 4 倍。</p>
+         *
+         * <p>拼到这里：**当轮可见、不落库**。</p>
+         */
+        Object injectCtx = req.metadata() == null ? null : req.metadata().get("injectContext");
+        String withInject = (injectCtx instanceof String inj && !inj.isBlank())
+                ? basePrompt + "\n\n" + inj
+                : basePrompt;
         // ④.2 RAG 知识库自动检索（请求/智能体绑定知识库时，把命中片段注入上下文并生成引用；
         // 未绑定知识库/检索失败时 retrieveKnowledge 返回 null，等价于普通对话）
         // ④.3 对话附件自动摄取（方案 C）：文档拖入 → 归入租户附件库 → 并入本次检索范围
         String attachmentKbId = ensureAttachments(req, tenantId);
         RagRender rag = retrieveKnowledge(agent, req, userMessage, attachmentKbId);
         String promptWithRag = rag == null || rag.systemBlock() == null || rag.systemBlock().isBlank()
-                ? basePrompt
-                : basePrompt + rag.systemBlock();
+                ? withInject
+                : withInject + rag.systemBlock();
 
         // ④.6 早期会话摘要续接（历史被截断丢弃的早期轮次压缩进上下文，让「记忆」跨长对话保留）
         String earlySummary = earlySummaryOf(session);
@@ -331,7 +481,7 @@ public class AgentRuntimeService {
                 : promptWithSummary + userProfile;
         // 向量记忆（第四层）：按语义从该用户**其它会话**里召回相关片段
         String recalledHistory = recallHistory(tenantId, req.userId(), userMessage,
-                session == null ? null : session.getSessionId());
+                session == null ? null : session.sessionId());
         String effectivePrompt = recalledHistory == null
                 ? promptWithProfile
                 : promptWithProfile + recalledHistory;
@@ -362,12 +512,17 @@ public class AgentRuntimeService {
         }
 
         return TraceContext.withContext(traceId, runId, tenantId, () -> {
+            // 主链路分流（P2' 最后一步）：框架引擎启用时整轮交给框架运行时
+            if (frameworkRunEngine != null && frameworkRunEngine.isEnabled()) {
+                return runOnFramework(req, runId, traceId, tenantId);
+            }
+
             // 准备阶段（与非流式共用唯一实现，见 prepare 的注释）
             final PreparedRun p = prepare(req, runId, traceId, tenantId, false);
             final AgentDefinition agent = p.agent();
             final String userMessage = p.userMessage();
             final Map<String, Object> imageExtra = p.imageExtra();
-            final Session session = p.session();
+            final SessionHandle session = p.session();
             final GenerationConfig gc = p.gc();
             final ModelBindingService.ResolvedModel resolved = p.resolved();
             final String provider = resolved.provider();
@@ -394,7 +549,7 @@ public class AgentRuntimeService {
                     if (!toolSpecs.isEmpty() && toolExecutor != null) {
                         return runToolLoop(provider, model, effectivePrompt, msg, gc, resolved,
                                 toolSpecs, sessionHistory, traceId, runId, tenantId, agent, usageTokens,
-                                imageExtra, session == null ? null : session.getSessionId());
+                                imageExtra, session == null ? null : session.sessionId());
                     }
                     // 普通单轮 LLM 调用（无工具）
                     logTo(LogLevel.INFO, LogCategory.llm, "llm.call provider=" + provider
@@ -405,7 +560,7 @@ public class AgentRuntimeService {
                     ModelAdapter.ChatRequest chatReq = new ModelAdapter.ChatRequest(
                             model, effectivePrompt, msg, gc.temperature(), gc.maxTokens(), imageExtra, sessionHistory,
                             resolved.baseUrl(), resolved.apiKey());
-                    ModelAdapter.ChatResponse resp = modelRouter.chat(provider, chatReq);
+                    ModelAdapter.ChatResponse resp = chatWithRetry(provider, chatReq);
                     latency[0] = resp.latencyMs();
                     usageTokens[0] = resp.promptTokens();
                     usageTokens[1] = resp.completionTokens();
@@ -482,14 +637,14 @@ public class AgentRuntimeService {
             // ⑦ 保存会话记忆（user + assistant 一轮），失败不阻断主流程
             if (session != null && sessionService != null) {
                 try {
-                    sessionService.recordExchange(tenantId, session.getSessionId(), runId,
+                    sessionService.recordExchange(tenantId, session.sessionId(), runId,
                             userMessage, pipeline.reply(), model);
                 } catch (Exception e) {
                     log.warn("Failed to persist session exchange: {}", e.getMessage());
                 }
                 // 向量记忆：索引本轮用户消息，供**其它会话**将来按语义召回
                 //（放在落库之后：索引要靠回查刚写入的那条消息拿 messageId）
-                indexConversationMemory(tenantId, req.userId(), session.getSessionId(), userMessage);
+                indexConversationMemory(tenantId, req.userId(), session.sessionId(), userMessage);
             }
 
             // 画像自动抽取：fire-and-forget，产物是「待用户确认」的候选（不会直接生效）。
@@ -697,6 +852,14 @@ public class AgentRuntimeService {
         // 仅第一轮带用户消息；此后消息都在 convo 里，重复发送等于重复提问。
         String nextUserMessage = userMessage;
         boolean toolDeclared = tools != null && !tools.isEmpty();
+        /*
+         * 搜图轮数护栏（2026-10-22）。
+         *
+         * 提示词允许它"三批都不满意就换关键词重搜"，但那是**软约束** ——
+         * 模型可能一直搜下去，每批 3 张图都进多模态 token 预算。
+         * 这里硬性限制最多 3 批，第 4 次直接告诉它别再搜了。
+         */
+        int imageSearchCalls = 0;
 
         for (int round = 0; round < maxToolRounds; round++) {
             logTo(LogLevel.INFO, LogCategory.llm, "llm.call provider=" + provider + " model=" + model
@@ -711,7 +874,17 @@ public class AgentRuntimeService {
                     resolved.baseUrl(), resolved.apiKey(),
                     toolDeclared ? tools : List.of(),
                     toolDeclared ? "auto" : null);
-            ModelAdapter.ChatResponse resp = modelRouter.chat(provider, chatReq);
+            /*
+             * 走重试包装（2026-10-28 修）。
+             *
+             * <p><b>这里原来直接调 modelRouter.chat</b>，没走 {@link #chatWithRetry} ——
+             * 而**带工具的场景全都走这条路径**（工具循环）。所以上次加的重试只对
+             * "直答"分支生效，实际一次都没跑过。</p>
+             *
+             * <p>实测后果：用户发表情包 → 上游 120 秒无响应 → 直接 timeout，
+             * 日志里连"重试"两个字都没有。</p>
+             */
+            ModelAdapter.ChatResponse resp = chatWithRetry(provider, chatReq);
             usageTokens[0] += resp.promptTokens();
             usageTokens[1] += resp.completionTokens();
             logTo(LogLevel.INFO, LogCategory.llm, "llm.done provider=" + provider + " model=" + model
@@ -736,6 +909,15 @@ public class AgentRuntimeService {
              */
             convo.add(ModelAdapter.ChatMessage.assistantToolCalls(resp.toolCalls(), resp.reasoning()));
 
+            /*
+             * 本轮要注入的图片 / 是否触发了"搜图上限"提醒。
+             *
+             * 必须声明在循环外：tool 消息与 user 消息的**顺序**有协议约束，
+             * 详见循环里那段注释。
+             */
+            List<String> roundPreviews = new ArrayList<>();
+            boolean previewCapped = false;
+
             // ② 逐个执行，并以 role=tool 消息回灌（一次调用一条，id 一一对应）
             for (ModelAdapter.ToolCall call : resp.toolCalls()) {
                 long toolT0 = System.nanoTime();
@@ -758,15 +940,138 @@ public class AgentRuntimeService {
                         traceId, runId, tenantId, agent.getAgentId());
                 // ⚠️ 失败也必须回灌：模型等不到这次调用的结果，就会一直重试同一个工具。
                 convo.add(ModelAdapter.ChatMessage.tool(call.id(), outputText));
+
+                /*
+                 * 图片预览（2026-10-22）：先**收集**，等本轮的 tool 消息全部就位再注入。
+                 *
+                 * ⚠️ 不能直接在这里 add —— OpenAI 协议要求 `assistant(tool_calls)` 后面
+                 * **紧跟着全部对应的 tool 消息**。模型一轮里调了两个工具时，若在两条 tool
+                 * 之间插一条 user 消息，上游会直接拒掉：
+                 *   "An assistant message with 'tool_calls' must be followed by tool
+                 *    messages responding to each 'tool_call_id'."
+                 * 所以收集完，在 for 循环外面统一追加。
+                 *
+                 * 为什么硬编码工具名：这是**唯一**会返回"一批候选图片"的工具，
+                 * 输出格式也固定（每张图一行缩进的 URL）。做成通用机制要给
+                 * `ToolResult` 加字段（99 个构造点），收益不匹配。
+                 */
+                if ("image_search".equals(call.name())) {
+                    imageSearchCalls++;
+                    if (imageSearchCalls <= 3) {
+                        roundPreviews.addAll(extractImageUrls(outputText, 3));
+                    } else if (imageSearchCalls == 4) {
+                        previewCapped = true;
+                    }
+                } else if ("generate_image".equals(call.name())) {
+                    /*
+                     * 她自己画出来的图也要回喂给她看（2026-10-22）。
+                     *
+                     * 不然她只会拿到一串 OSS 链接，原话是"我看不到自己画的头像"——
+                     * 没法判断画得怎么样，也没法在下次描述时改进。
+                     *
+                     * ⚠️ 这里用**宽松提取**而不是 extractImageUrls：
+                     * 百炼返回的是 OSS 签名链接（`.../1d/a2/2026xxx?Expires=...`），
+                     * **往往没有 .jpg 扩展名**，按扩展名过滤会一张都抓不到。
+                     */
+                    roundPreviews.addAll(extractFirstHttpUrl(outputText, 1));
+                }
             }
 
-            // ③ 后续轮次不再重复发送用户消息
+            /*
+             * ③ 图片与提醒：必须在本轮**全部 tool 消息之后**追加。
+             *
+             * 放在这里而不是循环里的原因是协议顺序 —— `assistant(tool_calls)` 与它的
+             * `tool` 结果必须连续，中间插 user 消息会被上游判为
+             * "insufficient tool messages following tool_calls message"。
+             */
+            if (!roundPreviews.isEmpty()) {
+                List<String> previews = dedupeUrls(roundPreviews, 3);
+                convo.add(ModelAdapter.ChatMessage.withImages(
+                        "user",
+                        "这是刚拿到的 " + previews.size() + " 张图，可以直接看画面。"
+                                + "如果都不合适，就换个描述或关键词再来一次。",
+                        previews));
+                logTo(LogLevel.INFO, LogCategory.tool,
+                        "image.preview injected=" + previews.size() + " batch=" + imageSearchCalls,
+                        traceId, runId, tenantId, agent.getAgentId());
+            } else if (previewCapped) {
+                convo.add(ModelAdapter.ChatMessage.withImages(
+                        "user",
+                        "已经搜了 3 批了，别再换关键词了。从上面看过的图里挑一张，"
+                                + "或者这轮不换、只写 avatarWish。",
+                        List.of()));
+                logTo(LogLevel.WARN, LogCategory.tool,
+                        "image.preview capped at 3 batches", traceId, runId, tenantId, agent.getAgentId());
+            }
+
+            // ④ 后续轮次不再重复发送用户消息
             nextUserMessage = null;
         }
         logTo(LogLevel.WARN, LogCategory.tool, "tool loop reached max rounds " + maxToolRounds
                         + " agent=" + agent.getName(),
                 traceId, runId, tenantId, agent.getAgentId());
         return "（工具调用超过最大轮次，已停止；请重试或补充说明）";
+    }
+
+    /**
+     * 从工具输出文本里抽图片地址（2026-10-22）。
+     *
+     * <p>只认**带图片扩展名**的 http(s) 地址 —— {@code image_search} 的返回里每张图占一行
+     * （`   1. 标题` 换行 `   URL`），直接正则扫最省事。</p>
+     *
+     * <p>为什么不解析成结构化数据：那样要给 {@code ToolResult} 加字段，
+     * 而它有 99 个构造点，改造成本与收益不匹配。</p>
+     *
+     * @param max 最多取几张。默认调用方传 3：每张图都会进多模态 token 预算，
+     *            给太多既贵又容易让模型"选择困难"
+     */
+    /** 去重 + 截断（一轮里可能调了多次 image_search，图片会重复）。 */
+    private static List<String> dedupeUrls(List<String> urls, int max) {
+        List<String> out = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        for (String u : urls) {
+            if (out.size() >= max) {
+                break;
+            }
+            if (u != null && !u.isBlank() && seen.add(u)) {
+                out.add(u);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 宽松提取：抓前 {@code max} 个 http(s) 链接，**不看扩展名**。
+     *
+     * <p>用于 {@code generate_image} 的返回值 —— 百炼/硅基流动给的是 OSS 签名链接，
+     * 通常没有 {@code .jpg} 后缀，按扩展名过滤会全部漏掉。</p>
+     */
+    private static List<String> extractFirstHttpUrl(String text, int max) {
+        List<String> out = new ArrayList<>();
+        if (text == null || text.isEmpty() || max <= 0) {
+            return out;
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("https?://[^\\s\"'<>]+")
+                .matcher(text);
+        while (m.find() && out.size() < max) {
+            out.add(m.group());
+        }
+        return out;
+    }
+
+    static List<String> extractImageUrls(String text, int max) {
+        List<String> out = new ArrayList<>();
+        if (text == null || text.isEmpty() || max <= 0) {
+            return out;
+        }
+        java.util.regex.Matcher m = java.util.regex.Pattern
+                .compile("https?://[^\\s\"'<>]+\\.(?:jpe?g|png|gif|webp)(?:\\?[^\\s\"'<>]*)?")
+                .matcher(text);
+        while (m.find() && out.size() < max) {
+            out.add(m.group());
+        }
+        return out;
     }
 
     /**
@@ -903,6 +1208,10 @@ public class AgentRuntimeService {
      * 再召回一遍等于同一段话说两遍（详见 {@code ConversationMemoryService} 类注释）。</p>
      */
     private String recallHistory(String tenantId, String userId, String query, String currentSessionId) {
+        // 开关关掉时直接跳过，省一次 embedding（2026-10-28）
+        if (!memoryRecallEnabled) {
+            return null;
+        }
         if (conversationMemoryService == null || userId == null || userId.isBlank()) {
             return null;
         }
@@ -927,14 +1236,169 @@ public class AgentRuntimeService {
     }
 
     /**
+     * 调模型，遇到**瞬时网络故障**重试一次（2026-10-26）。
+     *
+     * <p><b>为什么需要</b>：实测硅基流动偶发 120 秒不返回，直接把整轮对话废掉 ——
+     * 用户看到的是"我发了消息她一个字都没回"，日志里只有一条
+     * {@code MODEL_UPSTREAM_ERROR: 模型调用网络异常: timeout}。而同一句话重发一次
+     * 基本就正常了，说明是上游抖动，不是内容有问题。</p>
+     *
+     * <p><b>只重试瞬时故障</b>（超时 / 连接重置 / 502~504）。4xx 一律不重试 ——
+     * 参数错、key 错、余额不足，重试只是再失败一次，白白让用户多等两分钟。</p>
+     *
+     * <p><b>代价</b>：真卡住时要等 120 + 2 + 120 秒。这是有意的取舍 ——
+     * 绝大多数情况下第二次就成功，用户只多等 2 秒。</p>
+     */
+    private ModelAdapter.ChatResponse chatWithRetry(String provider, ModelAdapter.ChatRequest chatReq) {
+        int attempt = 0;
+        while (true) {
+            try {
+                return modelRouter.chat(provider, chatReq);
+            } catch (RuntimeException e) {
+                if (!isTransientFailure(e)) {
+                    throw e;
+                }
+                /*
+                 * 带图超时 → 去掉图片重试（2026-10-28）。
+                 *
+                 * <p><b>为什么单独处理</b>：实测带图请求失败率 30~40%，
+                 * 而**所有 timeout 都发生在带图请求上**（纯文字 445 次中位 2.9 秒，
+                 * 带图 10 次中位 7 秒、最慢 42 秒）。硅基流动的视觉通道明显不稳。</p>
+                 *
+                 * <p>但**不能干脆不传图** —— 用户明确要求"她能读懂表情包"，
+                 * 而且历史上确实读通过。所以改成兜底：先带图照常试，
+                 * 超时了才去掉图重试一次 —— 那时能回话比看清图重要。</p>
+                 *
+                 * <p>代价：最坏 120（超时）+ 3（无图响应）≈ 2 分钟。
+                 * 但比现在"等 120 秒然后一个字都不回"强。</p>
+                 */
+                if (isTimeout(e) && hasImages(chatReq)) {
+                    log.warn("[agent] 带图请求超时（{}），去掉图片重试一次 —— 先保证能回话",
+                            briefError(e));
+                    return chatWithRetry(provider, withoutImages(chatReq));
+                }
+                /*
+                 * 限流多给一次机会（2026-10-28）。
+                 *
+                 * 429 "System is too busy" 是上游排队，隔几秒基本就过了；
+                 * 而它是**频繁发生**的（比 timeout 常见得多），
+                 * 只重试一次的话，赶上高峰照样会丢消息。
+                 */
+                boolean limited = isRateLimited(e);
+                int maxRetry = limited ? 2 : 1;
+                if (attempt >= maxRetry) {
+                    throw e;
+                }
+                // 限流退避更久：6s → 12s；其它照旧 2s（用户等不了太久）
+                long waitMs = limited ? (long) (6000L * (1L << attempt)) : 2000L;
+                log.warn("[agent] 模型调用失败（{}），{} 秒后重试（第 {} 次）",
+                        briefError(e), waitMs / 1000, attempt + 1);
+                try {
+                    Thread.sleep(waitMs);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw e;
+                }
+                attempt++;
+            }
+        }
+    }
+
+    /** 是不是"重试可能成功"的那类错误。 */
+    private boolean isTransientFailure(Throwable e) {
+        String m = e.getMessage() == null ? "" : e.getMessage().toLowerCase();
+        return m.contains("timeout")
+                || m.contains("超时")
+                || m.contains("网络异常")
+                || m.contains("connection reset")
+                || m.contains("connect timed out")
+                || m.contains("connection refused")
+                // 限流（2026-10-28）：硅基流动 429 "System is too busy now" 是瞬时的
+                || isRateLimited(e)
+                || m.contains(" 502")
+                || m.contains(" 503")
+                || m.contains(" 504");
+    }
+
+    /**
+     * 是不是「上游限流」（2026-10-28）。
+     *
+     * <p>实测硅基流动返回过 {@code HTTP 429 {"code":50609,"message":"Request was rejected
+     * due to rate limiting. Details: System is too busy now."}} —— 这是**上游繁忙**，
+     * 不是我们的请求有问题，隔几秒重试通常就过了。</p>
+     *
+     * <p>之前 {@code isTransientFailure} 只认 timeout / 5xx，429 直接抛出去，
+     * 用户看到的效果就是「发了消息她一个字都没回」。</p>
+     */
+    private boolean isRateLimited(Throwable e) {
+        String m = e.getMessage() == null ? "" : e.getMessage().toLowerCase();
+        return m.contains(" 429")
+                || m.contains("rate limit")
+                || m.contains("too busy")
+                || m.contains("too many requests");
+    }
+
+    /** 是不是超时（单独判一下，带图兜底只对超时生效）。 */
+    private boolean isTimeout(Throwable e) {
+        String m = e.getMessage() == null ? "" : e.getMessage().toLowerCase();
+        return m.contains("timeout") || m.contains("超时");
+    }
+
+    /** 这个请求里有没有图片（extra.images 或历史里带图的消息）。 */
+    private boolean hasImages(ModelAdapter.ChatRequest req) {
+        Object imgs = req.extra() == null ? null : req.extra().get("images");
+        if (imgs instanceof java.util.Collection<?> c && !c.isEmpty()) {
+            return true;
+        }
+        if (req.history() != null) {
+            for (ModelAdapter.ChatMessage m : req.history()) {
+                if (m.imageUrls() != null && !m.imageUrls().isEmpty()) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    /**
+     * 复制一份请求，**去掉所有图片**（2026-10-28）。
+     *
+     * <p>用于「带图超时」的兜底重试。图片在 {@code extra.images}（本轮附件）
+     * 和 {@code history[].imageUrls}（工具找回来的图）两个地方，都要剥。</p>
+     */
+    private ModelAdapter.ChatRequest withoutImages(ModelAdapter.ChatRequest req) {
+        java.util.Map<String, Object> extra = new java.util.LinkedHashMap<>();
+        if (req.extra() != null) {
+            req.extra().forEach((k, v) -> {
+                if (!"images".equals(k)) {
+                    extra.put(k, v);
+                }
+            });
+        }
+        java.util.List<ModelAdapter.ChatMessage> history = req.history() == null
+                ? java.util.List.of()
+                : req.history().stream()
+                        .map(m -> (m.imageUrls() == null || m.imageUrls().isEmpty())
+                                ? m
+                                : new ModelAdapter.ChatMessage(
+                                        m.role(), m.content(), m.toolCallId(),
+                                        m.toolCalls(), m.reasoning(), java.util.List.of()))
+                        .toList();
+        return new ModelAdapter.ChatRequest(
+                req.model(), req.systemPrompt(), req.userMessage(),
+                req.temperature(), req.maxTokens(), extra, history,
+                req.baseUrl(), req.apiKey(), req.tools(), req.toolChoice());
+    }
+
+    /**
      * 读取会话早期摘要（历史过长时压缩续接）。任何失败降级返回 null，不阻断对话。
      */
-    private String earlySummaryOf(Session session) {
+    private String earlySummaryOf(SessionHandle session) {
         if (sessionSummaryService == null || session == null) {
             return null;
         }
         try {
-            return sessionSummaryService.summaryFor(session);
+            return sessionSummaryService.summaryForHandle(session);
         } catch (Exception e) {
             log.warn("Failed to load session summary: {}", e.getMessage());
             return null;
@@ -947,9 +1411,12 @@ public class AgentRuntimeService {
      */
     private List<Map<String, String>> collectImageData(AgentRunRequest req, String tenantId) {
         List<Map<String, String>> images = new ArrayList<>();
-        if (fileUploadService == null) {
-            return images;
-        }
+        /*
+         * 不再因为 fileUploadService 缺失就整体返回（2026-11-03）。
+         *
+         * 内联 base64 那条路根本不碰文件服务，把它挡在这里毫无道理 ——
+         * 反而会让"图片直传"这个新能力在无文件服务的环境下失效。
+         */
         AgentRunRequest.Message last = lastUserMessage(req);
         Object content = last == null ? null : last.content();
         if (!(content instanceof List<?> parts)) {
@@ -960,28 +1427,139 @@ public class AgentRuntimeService {
                 if (!(part instanceof Map<?, ?> m) || !"image".equals(strOf(m.get("type")))) {
                     continue;
                 }
+                /*
+                 * 取图片字节：**优先内联 base64，其次 fileId**（2026-11-03）。
+                 *
+                 * <h3>为什么要加内联这一路</h3>
+                 *
+                 * <p><b>旧链路的问题</b>：插件每收到一张图，都要先 POST
+                 * {@code /api/v1/files/base64} 换成 fileId，平台再 download 回来。
+                 * 结果每一张聊天里的图都落进 {@code file_asset} 表，
+                 * 「文件」管理页被 {@code qq-*.png} 堆满，而且**没有任何清理任务**。</p>
+                 *
+                 * <p>这些图只是"给模型看一眼"的临时载体，不是用户的文件资产 ——
+                 * 把它们和用户主动上传的文档混在一个库里，是设计上的错位。</p>
+                 *
+                 * <p><b>行业做法</b>：多模态消息协议本来就支持直接内联 base64
+                 * （OpenAI 的 {@code image_url.url} 可放 data URL，Anthropic 的
+                 * {@code source.type=base64}），不需要中间文件库。这样一次请求
+                 * 就完事，服务端不留痕迹。</p>
+                 *
+                 * <p><b>兼容性</b>：老的 {@code fileId} 方式继续保留 ——
+                 * 用户手动上传的附件、历史消息里的图片引用仍走这条路。</p>
+                 */
+                byte[] bytes = null;
+                String srcTag = null;
+
+                // ① 内联 base64（含 data URL 前缀的也认）
+                String inline = strOf(m.get("data"));
+                if (!inline.isBlank()) {
+                    try {
+                        String b64 = inline;
+                        if (b64.startsWith("data:")) {
+                            int comma = b64.indexOf(',');
+                            if (comma > 0) {
+                                b64 = b64.substring(comma + 1);
+                            }
+                        }
+                        bytes = java.util.Base64.getDecoder().decode(b64);
+                        srcTag = "inline";
+                    } catch (Exception e) {
+                        log.warn("内联图片解码失败，回退 fileId：{}", e.getMessage());
+                    }
+                }
+
+                // ② 回退 fileId
                 String fileId = strOf(m.get("fileId"));
-                if (fileId.isBlank()) {
-                    continue;
+                if (bytes == null || bytes.length == 0) {
+                    if (fileId.isBlank()) {
+                        continue;
+                    }
+                    if (fileUploadService == null) {
+                        log.warn("Image {} 需要文件服务但未配置，跳过", fileId);
+                        continue;
+                    }
+                    FileUploadService.Download dl = fileUploadService.download(tenantId, fileId);
+                    if (dl == null || dl.bytes() == null || dl.bytes().length == 0) {
+                        log.warn("Image {} not found or empty, skip", fileId);
+                        continue;
+                    }
+                    bytes = dl.bytes();
+                    srcTag = fileId;
                 }
-                FileUploadService.Download dl = fileUploadService.download(tenantId, fileId);
-                if (dl == null || dl.bytes() == null || dl.bytes().length == 0) {
-                    log.warn("Image {} not found or empty, skip", fileId);
-                    continue;
-                }
-                String mime = strOf(m.get("mimeType"));
-                if (mime.isBlank()) {
-                    mime = "image/png";
+                /*
+                 * 以**文件头**为准，不信插件声明的 mimeType（2026-11-02）。
+                 *
+                 * <p><b>实测事故</b>：QQ 图片 CDN 的 content-type 经常是
+                 * {@code application/octet-stream} 或为空，插件只能兜底成
+                 * {@code image/png}，而实际内容是 JPEG（文件名就是 .jpg）。
+                 * 上游校验很严，直接拒绝：</p>
+                 *
+                 * <pre>
+                 *   The declared image MIME type (image/png) does not match
+                 *   the actual image format (jpeg); the image_url data URL
+                 *   must declare the real image format.
+                 * </pre>
+                 *
+                 * <p>后果是**带图的消息全部不回复**，而纯文字正常 ——
+                 * 从用户视角看就是"她忽然不理我了"，且日志里只有一行 400。</p>
+                 *
+                 * <p>文件头是文件自己带的，不会撒谎。插件那边已经改了，
+                 * 这里再兜一层：即使插件传错，平台也能纠正。</p>
+                 */
+                String declared = strOf(m.get("mimeType"));
+                String mime = sniffImageMime(bytes);
+                if (!declared.isBlank() && !declared.equals(mime)) {
+                    log.debug("Image {} mime 不一致：declared={} actual={}，用实际格式",
+                            srcTag, declared, mime);
                 }
                 Map<String, String> item = new java.util.HashMap<>(2);
                 item.put("mimeType", mime);
-                item.put("base64", java.util.Base64.getEncoder().encodeToString(dl.bytes()));
+                item.put("base64", java.util.Base64.getEncoder().encodeToString(bytes));
                 images.add(item);
             }
         } catch (Exception e) {
             log.warn("Collect image parts failed: {}", e.getMessage());
         }
         return images;
+    }
+
+    /**
+     * 按文件头判断图片真实格式（2026-11-02）。
+     *
+     * <p>只认上游接受的四种（png / jpeg / gif / webp），认不出就退回 png ——
+     * 与其因为格式声明不符被 400 拒掉，不如给个上游至少能解析的类型。</p>
+     *
+     * <p><b>为什么不查 content-type / 扩展名</b>：两者都是外部给的，
+     * 都可能与实际内容不符（QQ CDN 就是典型例子）。魔数在文件自身，
+     * 只有它能作为判据。</p>
+     *
+     * @param b 原始字节；{@code null} 或过短时返回 {@code image/png}
+     */
+    private static String sniffImageMime(byte[] b) {
+        if (b == null || b.length < 12) {
+            return "image/png";
+        }
+        // JPEG: FF D8 FF
+        if ((b[0] & 0xFF) == 0xFF && (b[1] & 0xFF) == 0xD8 && (b[2] & 0xFF) == 0xFF) {
+            return "image/jpeg";
+        }
+        // PNG: 89 50 4E 47
+        if ((b[0] & 0xFF) == 0x89 && (b[1] & 0xFF) == 0x50
+                && (b[2] & 0xFF) == 0x4E && (b[3] & 0xFF) == 0x47) {
+            return "image/png";
+        }
+        // GIF: 47 49 46
+        if ((b[0] & 0xFF) == 0x47 && (b[1] & 0xFF) == 0x49 && (b[2] & 0xFF) == 0x46) {
+            return "image/gif";
+        }
+        // WEBP: RIFF....WEBP
+        if ((b[0] & 0xFF) == 0x52 && (b[1] & 0xFF) == 0x49
+                && (b[8] & 0xFF) == 0x57 && (b[9] & 0xFF) == 0x45
+                && (b[10] & 0xFF) == 0x42 && (b[11] & 0xFF) == 0x50) {
+            return "image/webp";
+        }
+        return "image/png";
     }
 
     /**
@@ -1109,7 +1687,7 @@ public class AgentRuntimeService {
             final AgentDefinition agent = p.agent();
             final String userMessage = p.userMessage();
             final Map<String, Object> imageExtra = p.imageExtra();
-            final Session session = p.session();
+            final SessionHandle session = p.session();
             final GenerationConfig gc = p.gc();
             final ModelBindingService.ResolvedModel resolved = p.resolved();
             final String provider = resolved.provider();
@@ -1151,7 +1729,7 @@ public class AgentRuntimeService {
                     try {
                         answer = runToolLoop(provider, model, effectivePrompt, streamMessage, gc, resolved,
                                 toolSpecs, sessionHistory, traceId, runId, tenantId, agent, usageTokens,
-                                imageExtra, session == null ? null : session.getSessionId());
+                                imageExtra, session == null ? null : session.sessionId());
                     } catch (Exception e) {
                         String fallback = agentPipeline.onStreamError(agent.getAgentId(), runId, streamMessage, e);
                         if (fallback == null) {
@@ -1191,7 +1769,7 @@ public class AgentRuntimeService {
              * done 帧的 text 是空串，会被下面的 filter 滤掉 —— 一旦滤掉，它携带的用量也就丢了。
              */
             final int[] streamUsage = {0, 0};
-            return modelRouter.route(provider, com.agentplatform.core.model.ModelCapability.TEXT)
+            return modelRouter.route(provider, ModelCapability.TEXT)
                     .stream(new ModelAdapter.ChatRequest(
                             model, effectivePrompt, streamMessage, gc.temperature(), gc.maxTokens(),
                             imageExtra, sessionHistory, resolved.baseUrl(), resolved.apiKey()))
@@ -1283,18 +1861,18 @@ public class AgentRuntimeService {
      */
     private Map<String, Object> finishStream(AgentDefinition agent, String tenantId, String runId,
                                              String traceId, String model, String userMessage,
-                                             String answer, Session session, int[] usageTokens,
+                                             String answer, SessionHandle session, int[] usageTokens,
                                              boolean toolLoop, String userId) {
         persistExchange(session, tenantId, runId, userMessage, answer, model);
         // 向量记忆：把本轮用户消息异步索引进索引，供**其它会话**将来按语义召回。
         // 放在落库之后：索引要靠回查刚写入的那条消息拿 messageId。
         if (session != null) {
-            indexConversationMemory(tenantId, userId, session.getSessionId(), userMessage);
+            indexConversationMemory(tenantId, userId, session.sessionId(), userMessage);
         }
         // 画像自动抽取：与非流式走同一个入口（fire-and-forget，见 UserFactExtractor 的类注释）
         if (userFactExtractor != null) {
             userFactExtractor.extractAsync(tenantId, userId,
-                    session == null ? null : session.getSessionId(), userMessage, answer);
+                    session == null ? null : session.sessionId(), userMessage, answer);
         }
         logTo(LogLevel.INFO, LogCategory.agent, "run.completed agent=" + agent.getName()
                         + " model=" + model + " streaming=true toolLoop=" + toolLoop
@@ -1393,13 +1971,13 @@ public class AgentRuntimeService {
     }
 
     /** 保存一轮对话（失败不阻断，流式与非流式共用）。 */
-    private void persistExchange(Session session, String tenantId, String runId,
+    private void persistExchange(SessionHandle session, String tenantId, String runId,
                                  String userMessage, String reply, String model) {
         if (session == null || sessionService == null) {
             return;
         }
         try {
-            sessionService.recordExchange(tenantId, session.getSessionId(), runId, userMessage, reply, model);
+            sessionService.recordExchange(tenantId, session.sessionId(), runId, userMessage, reply, model);
         } catch (Exception e) {
             log.warn("Failed to persist streaming session exchange: {}", e.getMessage());
         }
@@ -1680,6 +2258,23 @@ public class AgentRuntimeService {
                 fileCount++;
                 text.append("\n\n[文件：").append(fileName).append("]\n");
                 text.append(readAttachedFile(tenantId, fileId, fileName));
+            } else if ("image".equals(type)) {
+                /*
+                 * 图片（2026-10-30 修）。
+                 *
+                 * <p>原来掉进下面的 else，渲染成「[image 类型暂不支持直接读取]」——
+                 * 她看到这句话就以为**根本没收到图**，于是说「图上真没有」。</p>
+                 *
+                 * <p>实情是：发图当轮图片通过视觉通道（imageExtra → base64）传过去了，
+                 * 她当时能看到；只是**历史里不带字节**，回放时只剩这一行。
+                 * 所以文案必须写成"有过一张图"，而不是"不支持"。</p>
+                 */
+                int n = 1;
+                Object cnt = m.get("count");
+                if (cnt instanceof Number num && num.intValue() > 1) {
+                    n = num.intValue();
+                }
+                text.append("\n[你当时收到过 ").append(n).append(" 张图片]");
             } else {
                 text.append("\n[").append(type == null ? "未知" : type).append(" 类型暂不支持直接读取]\n");
             }

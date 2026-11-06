@@ -1,5 +1,7 @@
 package com.agentplatform.core.workflow.schema;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.core.workflow.dag.NodeExecutor;
 import com.agentplatform.core.workflow.node.NodeType;

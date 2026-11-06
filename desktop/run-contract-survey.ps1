@@ -7,7 +7,7 @@ $port = 18105
 $surveyDir = "$env:TEMP\skin-survey\skins"
 New-Item -ItemType Directory -Force -Path $surveyDir | Out-Null
 
-$proc = Start-Process -FilePath "$env:JAVA_HOME\bin\java.exe" -ArgumentList '--enable-preview', '-Xms128m', '-Xmx2g', '-jar', $jar, '--spring.profiles.active=embedded', "--server.port=$port", "--agent-platform.skins.dir=$surveyDir" -RedirectStandardOutput "$env:TEMP\ap-survey.log" -RedirectStandardError "$env:TEMP\ap-survey.err" -PassThru -WorkingDirectory $root
+$proc = Start-Process -FilePath "$env:JAVA_HOME\bin\java.exe" -ArgumentList '-Xms128m', '-Xmx2g', '-jar', $jar, '--spring.profiles.active=embedded', "--server.port=$port", "--agent-platform.skins.dir=$surveyDir" -RedirectStandardOutput "$env:TEMP\ap-survey.log" -RedirectStandardError "$env:TEMP\ap-survey.err" -PassThru -WorkingDirectory $root
 
 $base = "http://127.0.0.1:$port"
 $H = @{ 'X-Tenant-Id' = 'default' }

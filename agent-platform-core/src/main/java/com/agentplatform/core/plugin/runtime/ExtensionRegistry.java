@@ -1,6 +1,7 @@
 package com.agentplatform.core.plugin.runtime;
 
-import com.agentplatform.core.tool.Tool;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.core.tool.registry.ToolRegistry;
 import com.agentplatform.plugin.sdk.AgentHook;
 import com.agentplatform.plugin.sdk.EventSubscriber;

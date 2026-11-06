@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.registry;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.tool.executor.HttpApiTool;
 import com.agentplatform.model.entity.ToolRegistration;

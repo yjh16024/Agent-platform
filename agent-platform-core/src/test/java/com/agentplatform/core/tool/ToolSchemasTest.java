@@ -1,7 +1,12 @@
 package com.agentplatform.core.tool;
 
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelAdapter;
+
 import com.agentplatform.common.util.JsonUtils;
-import com.agentplatform.core.model.adapter.ModelAdapter;
 import com.agentplatform.core.model.springai.SpringAiToolBridge;
 import com.agentplatform.core.tool.builtin.SearchTool;
 import com.agentplatform.core.rag.retriever.HybridRetriever;

@@ -1,7 +1,10 @@
 package com.agentplatform.core.multimodal;
 
+import com.agentplatform.framework.api.Tool;
+
+import com.agentplatform.framework.api.ModelCapability;
+
 import com.agentplatform.common.exception.BizException;
-import com.agentplatform.core.model.ModelCapability;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

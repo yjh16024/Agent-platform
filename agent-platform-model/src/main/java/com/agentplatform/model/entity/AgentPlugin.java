@@ -21,7 +21,7 @@ import java.util.Map;
  * Agent ↔ Plugin 绑定实体（"插入插件"关系，实例级配置）。
  */
 @Entity
-@Table(name = "agent_plugin")
+@Table(name = "ap_agent_plugin")
 @Getter
 @Setter
 @Builder

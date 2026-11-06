@@ -15,6 +15,14 @@ public interface AgentPluginRepository extends JpaRepository<AgentPlugin, Long> 
 
     List<AgentPlugin> findByAgentIdAndEnabledTrue(String agentId);
 
+    /**
+     * 全库处于启用状态的绑定（2026-10-22）。
+     *
+     * <p>启动时用它恢复插件工具注册 —— 插件工具的注册表在内存里，重启即空，
+     * 而挂载关系只存在这张表。详见 {@code BuiltinPluginRegistrar#restoreAttachments}。</p>
+     */
+    List<AgentPlugin> findByEnabledTrue();
+
     Optional<AgentPlugin> findByAgentIdAndPluginId(String agentId, String pluginId);
 
     void deleteByAgentIdAndPluginId(String agentId, String pluginId);

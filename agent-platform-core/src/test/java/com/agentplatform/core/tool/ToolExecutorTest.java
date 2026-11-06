@@ -1,5 +1,9 @@
 package com.agentplatform.core.tool;
 
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.core.tool.builtin.CalculatorTool;
 import com.agentplatform.core.tool.executor.AuditToolFilter;
 import com.agentplatform.core.tool.executor.ToolExecutor;

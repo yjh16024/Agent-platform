@@ -1,5 +1,9 @@
 package com.agentplatform.core.tool;
 
+import com.agentplatform.framework.api.ToolContext;
+import com.agentplatform.framework.api.ToolResult;
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.dto.ApiResponse;
 import com.agentplatform.common.util.JsonUtils;
 import com.agentplatform.core.security.rbac.RequiresPermission;

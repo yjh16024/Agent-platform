@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.action;
 
+import com.agentplatform.framework.api.Tool;
+
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;

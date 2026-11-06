@@ -1,5 +1,7 @@
 package com.agentplatform.core.workflow.node;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 import java.util.List;

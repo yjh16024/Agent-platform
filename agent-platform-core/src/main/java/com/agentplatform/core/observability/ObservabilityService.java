@@ -1,5 +1,7 @@
 package com.agentplatform.core.observability;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.model.entity.LogIndex;
 import com.agentplatform.model.repository.LogIndexRepository;
 import lombok.RequiredArgsConstructor;

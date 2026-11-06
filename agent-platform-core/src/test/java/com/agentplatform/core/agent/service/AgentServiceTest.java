@@ -1,5 +1,7 @@
 package com.agentplatform.core.agent.service;
 
+import com.agentplatform.framework.api.Tool;
+
 import com.agentplatform.common.exception.BizException;
 import com.agentplatform.core.agent.dto.AgentCreateRequest;
 import com.agentplatform.core.agent.dto.AgentPatchRequest;

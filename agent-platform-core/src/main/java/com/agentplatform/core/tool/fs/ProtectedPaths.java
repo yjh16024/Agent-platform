@@ -1,5 +1,7 @@
 package com.agentplatform.core.tool.fs;
 
+import com.agentplatform.framework.api.Tool;
+
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
