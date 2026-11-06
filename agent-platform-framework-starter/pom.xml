@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.agentplatform</groupId>
+        <artifactId>agent-platform</artifactId>
+        <version>1.5.0</version>
+    </parent>
+
+    <artifactId>agent-platform-framework-starter</artifactId>
+    <name>Agent Platform Framework Starter</name>
+    <description>Spring Boot 自动装配：只依赖 spring-boot-autoconfigure，不引入 Web / JPA</description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.agentplatform</groupId>
+            <artifactId>agent-platform-framework-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.agentplatform</groupId>
+            <artifactId>agent-platform-framework-runtime</artifactId>
+        </dependency>
+
+        <!--
+            只引 autoconfigure：@AutoConfiguration / @ConditionalOnXxx 都在这里。
+            刻意不引 spring-boot-starter-web，也不引任何 JPA —— 框架必须能被非 Web 应用嵌入。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                G3 门禁 2（依赖树）：**加这个 starter 不允许把 JPA / 建表能力带进宿主**。
+                这条比 api/runtime 那两条更重要——宿主实际引入的正是 starter。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>ban-framework-deps</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>true</searchTransitive>
+                                    <excludes>
+                                        <exclude>org.springframework.boot:spring-boot-starter-web</exclude>
+                                        <exclude>org.springframework.boot:spring-boot-starter-webflux</exclude>
+                                        <exclude>org.springframework.boot:spring-boot-starter-data-jpa</exclude>
+                                        <exclude>org.springframework.boot:spring-boot-starter-jdbc</exclude>
+                                        <exclude>org.springframework.data:*</exclude>
+                                        <exclude>org.hibernate.orm:*</exclude>
+                                        <exclude>jakarta.persistence:*</exclude>
+                                        <exclude>org.flywaydb:*</exclude>
+                                        <exclude>com.mysql:*</exclude>
+                                        <exclude>org.springframework.ai:*</exclude>
+                                    </excludes>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <compilerArgs combine.self="override"/>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine combine.self="override"/>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

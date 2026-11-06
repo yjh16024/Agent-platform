@@ -1,0 +1,111 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.agentplatform</groupId>
+        <artifactId>agent-platform</artifactId>
+        <version>1.5.0</version>
+    </parent>
+
+    <artifactId>agent-platform-framework-api</artifactId>
+    <name>Agent Platform Framework API</name>
+    <description>框架契约层：零 Spring / 零 JPA / 零 spring-ai，不使用 JDK 预览特性（docs/framework-plan.md §P-1）</description>
+
+    <dependencies>
+        <!-- 流式接口（与 Spring AI 一致：Flux 是流式契约的公共语言） -->
+        <dependency>
+            <groupId>io.projectreactor</groupId>
+            <artifactId>reactor-core</artifactId>
+        </dependency>
+        <!-- 工具入参的 JSON 结构；不引入任何 Spring / JPA 组件 -->
+        <dependency>
+            <groupId>tools.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+        </dependency>
+        <!-- 责任链的失败日志出口（框架契约层唯一的日志依赖） -->
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-api</artifactId>
+        </dependency>
+        <!--
+            父 pom 给所有模块加了 lombok（optional）。本模块不使用它，
+            这里显式降为 provided，确保它不会被传递给任何依赖本模块的宿主。
+        -->
+        <dependency>
+            <groupId>org.projectlombok</groupId>
+            <artifactId>lombok</artifactId>
+            <scope>provided</scope>
+            <optional>true</optional>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <!--
+                刻意覆盖父 pom 的预览特性开关（enable-preview）：
+                框架契约必须能在**普通** JDK 21 上编译，否则嵌入方要为预览特性买单（见 §P1）。
+                这个覆盖本身就是对 G1 门禁的一次预演——若有人往本模块塞了 ScopedValue，编译立即失败。
+            -->
+            <!--
+                依赖门禁：契约层只允许「不是框架」的通用库（reactor / jackson / slf4j）。
+                用 enforcer 而不是 ArchUnit，是因为它拦的是**传递依赖**——
+                api 自己没写 Spring，但某天某个库把它带进来，一样会让嵌入方被迫接受它。
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <version>3.5.0</version>
+                <executions>
+                    <execution>
+                        <id>ban-framework-deps</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <bannedDependencies>
+                                    <searchTransitive>true</searchTransitive>
+                                    <excludes>
+                                        <!-- 逐个点名，而不是 starter-*：父 pom 给所有模块注入了 spring-boot-starter-test（test scope），
+                                             它是测试基础设施，不算「框架依赖了 Spring」 -->
+                                        <exclude>org.springframework.boot:spring-boot-starter-web</exclude>
+                                        <exclude>org.springframework.boot:spring-boot-starter-webflux</exclude>
+                                        <exclude>org.springframework.boot:spring-boot-starter-data-jpa</exclude>
+                                        <exclude>org.springframework.boot:spring-boot-starter-jdbc</exclude>
+                                        <exclude>org.springframework.boot:spring-boot-starter-data-redis</exclude>
+                                        <exclude>org.springframework.boot:spring-boot-starter-security</exclude>
+                                        <exclude>org.springframework.boot:spring-boot-starter-actuator</exclude>
+                                        <exclude>org.springframework.data:*</exclude>
+                                        <exclude>org.springframework:spring-orm</exclude>
+                                        <exclude>org.hibernate.orm:*</exclude>
+                                        <exclude>jakarta.persistence:*</exclude>
+                                        <exclude>org.flywaydb:*</exclude>
+                                        <exclude>com.mysql:*</exclude>
+                                        <exclude>org.springframework.ai:*</exclude>
+                                    </excludes>
+                                </bannedDependencies>
+                            </rules>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <configuration>
+                    <compilerArgs combine.self="override"/>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <argLine combine.self="override"/>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

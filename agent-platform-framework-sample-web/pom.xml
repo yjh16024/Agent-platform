@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.agentplatform</groupId>
+        <artifactId>agent-platform</artifactId>
+        <version>1.5.0</version>
+    </parent>
+
+    <artifactId>agent-platform-framework-sample-web</artifactId>
+    <name>Agent Platform Framework Sample (Web)</name>
+    <description>「加依赖即用」示例：Spring Boot + starter，20 行跑通带工具的对话</description>
+
+    <dependencies>
+        <!-- 可选的 Spring AI 通道（E1 记忆仓储 + E3 Advisor） -->
+        <dependency>
+            <groupId>com.agentplatform</groupId>
+            <artifactId>agent-platform-framework-starter-springai</artifactId>
+        </dependency>
+        <!-- 宿主自己要用的 Spring AI 能力（starter 里是 optional，不传递） -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-client-chat</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
+        </dependency>
+        <!-- M2：观测走标准——有 ObservationRegistry，starter 才会装配 MicrometerRunObserver -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!--
+            Boot 4 把 Web 测试支持拆到了独立模块（spring-boot-starter-webmvc-test）；
+            只引 spring-boot-starter-test 已拿不到 @AutoConfigureMockMvc。
+        -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webmvc-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+</project>

@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <parent>
+        <groupId>com.agentplatform</groupId>
+        <artifactId>agent-platform</artifactId>
+        <version>1.5.0</version>
+    </parent>
+
+    <artifactId>agent-platform-framework-sample-springai</artifactId>
+    <name>Agent Platform Framework Sample (Spring AI)</name>
+    <description>
+        真外部集成示例：一个普通 Spring AI 项目（ChatClient + MessageWindowChatMemory），
+        只加一个 starter 依赖，就获得持久化记忆（E1）与上下文注入（E3）。
+    </description>
+
+    <dependencies>
+        <dependency>
+            <groupId>com.agentplatform</groupId>
+            <artifactId>agent-platform-framework-starter-springai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-client-chat</artifactId>
+        </dependency>
+        <!-- 刻意不引 spring-boot-starter-web：框架要能被非 Web 应用嵌入 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+    </dependencies>
+</project>
